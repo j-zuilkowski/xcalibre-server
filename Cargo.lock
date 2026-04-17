@@ -336,6 +336,7 @@ dependencies = [
  "config",
  "fake",
  "futures",
+ "governor",
  "http 1.4.0",
  "image",
  "jsonwebtoken",
