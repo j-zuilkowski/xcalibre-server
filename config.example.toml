@@ -1,0 +1,33 @@
+[app]
+base_url = "http://localhost:8083"
+storage_path = "./storage"
+
+[database]
+url = "sqlite://library.db"
+
+[auth]
+jwt_secret = ""
+access_token_ttl_mins = 15
+refresh_token_ttl_days = 30
+max_login_attempts = 10
+lockout_duration_mins = 15
+
+[llm]
+enabled = false
+
+[llm.librarian]
+endpoint = "http://192.168.0.72:1234/v1"
+model = ""
+timeout_secs = 10
+system_prompt = ""
+
+[llm.architect]
+endpoint = "http://localhost:1234/v1"
+model = ""
+timeout_secs = 10
+system_prompt = ""
+
+[limits]
+upload_max_bytes = 524288000
+rate_limit_per_ip = 200
+

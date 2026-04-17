@@ -1,0 +1,9 @@
+/target
+/backend/target
+/node_modules
+/.claude/cache
+/storage
+/library.db
+/.DS_Store
+**/*.swp
+

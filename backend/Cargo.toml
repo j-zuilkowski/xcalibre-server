@@ -1,0 +1,41 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.7", features = ["macros", "multipart", "json"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+config = "0.14"
+futures = "0.3"
+http = "1"
+image = "0.25"
+jsonwebtoken = "9"
+mime = "0.3"
+mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.7", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower_governor = "0.4"
+tower-http = { version = "0.5", features = ["fs", "set-header", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
+validator = { version = "0.18", features = ["derive"] }
+
+[dev-dependencies]
+axum-test = "14"
+fake = { version = "2", features = ["derive"] }
+pretty_assertions = "1"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
