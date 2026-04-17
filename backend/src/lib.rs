@@ -4,6 +4,7 @@ pub mod db;
 pub mod error;
 pub mod middleware;
 pub mod state;
+pub mod storage;
 
 pub use api::router as app;
 pub use config::AppConfig;
@@ -16,4 +17,3 @@ pub type Result<T> = std::result::Result<T, AppError>;
 pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
-

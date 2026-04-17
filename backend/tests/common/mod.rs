@@ -8,10 +8,20 @@ use backend::{
     AppState,
 };
 use chrono::Utc;
+use serde::Deserialize;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use std::path::PathBuf;
+use std::{io::Write, path::PathBuf};
 use tempfile::TempDir;
 use uuid::Uuid;
+
+pub const TEST_JWT_SECRET: &str = "test-jwt-secret-stage-3";
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct LoginResult {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: User,
+}
 
 pub struct TestContext {
     pub db: SqlitePool,
@@ -36,44 +46,56 @@ impl TestContext {
         let db = test_db().await;
         let mut config = AppConfig::default();
         config.app.storage_path = storage.path().to_string_lossy().to_string();
+        config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
         let state = AppState::new(db.clone(), config);
         let server = TestServer::new(app(state)).expect("build test server");
 
-        Self { db, storage, server }
+        Self {
+            db,
+            storage,
+            server,
+        }
     }
 
     pub async fn create_admin(&self) -> (User, String) {
         self.seed_role("admin").await;
         let password = "Test1234!".to_string();
-        let user = self.insert_user("admin", "admin@example.com", "admin", &password).await;
+        let user = self
+            .insert_user("admin", "admin@example.com", "admin", &password)
+            .await;
         (user, password)
     }
 
     pub async fn create_user(&self) -> (User, String) {
         self.seed_role("user").await;
         let password = "Test1234!".to_string();
-        let user = self.insert_user("user", "user@example.com", "user", &password).await;
+        let user = self
+            .insert_user("user", "user@example.com", "user", &password)
+            .await;
         (user, password)
     }
 
-    pub async fn login(&self, username: &str, password: &str) -> String {
+    pub async fn login(&self, username: &str, password: &str) -> LoginResult {
         let response = self
             .server
             .post("/api/v1/auth/login")
             .json(&serde_json::json!({ "username": username, "password": password }))
             .await;
-        let json: serde_json::Value = response.json();
-        json["access_token"].as_str().unwrap_or_default().to_string()
+        response.json::<LoginResult>()
     }
 
     pub async fn admin_token(&self) -> String {
         let (user, password) = self.create_admin().await;
-        self.login(&user.username, &password).await
+        self.login(&user.username, &password).await.access_token
     }
 
     pub async fn user_token(&self) -> String {
         let (user, password) = self.create_user().await;
-        self.login(&user.username, &password).await
+        self.login(&user.username, &password).await.access_token
+    }
+
+    pub fn jwt_secret(&self) -> &'static str {
+        TEST_JWT_SECRET
     }
 
     pub async fn create_book(&self, title: &str, author: &str) -> Book {
@@ -95,16 +117,14 @@ impl TestContext {
         .expect("insert book");
 
         let author_id = Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO authors (id, name, sort_name, last_modified) VALUES (?, ?, ?, ?)",
-        )
-        .bind(&author_id)
-        .bind(author)
-        .bind(author)
-        .bind(&now)
-        .execute(&self.db)
-        .await
-        .expect("insert author");
+        sqlx::query("INSERT INTO authors (id, name, sort_name, last_modified) VALUES (?, ?, ?, ?)")
+            .bind(&author_id)
+            .bind(author)
+            .bind(author)
+            .bind(&now)
+            .execute(&self.db)
+            .await
+            .expect("insert author");
 
         sqlx::query(
             "INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, 0)",
@@ -195,7 +215,13 @@ impl TestContext {
         .await;
     }
 
-    async fn insert_user(&self, username: &str, email: &str, role_id: &str, password: &str) -> User {
+    async fn insert_user(
+        &self,
+        username: &str,
+        email: &str,
+        role_id: &str,
+        password: &str,
+    ) -> User {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         let password_hash = hash_password(password);
@@ -233,12 +259,87 @@ impl TestContext {
     }
 }
 
+pub fn auth_header(access_token: &str) -> axum::http::HeaderValue {
+    let value = format!("Bearer {access_token}");
+    axum::http::HeaderValue::from_str(&value).expect("valid auth header")
+}
+
 pub fn minimal_epub_bytes() -> Vec<u8> {
     include_bytes!("../fixtures/minimal.epub").to_vec()
 }
 
 pub fn minimal_pdf_bytes() -> Vec<u8> {
     include_bytes!("../fixtures/minimal.pdf").to_vec()
+}
+
+pub fn epub_with_cover_bytes() -> Vec<u8> {
+    use zip::write::FileOptions;
+
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(cursor);
+    let options = FileOptions::default();
+
+    zip.start_file("mimetype", options)
+        .expect("start mimetype");
+    zip.write_all(b"application/epub+zip")
+        .expect("write mimetype");
+
+    zip.start_file("META-INF/container.xml", options)
+        .expect("start container.xml");
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+    )
+    .expect("write container.xml");
+
+    zip.start_file("OEBPS/content.opf", options)
+        .expect("start content.opf");
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Cover Test Book</dc:title>
+    <dc:creator>Cover Test Author</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="cover" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+  </manifest>
+  <spine>
+    <itemref idref="nav"/>
+  </spine>
+</package>"#,
+    )
+    .expect("write content.opf");
+
+    zip.start_file("OEBPS/nav.xhtml", options)
+        .expect("start nav.xhtml");
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body>Nav</body></html>"#,
+    )
+    .expect("write nav.xhtml");
+
+    zip.start_file("OEBPS/images/cover.jpg", options)
+        .expect("start cover image");
+    let cover_image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        200,
+        300,
+        image::Rgb([0x52, 0xA3, 0xD9]),
+    ));
+    let mut cover_cursor = std::io::Cursor::new(Vec::new());
+    cover_image
+        .write_to(&mut cover_cursor, image::ImageFormat::Jpeg)
+        .expect("encode cover jpeg");
+    zip.write_all(&cover_cursor.into_inner())
+        .expect("write cover image");
+
+    let cursor = zip.finish().expect("finish zip");
+    cursor.into_inner()
 }
 
 #[macro_export]
@@ -261,8 +362,11 @@ macro_rules! assert_json_field {
 }
 
 fn hash_password(password: &str) -> String {
-    use argon2::{password_hash::{PasswordHasher, SaltString}, Argon2};
     use argon2::password_hash::rand_core::OsRng;
+    use argon2::{
+        password_hash::{PasswordHasher, SaltString},
+        Argon2,
+    };
 
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
