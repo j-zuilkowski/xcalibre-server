@@ -19,18 +19,24 @@ pub struct TestContext {
     pub server: TestServer,
 }
 
+pub async fn test_db() -> SqlitePool {
+    let db = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect sqlite");
+    let migrator = sqlx::migrate!("migrations/sqlite");
+    migrator.run(&db).await.expect("run migrations");
+    db
+}
+
 impl TestContext {
     pub async fn new() -> Self {
         let storage = tempfile::tempdir().expect("tempdir");
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("connect sqlite");
-        let migrator = sqlx::migrate!("migrations/sqlite");
-        migrator.run(&db).await.expect("run migrations");
-
-        let state = AppState::new(db.clone(), AppConfig::default(), storage.path().to_path_buf());
+        let db = test_db().await;
+        let mut config = AppConfig::default();
+        config.app.storage_path = storage.path().to_string_lossy().to_string();
+        let state = AppState::new(db.clone(), config);
         let server = TestServer::new(app(state)).expect("build test server");
 
         Self { db, storage, server }
