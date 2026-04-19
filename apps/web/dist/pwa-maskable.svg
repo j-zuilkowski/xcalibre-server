@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Calibre Web">
+  <rect width="512" height="512" rx="64" fill="#0d9488"/>
+  <circle cx="256" cy="256" r="182" fill="#ffffff" opacity="0.08"/>
+  <rect x="136" y="146" width="240" height="220" rx="24" fill="#f8fffe"/>
+  <path d="M160 182h82c24 0 43 10 58 24 15-14 34-24 58-24h34v148h-34c-24 0-43 10-58 24-15-14-34-24-58-24h-82z" fill="#0d9488"/>
+  <path d="M256 204v120" stroke="#f8fffe" stroke-width="16" stroke-linecap="round"/>
+</svg>

@@ -1,4 +1,13 @@
-use axum::{middleware, Router};
+use axum::{
+    extract::Request as AxumRequest,
+    http::Method,
+    middleware,
+    response::Response,
+    Router,
+};
+use std::path::PathBuf;
+use tower::ServiceExt;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub mod auth;
 pub mod books;
@@ -8,10 +17,14 @@ pub fn router(state: crate::AppState) -> Router {
     let upload_max_bytes = state.config.limits.upload_max_bytes;
     let auth_router = auth::router(state.clone())
         .layer(crate::middleware::security_headers::auth_rate_limit_layer());
+    let web_dist_dir = web_dist_dir();
+    let assets_dir = web_dist_dir.join("assets");
 
     Router::new()
         .nest("/api/v1/auth", auth_router)
         .merge(books::router(state.clone()))
+        .nest_service("/assets", ServeDir::new(assets_dir))
+        .fallback(spa_fallback)
         .layer(crate::middleware::security_headers::global_rate_limit_layer(
             global_rate_limit_per_ip,
         ))
@@ -23,4 +36,33 @@ pub fn router(state: crate::AppState) -> Router {
             crate::middleware::security_headers::apply_security_headers,
         ))
         .with_state(state)
+}
+
+fn web_dist_dir() -> PathBuf {
+    std::env::var_os("WEB_DIST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("apps/web/dist"))
+}
+
+async fn spa_fallback(request: AxumRequest) -> Result<Response, crate::AppError> {
+    if !matches!(request.method(), &Method::GET | &Method::HEAD) {
+        return Err(crate::AppError::NotFound);
+    }
+
+    if request.uri().path().starts_with("/api/") {
+        return Err(crate::AppError::NotFound);
+    }
+
+    let index_path = web_dist_dir().join("index.html");
+    let response = ServeFile::new(index_path)
+        .oneshot(request)
+        .await
+        .map_err(|_| crate::AppError::Internal)?
+        .map(axum::body::Body::new);
+
+    if response.status() == axum::http::StatusCode::NOT_FOUND {
+        return Err(crate::AppError::NotFound);
+    }
+
+    Ok(response)
 }
