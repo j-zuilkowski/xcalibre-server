@@ -96,19 +96,12 @@ export type BookSummary = Pick<
   | "authors"
   | "series"
   | "series_index"
-  | "tags"
-  | "formats"
   | "cover_url"
   | "has_cover"
-  | "rating"
   | "language"
-  | "pubdate"
-  | "created_at"
+  | "rating"
   | "last_modified"
-  | "indexed_at"
-> & {
-  description?: string | null;
-};
+>;
 
 export type PaginatedResponse<T> = {
   items: T[];

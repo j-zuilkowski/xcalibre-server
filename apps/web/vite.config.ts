@@ -9,6 +9,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  test: {
+    environment: "jsdom",
+  },
   server: {
     proxy: {
       "/api": "http://localhost:8083",

@@ -14,7 +14,10 @@ export const AUTH_STORAGE_KEY = "calibre-web.auth";
 type StoredAuth = Pick<LoginResponse, "access_token" | "refresh_token" | "user">;
 
 function readStoredAuth(): StoredAuth | null {
-  if (typeof localStorage === "undefined") {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.getItem !== "function"
+  ) {
     return null;
   }
 
@@ -45,7 +48,11 @@ function readStoredAuth(): StoredAuth | null {
 }
 
 function persistAuth(auth: StoredAuth | null): void {
-  if (typeof localStorage === "undefined") {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function" ||
+    typeof localStorage.removeItem !== "function"
+  ) {
     return;
   }
 
