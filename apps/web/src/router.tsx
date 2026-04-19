@@ -2,6 +2,7 @@ import { Outlet, createRootRoute, createRoute, createRouter, redirect } from "@t
 import { LoginPage } from "./features/auth/LoginPage";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { RegisterPage } from "./features/auth/RegisterPage";
+import { BookDetailPage } from "./features/library/BookDetailPage";
 import { LibraryPage } from "./features/library/LibraryPage";
 
 const rootRoute = createRootRoute({
@@ -32,11 +33,7 @@ const libraryRoute = createRoute({
 const bookRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "books/$id",
-  component: () => (
-    <div style={{ padding: "32px", fontFamily: "Inter, system-ui, sans-serif" }}>
-      Book detail
-    </div>
-  ),
+  component: BookDetailPage,
 });
 
 const loginRoute = createRoute({
