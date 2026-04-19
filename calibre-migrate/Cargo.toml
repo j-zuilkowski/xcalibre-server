@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls"] }
