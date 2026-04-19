@@ -1,4 +1,3 @@
 [workspace]
-members = ["backend"]
+members = ["backend", "calibre-migrate"]
 resolver = "2"
-
