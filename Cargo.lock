@@ -513,10 +513,16 @@ name = "calibre-migrate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "image",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sqlx",
  "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

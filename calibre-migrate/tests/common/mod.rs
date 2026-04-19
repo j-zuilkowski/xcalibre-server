@@ -179,7 +179,10 @@ fn create_book_fixture_file(
 fn create_cover_fixture_file(library_path: &Path, author_sort: &str, title: &str, book_id: i64) {
     let book_dir = book_dir_path(library_path, author_sort, title, book_id);
     fs::create_dir_all(&book_dir).expect("create fixture book directory");
-    fs::write(book_dir.join("cover.jpg"), b"fixture-cover-data").expect("write fixture cover file");
+    let image = image::RgbImage::from_pixel(640, 960, image::Rgb([10, 20, 200]));
+    image
+        .save_with_format(book_dir.join("cover.jpg"), image::ImageFormat::Jpeg)
+        .expect("write fixture cover file");
 }
 
 fn book_dir_path(library_path: &Path, author_sort: &str, title: &str, book_id: i64) -> PathBuf {
