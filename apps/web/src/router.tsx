@@ -4,6 +4,7 @@ import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { RegisterPage } from "./features/auth/RegisterPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { LibraryPage } from "./features/library/LibraryPage";
+import { ReaderPage } from "./features/reader/ReaderPage";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -36,6 +37,12 @@ const bookRoute = createRoute({
   component: BookDetailPage,
 });
 
+const readerRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "books/$id/read/$format",
+  component: ReaderPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "login",
@@ -49,7 +56,7 @@ const registerRoute = createRoute({
 });
 
 export const routeTree = rootRoute.addChildren([
-  protectedRoute.addChildren([indexRoute, libraryRoute, bookRoute]),
+  protectedRoute.addChildren([indexRoute, libraryRoute, bookRoute, readerRoute]),
   loginRoute,
   registerRoute,
 ]);

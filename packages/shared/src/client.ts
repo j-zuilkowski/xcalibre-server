@@ -6,6 +6,8 @@ import type {
   LoginRequest,
   LoginResponse,
   PaginatedResponse,
+  ReadingProgress,
+  ReadingProgressPatch,
   RefreshResponse,
   RegisterRequest,
   User,
@@ -125,6 +127,27 @@ export class ApiClient {
   async deleteBook(id: string): Promise<void> {
     await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}`, {
       method: "DELETE",
+    });
+  }
+
+  async getReadingProgress(id: string): Promise<ReadingProgress | null> {
+    try {
+      return await this.requestJson<ReadingProgress>(
+        `/api/v1/reading-progress/${encodeURIComponent(id)}`,
+      );
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async patchReadingProgress(id: string, patch: ReadingProgressPatch): Promise<ReadingProgress> {
+    return this.requestJson<ReadingProgress>(`/api/v1/reading-progress/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
     });
   }
 

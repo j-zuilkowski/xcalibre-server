@@ -58,6 +58,14 @@ export type ReadingProgress = {
   last_modified: string;
 };
 
+export type ReadingProgressPatch = {
+  format?: string;
+  format_id?: string;
+  cfi?: string | null;
+  page?: number | null;
+  percentage: number;
+};
+
 export type Shelf = {
   id: string;
   name: string;
