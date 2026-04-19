@@ -1,17 +1,64 @@
-import { Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import React from "react";
+import { Outlet, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { LoginPage } from "./features/auth/LoginPage";
+import { ProtectedRoute } from "./features/auth/ProtectedRoute";
+import { RegisterPage } from "./features/auth/RegisterPage";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
 });
 
-const indexRoute = createRoute({
+const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: () => <div />,
+  component: ProtectedRoute,
 });
 
-export const routeTree = rootRoute.addChildren([indexRoute]);
+const indexRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/library", replace: true });
+  },
+  component: () => null,
+});
+
+const libraryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "library",
+  component: () => (
+    <div style={{ padding: "32px", fontFamily: "Inter, system-ui, sans-serif" }}>
+      Library
+    </div>
+  ),
+});
+
+const bookRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "books/$id",
+  component: () => (
+    <div style={{ padding: "32px", fontFamily: "Inter, system-ui, sans-serif" }}>
+      Book detail
+    </div>
+  ),
+});
+
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "login",
+  component: LoginPage,
+});
+
+const registerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "register",
+  component: RegisterPage,
+});
+
+export const routeTree = rootRoute.addChildren([
+  protectedRoute.addChildren([indexRoute, libraryRoute, bookRoute]),
+  loginRoute,
+  registerRoute,
+]);
 
 export const router = createRouter({
   routeTree,
