@@ -6,6 +6,62 @@ import { ReaderPage } from "../features/reader/ReaderPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
 
+const epubCallbacks: Array<(payload: { start: { percentage: number; cfi: string } }) => void> = [];
+
+vi.mock("epubjs", () => {
+  return {
+    default: vi.fn(() => ({
+      renderTo: () => ({
+        display: vi.fn(async () => undefined),
+        next: vi.fn(async () => {
+          epubCallbacks.at(-1)?.({
+            start: {
+              percentage: 0.25,
+              cfi: "epubcfi(/6/2)",
+            },
+          });
+        }),
+        prev: vi.fn(async () => undefined),
+        on: vi.fn((event: string, callback: (payload: { start: { percentage: number; cfi: string } }) => void) => {
+          if (event === "relocated") {
+            epubCallbacks.push(callback);
+          }
+        }),
+        themes: {
+          default: vi.fn(),
+          fontSize: vi.fn(),
+        },
+        destroy: vi.fn(),
+      }),
+      destroy: vi.fn(),
+      loaded: {
+        navigation: Promise.resolve({
+          toc: [{ id: "chapter-1", label: "Chapter 1", href: "chapter-1.xhtml" }],
+        }),
+      },
+    })),
+  };
+});
+
+vi.mock("pdfjs-dist", () => {
+  return {
+    default: {
+      GlobalWorkerOptions: {},
+      getDocument: vi.fn(() => ({
+        promise: Promise.resolve({
+          numPages: 10,
+          getPage: vi.fn(async (page: number) => ({
+            getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }),
+            render: vi.fn(() => ({
+              promise: Promise.resolve(),
+            })),
+          })),
+        }),
+      })),
+    },
+  };
+});
+
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getReadingProgressMock = vi.spyOn(apiClient, "getReadingProgress");
 const patchReadingProgressMock = vi.spyOn(apiClient, "patchReadingProgress");
@@ -93,6 +149,7 @@ describe("ReaderPage", () => {
     getBookMock.mockReset();
     getReadingProgressMock.mockReset();
     patchReadingProgressMock.mockReset();
+    epubCallbacks.length = 0;
     getBookMock.mockResolvedValue(makeBook());
     getReadingProgressMock.mockResolvedValue(null);
     patchReadingProgressMock.mockResolvedValue(makeProgress());
@@ -134,7 +191,7 @@ describe("ReaderPage", () => {
     await waitFor(() => {
       expect(patchReadingProgressMock).toHaveBeenCalledWith(
         "book-1",
-        expect.objectContaining({ format: "epub", percentage: expect.any(Number) }),
+        expect.objectContaining({ format_id: "format-1", percentage: expect.any(Number) }),
       );
     }, { timeout: 2000 });
   });

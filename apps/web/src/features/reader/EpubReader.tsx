@@ -158,8 +158,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
 
     async function loadEpub() {
       try {
-        const moduleName = "epubjs";
-        const module = (await import(/* @vite-ignore */ moduleName)) as any;
+        const module = (await import("epubjs")) as any;
         const createBook = module?.default ?? module;
 
         if (!createBook || typeof createBook !== "function" || !containerRef.current) {

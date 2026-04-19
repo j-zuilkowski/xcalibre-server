@@ -37,8 +37,7 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
 
     async function loadPdf() {
       try {
-        const moduleName = "pdfjs-dist";
-        const module = (await import(/* @vite-ignore */ moduleName)) as any;
+        const module = (await import("pdfjs-dist")) as any;
         const pdfjs = module?.default ?? module;
 
         if (!pdfjs?.getDocument) {

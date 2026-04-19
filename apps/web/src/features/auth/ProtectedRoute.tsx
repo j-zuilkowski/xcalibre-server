@@ -1,7 +1,8 @@
-import { Outlet, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
+import { AppShell } from "../../components/AppShell";
 
 type GateState = "checking" | "ready" | "redirecting";
 
@@ -81,5 +82,5 @@ export function ProtectedRoute() {
     );
   }
 
-  return <Outlet />;
+  return <AppShell />;
 }

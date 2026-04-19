@@ -1,13 +1,22 @@
 import type {
   ApiError,
+  AdminJob,
+  AdminUser,
+  AdminUserCreateRequest,
+  AdminUserUpdateRequest,
+  BulkImportRequest,
+  BulkImportResponse,
   Book,
   BookSummary,
   ListBooksParams,
   LoginRequest,
   LoginResponse,
   PaginatedResponse,
+  ImportStatus,
   ReadingProgress,
   ReadingProgressPatch,
+  SystemStats,
+  Role,
   RefreshResponse,
   RegisterRequest,
   User,
@@ -149,6 +158,93 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
+  }
+
+  async listUsers(): Promise<AdminUser[]> {
+    return this.requestJson<AdminUser[]>("/api/v1/admin/users");
+  }
+
+  async createUser(request: AdminUserCreateRequest): Promise<AdminUser> {
+    return this.requestJson<AdminUser>("/api/v1/admin/users", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async updateUser(id: string, request: AdminUserUpdateRequest): Promise<AdminUser> {
+    return this.requestJson<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async resetUserPassword(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/users/${encodeURIComponent(id)}/reset-password`, {
+      method: "POST",
+    });
+  }
+
+  async listRoles(): Promise<Role[]> {
+    return this.requestJson<Role[]>("/api/v1/admin/roles");
+  }
+
+  async listJobs(params: {
+    status?: string;
+    job_type?: string;
+    page?: number;
+    page_size?: number;
+  } = {}): Promise<PaginatedResponse<AdminJob>> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<PaginatedResponse<AdminJob>>(`/api/v1/admin/jobs${suffix}`);
+  }
+
+  async cancelJob(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/jobs/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getSystemStats(): Promise<SystemStats> {
+    return this.requestJson<SystemStats>("/api/v1/admin/system");
+  }
+
+  async startBulkImport(request: BulkImportRequest): Promise<BulkImportResponse> {
+    if (request.source === "upload" && request.file) {
+      const form = new FormData();
+      form.append("source", request.source);
+      form.append("file", request.file);
+      form.append("dry_run", String(Boolean(request.dry_run)));
+      return this.requestJson<BulkImportResponse>("/api/v1/admin/import/bulk", {
+        method: "POST",
+        body: form,
+      });
+    }
+
+    return this.requestJson<BulkImportResponse>("/api/v1/admin/import/bulk", {
+      method: "POST",
+      body: JSON.stringify({
+        source: request.source,
+        path: request.path,
+        dry_run: Boolean(request.dry_run),
+      }),
+    });
+  }
+
+  async getImportStatus(id: string): Promise<ImportStatus> {
+    return this.requestJson<ImportStatus>(`/api/v1/admin/import/${encodeURIComponent(id)}`);
   }
 
   coverUrl(bookId: string): string {

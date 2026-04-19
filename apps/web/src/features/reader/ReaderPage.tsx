@@ -46,6 +46,16 @@ export function ReaderPage() {
     queryFn: () => apiClient.getReadingProgress(params?.bookId as string),
     enabled: Boolean(params?.bookId),
   });
+  const selectedFormatId = useMemo(() => {
+    if (!bookQuery.data || !params) {
+      return null;
+    }
+
+    const exactMatch = bookQuery.data.formats.find(
+      (entry) => entry.format.toLowerCase() === params.format.toLowerCase(),
+    );
+    return exactMatch?.id ?? bookQuery.data.formats[0]?.id ?? null;
+  }, [bookQuery.data, params]);
 
   const flushProgress = useCallback(() => {
     if (!params || !pendingProgressRef.current) {
@@ -55,15 +65,19 @@ export function ReaderPage() {
     const next = pendingProgressRef.current;
     pendingProgressRef.current = null;
 
+    if (!selectedFormatId) {
+      return;
+    }
+
     const payload: ReadingProgressPatch = {
-      format: params.format,
+      format_id: selectedFormatId,
       percentage: clampPercentage(next.percentage),
       cfi: next.cfi ?? null,
       page: next.page ?? null,
     };
 
     void apiClient.patchReadingProgress(params.bookId, payload);
-  }, [params]);
+  }, [params, selectedFormatId]);
 
   const handleProgressChange = useCallback(
     (progress: ReaderProgressUpdate) => {

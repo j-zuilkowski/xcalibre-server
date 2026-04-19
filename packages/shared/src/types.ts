@@ -66,6 +66,79 @@ export type ReadingProgressPatch = {
   percentage: number;
 };
 
+export type AdminUser = User & {
+  last_login_at: string | null;
+};
+
+export type AdminUserCreateRequest = {
+  username: string;
+  email: string;
+  password: string;
+  role_id?: string;
+  is_active?: boolean;
+};
+
+export type AdminUserUpdateRequest = {
+  role_id?: string;
+  is_active?: boolean;
+  force_pw_reset?: boolean;
+};
+
+export type AdminJob = {
+  id: string;
+  job_type: string;
+  status: string;
+  book_id: string | null;
+  book_title: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_text: string | null;
+};
+
+export type SystemStats = {
+  version: string;
+  db_engine: "sqlite" | "mariadb";
+  db_size_bytes: number;
+  book_count: number;
+  format_count: number;
+  storage_used_bytes: number;
+  meilisearch: {
+    available: boolean;
+    indexed_count: number;
+    pending_count: number;
+  };
+  llm: {
+    enabled: boolean;
+    librarian_available: boolean;
+    architect_available: boolean;
+  };
+};
+
+export type ImportStatus = {
+  id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  dry_run: boolean;
+  records_total: number;
+  records_imported: number;
+  records_failed: number;
+  records_skipped: number;
+  failures: Array<{ file: string; reason: string }>;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type BulkImportRequest = {
+  source: "upload" | "path";
+  path?: string;
+  file?: File;
+  dry_run?: boolean;
+};
+
+export type BulkImportResponse = {
+  job_id: string;
+};
+
 export type Shelf = {
   id: string;
   name: string;
