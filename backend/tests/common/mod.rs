@@ -10,7 +10,10 @@ use backend::{
 use chrono::Utc;
 use serde::Deserialize;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -35,7 +38,10 @@ pub async fn test_db() -> SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("connect sqlite");
-    let migrator = sqlx::migrate!("migrations/sqlite");
+    let migration_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite");
+    let migrator = sqlx::migrate::Migrator::new(migration_path.as_path())
+        .await
+        .expect("load migrations");
     migrator.run(&db).await.expect("run migrations");
     db
 }

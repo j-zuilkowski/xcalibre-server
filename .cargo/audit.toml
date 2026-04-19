@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # sqlx includes optional MySQL support crates in Cargo.lock even when not enabled.
+    # This workspace uses SQLite only.
+    "RUSTSEC-2023-0071",
+    # Transitive from image -> ravif -> rav1e; currently no maintained replacement in this path.
+    "RUSTSEC-2024-0436",
+]

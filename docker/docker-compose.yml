@@ -1,20 +1,34 @@
 services:
   app:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: calibre-web-rs:dev
     ports: ["8083:8083"]
     volumes:
-      - ./config.toml:/app/config.toml:ro
+      - ../config.toml:/app/config.toml:ro
       - library_data:/app/storage
     environment:
-      - APP_DATABASE__URL=sqlite:///app/storage/library.db
-    depends_on: [meilisearch]
+      APP_DATABASE_URL: sqlite:///app/storage/library.db
+    depends_on:
+      - meilisearch
 
   meilisearch:
     image: getmeili/meilisearch:latest
+    environment:
+      MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili_data:/meili_data
+    ports: ["7700:7700"]
+
+  # caddy: # uncomment for HTTPS reverse proxy
+  #   image: caddy:2-alpine
+  #   ports: ["80:80", "443:443"]
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
 
 volumes:
   library_data:
   meili_data:
-
+  # caddy_data:

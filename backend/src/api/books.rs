@@ -927,9 +927,9 @@ fn parse_opf_xml(opf_xml: &str) -> Option<IngestMetadata> {
 
                     let normalized_value = value.trim().to_string();
                     let mut id_type = raw_type.to_lowercase();
-                    if id_type.is_empty() && looks_like_isbn(&normalized_value) {
-                        id_type = isbn_type(&normalized_value);
-                    } else if id_type.contains("isbn") {
+                    if id_type.contains("isbn")
+                        || (id_type.is_empty() && looks_like_isbn(&normalized_value))
+                    {
                         id_type = isbn_type(&normalized_value);
                     }
                     if !id_type.is_empty() {

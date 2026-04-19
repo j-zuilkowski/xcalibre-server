@@ -1,0 +1,9 @@
+.git
+.github
+.claude
+target
+node_modules
+docker/docker-compose.yml
+docs
+tools
+*.log

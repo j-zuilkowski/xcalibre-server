@@ -7,6 +7,7 @@ use common::{auth_header, TestContext};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::Row;
+use axum::http::{HeaderName, HeaderValue};
 
 #[tokio::test]
 async fn test_register_first_user_becomes_admin() {
@@ -116,11 +117,17 @@ async fn test_login_nonexistent_user_returns_401() {
 async fn test_login_lockout_after_max_attempts() {
     let ctx = TestContext::new().await;
     let (user, password) = ctx.create_user().await;
+    let forwarded_for = HeaderName::from_static("x-forwarded-for");
 
-    for _ in 0..10 {
+    for attempt in 0..10 {
         let response = ctx
             .server
             .post("/api/v1/auth/login")
+            .add_header(
+                forwarded_for.clone(),
+                HeaderValue::from_str(&format!("198.51.100.{}", attempt + 10))
+                    .expect("valid IP"),
+            )
             .json(&serde_json::json!({
                 "username": user.username,
                 "password": "wrong-password"
@@ -132,6 +139,10 @@ async fn test_login_lockout_after_max_attempts() {
     let locked_response = ctx
         .server
         .post("/api/v1/auth/login")
+        .add_header(
+            forwarded_for,
+            HeaderValue::from_static("198.51.100.250"),
+        )
         .json(&serde_json::json!({
             "username": user.username,
             "password": password
@@ -154,11 +165,17 @@ async fn test_login_lockout_after_max_attempts() {
 async fn test_login_lockout_resets_after_duration() {
     let ctx = TestContext::new().await;
     let (user, password) = ctx.create_user().await;
+    let forwarded_for = HeaderName::from_static("x-forwarded-for");
 
-    for _ in 0..10 {
+    for attempt in 0..10 {
         let _ = ctx
             .server
             .post("/api/v1/auth/login")
+            .add_header(
+                forwarded_for.clone(),
+                HeaderValue::from_str(&format!("198.51.101.{}", attempt + 10))
+                    .expect("valid IP"),
+            )
             .json(&serde_json::json!({
                 "username": user.username,
                 "password": "wrong-password"
@@ -177,6 +194,10 @@ async fn test_login_lockout_resets_after_duration() {
     let response = ctx
         .server
         .post("/api/v1/auth/login")
+        .add_header(
+            forwarded_for,
+            HeaderValue::from_static("198.51.101.250"),
+        )
         .json(&serde_json::json!({
             "username": user.username,
             "password": password
