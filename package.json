@@ -1,6 +1,14 @@
 {
   "name": "calibre-web-rs",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
+  }
 }
-
