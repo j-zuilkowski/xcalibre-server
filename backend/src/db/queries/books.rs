@@ -139,9 +139,15 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     let page_size = clamp_page_size(params.page_size);
     let page = if params.page < 1 { 1 } else { params.page };
     let offset = (page - 1) * page_size;
+    let fts_query = normalize_fts_query(params.q.as_deref());
 
     let mut total_query = QueryBuilder::<Sqlite>::new("SELECT COUNT(DISTINCT b.id) AS total FROM books b");
-    apply_list_filters(&mut total_query, params);
+    if fts_query.is_some() {
+        total_query.push(
+            " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
+        );
+    }
+    apply_list_filters(&mut total_query, params, fts_query.as_deref());
     let total: i64 = total_query
         .build_query_scalar()
         .fetch_one(db)
@@ -166,10 +172,15 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             s.id AS series_id,
             s.name AS series_name
         FROM books b
-        LEFT JOIN series s ON s.id = b.series_id
         "#,
     );
-    apply_list_filters(&mut data_query, params);
+    if fts_query.is_some() {
+        data_query.push(
+            " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
+        );
+    }
+    data_query.push(" LEFT JOIN series s ON s.id = b.series_id");
+    apply_list_filters(&mut data_query, params, fts_query.as_deref());
     data_query.push(" ORDER BY ");
     data_query.push(sort_column);
     data_query.push(" ");
@@ -855,7 +866,11 @@ async fn load_book_identifiers(db: &SqlitePool, book_id: &str) -> anyhow::Result
         .collect())
 }
 
-fn apply_list_filters(qb: &mut QueryBuilder<'_, Sqlite>, params: &ListBooksParams) {
+fn apply_list_filters(
+    qb: &mut QueryBuilder<'_, Sqlite>,
+    params: &ListBooksParams,
+    fts_query: Option<&str>,
+) {
     let mut where_added = false;
     let mut and_where = |qb: &mut QueryBuilder<'_, Sqlite>| {
         if !where_added {
@@ -866,45 +881,10 @@ fn apply_list_filters(qb: &mut QueryBuilder<'_, Sqlite>, params: &ListBooksParam
         }
     };
 
-    if let Some(q) = params
-        .q
-        .as_ref()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-    {
-        let needle = format!("%{}%", q.to_lowercase());
+    if let Some(fts_query) = fts_query {
         and_where(qb);
-        qb.push(
-            r#"
-            (
-                lower(b.title) LIKE
-            "#,
-        );
-        qb.push_bind(needle.clone());
-        qb.push(
-            r#"
-                OR EXISTS (
-                    SELECT 1
-                    FROM book_authors ba
-                    INNER JOIN authors a ON a.id = ba.author_id
-                    WHERE ba.book_id = b.id
-                      AND lower(a.name) LIKE
-            "#,
-        );
-        qb.push_bind(needle.clone());
-        qb.push(
-            r#"
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM book_tags bt
-                    INNER JOIN tags t ON t.id = bt.tag_id
-                    WHERE bt.book_id = b.id
-                      AND lower(t.name) LIKE
-            "#,
-        );
-        qb.push_bind(needle);
-        qb.push("))");
+        qb.push("books_fts MATCH ");
+        qb.push_bind(fts_query.to_string());
     }
 
     if let Some(author_id) = params
@@ -1066,6 +1046,35 @@ fn split_authors(raw: &str) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_alphanumeric() || ch.is_whitespace() || ch == '*' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push(' ');
+        }
+    }
+
+    let terms = sanitized
+        .split_whitespace()
+        .map(|term| term.trim_matches('*'))
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("{term}*"))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" "))
+    }
 }
 
 async fn get_or_create_author(
