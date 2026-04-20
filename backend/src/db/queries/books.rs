@@ -228,6 +228,88 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     })
 }
 
+pub async fn list_book_summaries_by_ids(
+    db: &SqlitePool,
+    book_ids: &[String],
+) -> anyhow::Result<Vec<BookSummary>> {
+    if book_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            b.id AS id,
+            b.title AS title,
+            b.sort_title AS sort_title,
+            b.series_index AS series_index,
+            b.has_cover AS has_cover,
+            b.cover_path AS cover_path,
+            b.language AS language,
+            b.rating AS rating,
+            b.last_modified AS last_modified,
+            s.id AS series_id,
+            s.name AS series_name
+        FROM books b
+        LEFT JOIN series s ON s.id = b.series_id
+        WHERE b.id IN (
+        "#,
+    );
+    {
+        let mut separated = query.separated(", ");
+        for id in book_ids {
+            separated.push_bind(id);
+        }
+    }
+    query.push(")");
+
+    let rows = query
+        .build()
+        .fetch_all(db)
+        .await
+        .context("list books by ids")?;
+
+    let mut summaries_by_id = BTreeMap::new();
+    for row in rows {
+        let book_id: String = row.get("id");
+        let has_cover = row.get::<i64, _>("has_cover") != 0;
+        let cover_path: Option<String> = row.get("cover_path");
+
+        summaries_by_id.insert(
+            book_id.clone(),
+            BookSummary {
+                id: book_id.clone(),
+                title: row.get("title"),
+                sort_title: row.get("sort_title"),
+                authors: load_book_authors(db, &book_id).await?,
+                series: row.get::<Option<String>, _>("series_id").map(|id| SeriesRef {
+                    id,
+                    name: row.get("series_name"),
+                }),
+                series_index: row.get("series_index"),
+                cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
+                has_cover,
+                language: row.get("language"),
+                rating: row.get("rating"),
+                last_modified: row.get("last_modified"),
+            },
+        );
+    }
+
+    let mut ordered = Vec::with_capacity(book_ids.len());
+    let mut seen = BTreeSet::new();
+    for id in book_ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if let Some(summary) = summaries_by_id.remove(id) {
+            ordered.push(summary);
+        }
+    }
+
+    Ok(ordered)
+}
+
 pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Option<Book>> {
     let row = sqlx::query(
         r#"

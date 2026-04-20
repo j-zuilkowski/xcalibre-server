@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["macros", "multipart", "json"] }
 axum-extra = { version = "0.9", features = ["cookie"] }

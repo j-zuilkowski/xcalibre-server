@@ -11,6 +11,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 pub mod auth;
 pub mod books;
+pub mod search;
 
 pub fn router(state: crate::AppState) -> Router {
     let global_rate_limit_per_ip = state.config.limits.rate_limit_per_ip;
@@ -23,6 +24,7 @@ pub fn router(state: crate::AppState) -> Router {
     Router::new()
         .nest("/api/v1/auth", auth_router)
         .merge(books::router(state.clone()))
+        .merge(search::router(state.clone()))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .fallback(spa_fallback)
         .layer(crate::middleware::security_headers::global_rate_limit_layer(
