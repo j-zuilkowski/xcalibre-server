@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub app: AppSection,
     pub database: DatabaseSection,
     pub auth: AuthSection,
+    pub meilisearch: MeilisearchSection,
     pub llm: LlmSection,
     pub limits: LimitsSection,
 }
@@ -70,6 +71,24 @@ pub struct LlmSection {
     pub architect: LlmRoleSection,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MeilisearchSection {
+    pub enabled: bool,
+    pub url: String,
+    pub api_key: String,
+}
+
+impl Default for MeilisearchSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: "http://meilisearch:7700".to_string(),
+            api_key: String::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmRoleSection {
@@ -97,6 +116,7 @@ impl Default for AppConfig {
                 url: "sqlite://library.db".to_string(),
             },
             auth: AuthSection::default(),
+            meilisearch: MeilisearchSection::default(),
             llm: LlmSection::default(),
             limits: LimitsSection {
                 upload_max_bytes: 524_288_000,
@@ -176,30 +196,49 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.app.storage_path = pick_env("APP_STORAGE_PATH", &config.app.storage_path);
     config.database.url = pick_env("APP_DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("APP_JWT_SECRET", &config.auth.jwt_secret);
-    config.auth.access_token_ttl_mins =
-        pick_env_u64("APP_ACCESS_TOKEN_TTL_MINS", config.auth.access_token_ttl_mins);
-    config.auth.refresh_token_ttl_days =
-        pick_env_u64("APP_REFRESH_TOKEN_TTL_DAYS", config.auth.refresh_token_ttl_days);
+    config.auth.access_token_ttl_mins = pick_env_u64(
+        "APP_ACCESS_TOKEN_TTL_MINS",
+        config.auth.access_token_ttl_mins,
+    );
+    config.auth.refresh_token_ttl_days = pick_env_u64(
+        "APP_REFRESH_TOKEN_TTL_DAYS",
+        config.auth.refresh_token_ttl_days,
+    );
     config.auth.max_login_attempts =
         pick_env_u32("APP_MAX_LOGIN_ATTEMPTS", config.auth.max_login_attempts);
-    config.auth.lockout_duration_mins =
-        pick_env_u64("APP_LOCKOUT_DURATION_MINS", config.auth.lockout_duration_mins);
+    config.auth.lockout_duration_mins = pick_env_u64(
+        "APP_LOCKOUT_DURATION_MINS",
+        config.auth.lockout_duration_mins,
+    );
+
+    config.meilisearch.enabled =
+        pick_env_bool("APP_MEILISEARCH_ENABLED", config.meilisearch.enabled);
+    config.meilisearch.url = pick_env("APP_MEILISEARCH_URL", &config.meilisearch.url);
+    config.meilisearch.api_key = pick_env("APP_MEILISEARCH_API_KEY", &config.meilisearch.api_key);
 
     config.llm.enabled = pick_env_bool("APP_LLM_ENABLED", config.llm.enabled);
     config.llm.librarian.endpoint =
         pick_env("APP_LLM_LIBRARIAN_ENDPOINT", &config.llm.librarian.endpoint);
     config.llm.librarian.model = pick_env("APP_LLM_LIBRARIAN_MODEL", &config.llm.librarian.model);
-    config.llm.librarian.timeout_secs =
-        pick_env_u64("APP_LLM_LIBRARIAN_TIMEOUT_SECS", config.llm.librarian.timeout_secs);
-    config.llm.librarian.system_prompt =
-        pick_env("APP_LLM_LIBRARIAN_SYSTEM_PROMPT", &config.llm.librarian.system_prompt);
+    config.llm.librarian.timeout_secs = pick_env_u64(
+        "APP_LLM_LIBRARIAN_TIMEOUT_SECS",
+        config.llm.librarian.timeout_secs,
+    );
+    config.llm.librarian.system_prompt = pick_env(
+        "APP_LLM_LIBRARIAN_SYSTEM_PROMPT",
+        &config.llm.librarian.system_prompt,
+    );
     config.llm.architect.endpoint =
         pick_env("APP_LLM_ARCHITECT_ENDPOINT", &config.llm.architect.endpoint);
     config.llm.architect.model = pick_env("APP_LLM_ARCHITECT_MODEL", &config.llm.architect.model);
-    config.llm.architect.timeout_secs =
-        pick_env_u64("APP_LLM_ARCHITECT_TIMEOUT_SECS", config.llm.architect.timeout_secs);
-    config.llm.architect.system_prompt =
-        pick_env("APP_LLM_ARCHITECT_SYSTEM_PROMPT", &config.llm.architect.system_prompt);
+    config.llm.architect.timeout_secs = pick_env_u64(
+        "APP_LLM_ARCHITECT_TIMEOUT_SECS",
+        config.llm.architect.timeout_secs,
+    );
+    config.llm.architect.system_prompt = pick_env(
+        "APP_LLM_ARCHITECT_SYSTEM_PROMPT",
+        &config.llm.architect.system_prompt,
+    );
 
     config.limits.upload_max_bytes =
         pick_env_u64("APP_UPLOAD_MAX_BYTES", config.limits.upload_max_bytes);
@@ -210,6 +249,9 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.app.storage_path = pick_env("STORAGE_PATH", &config.app.storage_path);
     config.database.url = pick_env("DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("JWT_SECRET", &config.auth.jwt_secret);
+    config.meilisearch.enabled = pick_env_bool("MEILISEARCH_ENABLED", config.meilisearch.enabled);
+    config.meilisearch.url = pick_env("MEILISEARCH_URL", &config.meilisearch.url);
+    config.meilisearch.api_key = pick_env("MEILISEARCH_API_KEY", &config.meilisearch.api_key);
     config.llm.enabled = pick_env_bool("ENABLE_LLM_FEATURES", config.llm.enabled);
 }
 

@@ -16,9 +16,11 @@ pub struct AppState {
 pub struct LlmClient;
 
 impl AppState {
-    pub fn new(db: SqlitePool, config: AppConfig) -> Self {
-        let storage = Arc::new(crate::storage::LocalFsStorage::new(&config.app.storage_path));
-        let search = Arc::new(crate::search::fts5::Fts5Backend::new(db.clone()));
+    pub async fn new(db: SqlitePool, config: AppConfig) -> Self {
+        let storage = Arc::new(crate::storage::LocalFsStorage::new(
+            &config.app.storage_path,
+        ));
+        let search = crate::search::build_search_backend(&config, db.clone()).await;
         Self {
             db,
             config,

@@ -1,7 +1,5 @@
 use crate::{
-    db::queries::books as book_queries,
-    middleware::auth::AuthenticatedUser,
-    AppError, AppState,
+    db::queries::books as book_queries, middleware::auth::AuthenticatedUser, AppError, AppState,
 };
 use axum::{
     body::Body,
@@ -15,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Seek},
     path::{Component, Path as FsPath, PathBuf},
+    sync::Arc,
 };
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
@@ -32,8 +31,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_book).patch(patch_book).delete(delete_book),
         )
         .route("/api/v1/books/:id/cover", get(get_cover))
-        .route("/api/v1/books/:id/formats/:format/download", get(download_format))
-        .route("/api/v1/books/:id/formats/:format/stream", get(stream_format))
+        .route(
+            "/api/v1/books/:id/formats/:format/download",
+            get(download_format),
+        )
+        .route(
+            "/api/v1/books/:id/formats/:format/stream",
+            get(stream_format),
+        )
         .route_layer(auth_layer)
 }
 
@@ -215,8 +220,10 @@ async fn upload_book(
         return Err(AppError::Forbidden);
     }
 
-    let parsed_upload = parse_upload_multipart(multipart, state.config.limits.upload_max_bytes).await?;
-    let detected_format = detect_upload_format(&parsed_upload.bytes).ok_or(AppError::Unprocessable)?;
+    let parsed_upload =
+        parse_upload_multipart(multipart, state.config.limits.upload_max_bytes).await?;
+    let detected_format =
+        detect_upload_format(&parsed_upload.bytes).ok_or(AppError::Unprocessable)?;
     validate_extension_matches(&parsed_upload.file_name, detected_format)?;
     let extracted_cover_source = if detected_format == UploadFormat::Epub {
         extract_epub_cover_source(&parsed_upload.bytes)
@@ -224,7 +231,11 @@ async fn upload_book(
         None
     };
 
-    let mut ingest = extract_metadata(detected_format, &parsed_upload.file_name, &parsed_upload.bytes)?;
+    let mut ingest = extract_metadata(
+        detected_format,
+        &parsed_upload.file_name,
+        &parsed_upload.bytes,
+    )?;
     ingest = apply_metadata_override(ingest, parsed_upload.metadata)?;
 
     let title = ingest
@@ -302,7 +313,9 @@ async fn upload_book(
                 .put(&thumb_relative_path, &thumb_jpg)
                 .map_err(|_| AppError::Internal)?;
 
-            if let Err(err) = book_queries::set_book_cover_path(&state.db, &book.id, &cover_relative_path).await {
+            if let Err(err) =
+                book_queries::set_book_cover_path(&state.db, &book.id, &cover_relative_path).await
+            {
                 let _ = state.storage.delete(&cover_relative_path);
                 let _ = state.storage.delete(&thumb_relative_path);
                 tracing::error!("failed to persist cover path for book {}: {err:#}", book.id);
@@ -318,6 +331,7 @@ async fn upload_book(
         }
     }
 
+    queue_book_index(state.search.clone(), book.clone());
     Ok((StatusCode::CREATED, Json(book)))
 }
 
@@ -357,9 +371,13 @@ async fn patch_book(
         }),
     };
 
-    let result = book_queries::patch_book_with_audit(&state.db, &book_id, &auth_user.user.id, patch).await;
+    let result =
+        book_queries::patch_book_with_audit(&state.db, &book_id, &auth_user.user.id, patch).await;
     match result {
-        Ok(Some(book)) => Ok(Json(book)),
+        Ok(Some(book)) => {
+            queue_book_index(state.search.clone(), book.clone());
+            Ok(Json(book))
+        }
         Ok(None) => Err(AppError::NotFound),
         Err(err) => {
             if format!("{err:#}").contains("duplicate_isbn") {
@@ -388,13 +406,21 @@ async fn delete_book(
 
     let Some(paths) = book_queries::delete_book_and_collect_paths(&state.db, &book_id)
         .await
-        .map_err(|_| AppError::Internal)?
+        .map_err(|err| {
+            tracing::error!(book_id = %book_id, error = %err, "failed to delete book from database");
+            AppError::Internal
+        })?
     else {
         return Err(AppError::NotFound);
     };
 
+    queue_book_removal(state.search.clone(), book_id.clone());
+
     for path in paths {
-        state.storage.delete(&path).map_err(|_| AppError::Internal)?;
+        if let Err(err) = state.storage.delete(&path) {
+            tracing::error!(book_id = %book_id, path = %path, error = %err, "failed to delete book file");
+            return Err(AppError::Internal);
+        }
     }
 
     Ok(Json(serde_json::json!({ "success": true })))
@@ -491,7 +517,10 @@ fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
     Ok(clean)
 }
 
-fn canonicalize_storage_file_path(state: &AppState, relative_path: &str) -> Result<PathBuf, AppError> {
+fn canonicalize_storage_file_path(
+    state: &AppState,
+    relative_path: &str,
+) -> Result<PathBuf, AppError> {
     let clean = sanitize_relative_path(relative_path)?;
     let storage_root = PathBuf::from(&state.config.app.storage_path);
     std::fs::create_dir_all(&storage_root).map_err(|_| AppError::Internal)?;
@@ -530,7 +559,11 @@ async fn parse_upload_multipart(
     let mut bytes: Option<Vec<u8>> = None;
     let mut metadata = UploadMetadata::default();
 
-    while let Some(field) = multipart.next_field().await.map_err(|_| AppError::BadRequest)? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::BadRequest)?
+    {
         let Some(name) = field.name().map(ToOwned::to_owned) else {
             continue;
         };
@@ -577,8 +610,12 @@ fn detect_upload_format(bytes: &[u8]) -> Option<UploadFormat> {
     if bytes.starts_with(b"PK\x03\x04") {
         return Some(UploadFormat::Epub);
     }
-    if bytes.windows(b"BOOKMOBI".len()).any(|window| window == b"BOOKMOBI")
-        || bytes.windows(b"PalmDOC".len()).any(|window| window == b"PalmDOC")
+    if bytes
+        .windows(b"BOOKMOBI".len())
+        .any(|window| window == b"BOOKMOBI")
+        || bytes
+            .windows(b"PalmDOC".len())
+            .any(|window| window == b"PalmDOC")
     {
         return Some(UploadFormat::Mobi);
     }
@@ -615,8 +652,7 @@ fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
         None => Vec::new(),
     };
 
-    tags
-        .into_iter()
+    tags.into_iter()
         .flat_map(|tag| tag.split(',').map(ToOwned::to_owned).collect::<Vec<_>>())
         .map(trim_owned)
         .filter(|tag| !tag.is_empty())
@@ -625,6 +661,44 @@ fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
 
 fn trim_owned(value: String) -> String {
     value.trim().to_string()
+}
+
+fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::db::models::Book) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                if let Err(err) = search.index_book(&book).await {
+                    tracing::warn!(
+                        book_id = %book.id,
+                        error = %err,
+                        "failed to index book in search backend"
+                    );
+                }
+            });
+        }
+        Err(_) => {
+            tracing::warn!(book_id = %book.id, "no active runtime available for search indexing");
+        }
+    }
+}
+
+fn queue_book_removal(search: Arc<dyn crate::search::SearchBackend>, book_id: String) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                if let Err(err) = search.remove_book(&book_id).await {
+                    tracing::warn!(
+                        book_id = %book_id,
+                        error = %err,
+                        "failed to remove book from search backend"
+                    );
+                }
+            });
+        }
+        Err(_) => {
+            tracing::warn!(book_id = %book_id, "no active runtime available for search deindexing");
+        }
+    }
 }
 
 fn extract_metadata(

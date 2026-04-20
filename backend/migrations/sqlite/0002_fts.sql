@@ -4,7 +4,6 @@ CREATE VIRTUAL TABLE books_fts USING fts5(
     authors,
     tags,
     series,
-    content='',
     tokenize='unicode61 remove_diacritics 1'
 );
 

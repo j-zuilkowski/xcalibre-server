@@ -17,11 +17,7 @@ const X_FORWARDED_FOR: &str = "x-forwarded-for";
 fn assert_security_headers(response: &TestResponse) {
     assert_header(response, X_CONTENT_TYPE_OPTIONS, "nosniff");
     assert_header(response, X_FRAME_OPTIONS, "DENY");
-    assert_header(
-        response,
-        REFERRER_POLICY,
-        "strict-origin-when-cross-origin",
-    );
+    assert_header(response, REFERRER_POLICY, "strict-origin-when-cross-origin");
     assert_header(
         response,
         CONTENT_SECURITY_POLICY,
@@ -172,7 +168,10 @@ async fn test_rate_limit_resets_after_window() {
         }))
         .await;
 
-    assert_ne!(response_after_wait.status_code(), StatusCode::TOO_MANY_REQUESTS);
+    assert_ne!(
+        response_after_wait.status_code(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -184,7 +183,7 @@ async fn test_upload_over_size_limit_returns_413() {
     config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
     config.limits.upload_max_bytes = 8;
 
-    let server = TestServer::new(app(AppState::new(db, config))).expect("build test server");
+    let server = TestServer::new(app(AppState::new(db, config).await)).expect("build test server");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
     let ip = HeaderValue::from_static("198.51.100.12");
 

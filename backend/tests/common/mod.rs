@@ -48,12 +48,17 @@ pub async fn test_db() -> SqlitePool {
 
 impl TestContext {
     pub async fn new() -> Self {
+        Self::new_with_config(AppConfig::default()).await
+    }
+
+    pub async fn new_with_config(mut config: AppConfig) -> Self {
         let storage = tempfile::tempdir().expect("tempdir");
         let db = test_db().await;
-        let mut config = AppConfig::default();
         config.app.storage_path = storage.path().to_string_lossy().to_string();
-        config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
-        let state = AppState::new(db.clone(), config);
+        if config.auth.jwt_secret.trim().is_empty() {
+            config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
+        }
+        let state = AppState::new(db.clone(), config).await;
         let server = TestServer::new(app(state)).expect("build test server");
 
         Self {
@@ -285,8 +290,7 @@ pub fn epub_with_cover_bytes() -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(cursor);
     let options = FileOptions::default();
 
-    zip.start_file("mimetype", options)
-        .expect("start mimetype");
+    zip.start_file("mimetype", options).expect("start mimetype");
     zip.write_all(b"application/epub+zip")
         .expect("write mimetype");
 
