@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["meilisearch"]
+default = ["meilisearch", "sqlite-vec"]
 meilisearch = ["dep:meilisearch-sdk"]
+sqlite-vec = ["dep:sqlite-vec"]
 
 [dependencies]
 anyhow = "1"
@@ -26,6 +27,7 @@ meilisearch-sdk = { version = "0.27", optional = true }
 mime = "0.3"
 mime_guess = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sqlite-vec = { version = "0.1", optional = true } # SQLite extension, loaded at runtime
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

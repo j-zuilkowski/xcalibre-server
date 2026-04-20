@@ -9,7 +9,7 @@ use backend::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::SqlitePool;
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -30,12 +30,11 @@ pub struct TestContext {
     pub db: SqlitePool,
     pub storage: TempDir,
     pub server: TestServer,
+    pub state: AppState,
 }
 
 pub async fn test_db() -> SqlitePool {
-    let db = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let db = backend::db::connect_sqlite_pool("sqlite::memory:", 1)
         .await
         .expect("connect sqlite");
     let migration_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite");
@@ -59,12 +58,13 @@ impl TestContext {
             config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
         }
         let state = AppState::new(db.clone(), config).await;
-        let server = TestServer::new(app(state)).expect("build test server");
+        let server = TestServer::new(app(state.clone())).expect("build test server");
 
         Self {
             db,
             storage,
             server,
+            state,
         }
     }
 

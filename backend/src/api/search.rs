@@ -1,8 +1,4 @@
-use crate::{
-    db::queries::books as book_queries,
-    search::SearchQuery,
-    AppError, AppState,
-};
+use crate::{db::queries::books as book_queries, search::SearchQuery, AppError, AppState};
 use axum::{
     extract::{Query, State},
     middleware,
@@ -18,6 +14,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/api/v1/search", get(search_books))
+        .route("/api/v1/search/semantic", get(search_semantic))
         .route("/api/v1/search/suggestions", get(search_suggestions))
         .route("/api/v1/system/search-status", get(search_status))
         .route_layer(auth_layer)
@@ -38,6 +35,13 @@ struct SearchQueryParams {
 struct SuggestionsQueryParams {
     q: Option<String>,
     limit: Option<u8>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct SemanticSearchQueryParams {
+    q: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,14 +150,75 @@ async fn search_suggestions(
     Ok(Json(SuggestionsResponse { suggestions }))
 }
 
-async fn search_status(State(state): State<AppState>) -> Result<Json<SearchStatusResponse>, AppError> {
+async fn search_semantic(
+    State(state): State<AppState>,
+    Query(query): Query<SemanticSearchQueryParams>,
+) -> Result<Json<PaginatedResponse<SearchResultItem>>, AppError> {
+    let q = query.q.unwrap_or_default();
+    if q.trim().is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let semantic = semantic_search_or_unavailable(&state)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = clamp_semantic_page_size(query.page_size.unwrap_or(24));
+
+    let search_page = semantic
+        .search_semantic(&q, page, page_size)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = %err, "semantic search failed");
+            AppError::ServiceUnavailable
+        })?;
+
+    let ordered_ids = search_page
+        .hits
+        .iter()
+        .map(|hit| hit.book_id.clone())
+        .collect::<Vec<_>>();
+
+    let summaries = book_queries::list_book_summaries_by_ids(&state.db, &ordered_ids)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut summary_by_id = HashMap::new();
+    for summary in summaries {
+        summary_by_id.insert(summary.id.clone(), summary);
+    }
+
+    let mut items = Vec::with_capacity(search_page.hits.len());
+    for hit in search_page.hits {
+        if let Some(book) = summary_by_id.remove(&hit.book_id) {
+            items.push(SearchResultItem {
+                book,
+                score: hit.score,
+            });
+        }
+    }
+
+    Ok(Json(PaginatedResponse {
+        items,
+        total: search_page.total,
+        page: search_page.page,
+        page_size: search_page.page_size,
+    }))
+}
+
+async fn search_status(
+    State(state): State<AppState>,
+) -> Result<Json<SearchStatusResponse>, AppError> {
     let backend = state.search.backend_name().to_string();
     let meilisearch = backend == "meilisearch" && state.search.is_available().await;
+    let semantic = state
+        .semantic_search
+        .as_ref()
+        .map(|semantic| semantic.is_configured())
+        .unwrap_or(false);
 
     Ok(Json(SearchStatusResponse {
         fts: true,
         meilisearch,
-        semantic: state.llm.is_some(),
+        semantic,
         backend,
     }))
 }
@@ -164,4 +229,30 @@ fn clamp_page_size(page_size: u32) -> u32 {
         n if n > 100 => 100,
         n => n,
     }
+}
+
+fn clamp_semantic_page_size(page_size: u32) -> u32 {
+    match page_size {
+        0 => 24,
+        n if n > 50 => 50,
+        n => n,
+    }
+}
+
+fn semantic_search_or_unavailable(
+    state: &AppState,
+) -> Result<std::sync::Arc<crate::search::semantic::SemanticSearch>, AppError> {
+    if !state.config.llm.enabled {
+        return Err(AppError::ServiceUnavailable);
+    }
+
+    let Some(semantic) = state.semantic_search.clone() else {
+        return Err(AppError::ServiceUnavailable);
+    };
+
+    if !semantic.is_configured() {
+        return Err(AppError::ServiceUnavailable);
+    }
+
+    Ok(semantic)
 }

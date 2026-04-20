@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub mod fts5;
 #[cfg(feature = "meilisearch")]
 pub mod meili;
+pub mod semantic;
 
 #[derive(Clone, Debug)]
 pub struct SearchQuery {

@@ -1,5 +1,4 @@
-use crate::config::AppConfig;
-use serde::{Deserialize, Serialize};
+use crate::{config::AppConfig, llm::embeddings::EmbeddingClient};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -9,11 +8,8 @@ pub struct AppState {
     pub config: AppConfig,
     pub storage: Arc<dyn crate::storage::StorageBackend>,
     pub search: Arc<dyn crate::search::SearchBackend>,
-    pub llm: Option<LlmClient>,
+    pub semantic_search: Option<Arc<crate::search::semantic::SemanticSearch>>,
 }
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct LlmClient;
 
 impl AppState {
     pub async fn new(db: SqlitePool, config: AppConfig) -> Self {
@@ -21,12 +17,26 @@ impl AppState {
             &config.app.storage_path,
         ));
         let search = crate::search::build_search_backend(&config, db.clone()).await;
+        let semantic_search = if config.llm.enabled {
+            match EmbeddingClient::new(&config) {
+                Ok(client) => Some(Arc::new(crate::search::semantic::SemanticSearch::new(
+                    db.clone(),
+                    client,
+                ))),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to initialize embedding client");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Self {
             db,
             config,
             storage,
             search,
-            llm: None,
+            semantic_search,
         }
     }
 }

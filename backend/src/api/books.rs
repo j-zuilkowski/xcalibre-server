@@ -1,5 +1,7 @@
 use crate::{
-    db::queries::books as book_queries, middleware::auth::AuthenticatedUser, AppError, AppState,
+    db::queries::{books as book_queries, llm as llm_queries},
+    middleware::auth::AuthenticatedUser,
+    AppError, AppState,
 };
 use axum::{
     body::Body,
@@ -331,6 +333,7 @@ async fn upload_book(
         }
     }
 
+    enqueue_semantic_index_if_enabled(&state, &book.id).await;
     queue_book_index(state.search.clone(), book.clone());
     Ok((StatusCode::CREATED, Json(book)))
 }
@@ -375,6 +378,7 @@ async fn patch_book(
         book_queries::patch_book_with_audit(&state.db, &book_id, &auth_user.user.id, patch).await;
     match result {
         Ok(Some(book)) => {
+            enqueue_semantic_index_if_enabled(&state, &book.id).await;
             queue_book_index(state.search.clone(), book.clone());
             Ok(Json(book))
         }
@@ -698,6 +702,20 @@ fn queue_book_removal(search: Arc<dyn crate::search::SearchBackend>, book_id: St
         Err(_) => {
             tracing::warn!(book_id = %book_id, "no active runtime available for search deindexing");
         }
+    }
+}
+
+async fn enqueue_semantic_index_if_enabled(state: &AppState, book_id: &str) {
+    if !state.config.llm.enabled {
+        return;
+    }
+
+    if let Err(err) = llm_queries::enqueue_semantic_index_job(&state.db, book_id).await {
+        tracing::warn!(
+            book_id = %book_id,
+            error = %err,
+            "failed to enqueue semantic_index job"
+        );
     }
 }
 
