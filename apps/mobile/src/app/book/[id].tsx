@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,12 +8,12 @@ import {
   View,
 } from "react-native";
 import { Image } from "expo-image";
-import * as FileSystem from "expo-file-system";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Book } from "@calibre/shared";
 import { useApi } from "../../lib/api";
-import { getAccessToken } from "../../lib/auth";
+import { db } from "../../lib/db";
+import { deleteDownload, downloadBook, getLocalPath } from "../../lib/downloads";
 
 type AiTab = "classify" | "validate" | "derive";
 
@@ -41,23 +42,15 @@ function starRating(ratingOutOfTen: number | null): string {
   return `${"★".repeat(filled)}${"☆".repeat(5 - filled)}`;
 }
 
-function booksDirectory(): string {
-  return `${FileSystem.documentDirectory ?? ""}books`;
-}
-
-function localFormatPath(bookId: string, format: string): string {
-  return `${booksDirectory()}/${bookId}.${format.toLowerCase()}`;
-}
-
 export default function BookDetailScreen() {
   const client = useApi();
-  const router = useRouter();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const bookId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [aiTab, setAiTab] = useState<AiTab>("classify");
   const [downloadedFormats, setDownloadedFormats] = useState<Record<string, string>>({});
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -94,12 +87,12 @@ export default function BookDetailScreen() {
     let cancelled = false;
 
     void (async () => {
+      const database = await db;
       const localFiles: Record<string, string> = {};
       for (const format of book.formats) {
-        const path = localFormatPath(book.id, format.format);
-        const info = await FileSystem.getInfoAsync(path);
-        if (info.exists) {
-          localFiles[format.format] = path;
+        const path = await getLocalPath(database, book.id, format.format);
+        if (path) {
+          localFiles[format.format.toUpperCase()] = path;
         }
       }
 
@@ -114,30 +107,38 @@ export default function BookDetailScreen() {
   }, [bookQuery.data]);
 
   const downloadFormat = async (book: Book, format: string): Promise<void> => {
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      router.replace("/login");
-      return;
-    }
-
-    await FileSystem.makeDirectoryAsync(booksDirectory(), { intermediates: true });
-
-    const destination = localFormatPath(book.id, format);
-    setDownloadingFormat(format);
+    const database = await db;
+    const normalizedFormat = format.toUpperCase();
+    setDownloadingFormat(normalizedFormat);
+    setDownloadError(null);
 
     try {
-      await FileSystem.downloadAsync(client.downloadUrl(book.id, format), destination, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
+      const { localPath } = await downloadBook(client, database, book.id, normalizedFormat);
       setDownloadedFormats((current) => ({
         ...current,
-        [format]: destination,
+        [normalizedFormat]: localPath,
       }));
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Unable to download this format.");
     } finally {
       setDownloadingFormat(null);
+    }
+  };
+
+  const removeDownload = async (book: Book, format: string): Promise<void> => {
+    const database = await db;
+    const normalizedFormat = format.toUpperCase();
+    setDownloadError(null);
+
+    try {
+      await deleteDownload(database, book.id, normalizedFormat);
+      setDownloadedFormats((current) => {
+        const next = { ...current };
+        delete next[normalizedFormat];
+        return next;
+      });
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Unable to remove this download.");
     }
   };
 
@@ -155,7 +156,7 @@ export default function BookDetailScreen() {
     return (withDocumentType?.document_type ?? "unknown").toUpperCase();
   }, [book]);
 
-  const hasReadableDownload = Object.keys(downloadedFormats).length > 0;
+  const hasReadableDownload = Boolean(downloadedFormats.EPUB || downloadedFormats.PDF);
 
   if (!bookId) {
     return (
@@ -239,23 +240,45 @@ export default function BookDetailScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Formats</Text>
+        {downloadError ? <Text style={styles.downloadError}>{downloadError}</Text> : null}
         {book.formats.map((format) => (
           <View key={format.id} style={styles.formatRow}>
             <View>
               <Text style={styles.formatName}>{format.format.toUpperCase()}</Text>
               <Text style={styles.subtleText}>{formatBytes(format.size_bytes)}</Text>
             </View>
-            <Pressable
-              style={styles.downloadButton}
-              disabled={downloadingFormat === format.format}
-              onPress={() => {
-                void downloadFormat(book, format.format);
-              }}
-            >
-              <Text style={styles.downloadButtonText}>
-                {downloadingFormat === format.format ? "Downloading…" : "Download"}
-              </Text>
-            </Pressable>
+            {downloadedFormats[format.format.toUpperCase()] ? (
+              <View style={styles.downloadedActions}>
+                <View style={styles.downloadedBadge}>
+                  <Text style={styles.downloadedBadgeText}>Downloaded ✓</Text>
+                </View>
+                <Pressable
+                  style={styles.deleteButton}
+                  onPress={() => {
+                    void removeDownload(book, format.format);
+                  }}
+                >
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                style={styles.downloadButton}
+                disabled={downloadingFormat === format.format.toUpperCase()}
+                onPress={() => {
+                  void downloadFormat(book, format.format);
+                }}
+              >
+                {downloadingFormat === format.format.toUpperCase() ? (
+                  <View style={styles.downloadButtonLoading}>
+                    <ActivityIndicator color="#0f766e" size="small" />
+                    <Text style={styles.downloadButtonText}>Downloading…</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.downloadButtonText}>Download</Text>
+                )}
+              </Pressable>
+            )}
           </View>
         ))}
 
@@ -503,6 +526,44 @@ const styles = StyleSheet.create({
   },
   downloadButtonText: {
     color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  downloadError: {
+    color: "#b91c1c",
+    fontSize: 12,
+  },
+  downloadButtonLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  downloadedActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  downloadedBadge: {
+    backgroundColor: "#d1fae5",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  downloadedBadgeText: {
+    color: "#065f46",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  deleteButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#fff1f2",
+  },
+  deleteButtonText: {
+    color: "#b91c1c",
     fontSize: 12,
     fontWeight: "600",
   },

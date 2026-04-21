@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { getAccessToken, setAuthExpiredHandler } from "../lib/auth";
 import { initializeApi } from "../lib/api";
+import { runMigrations } from "../lib/db";
 import { queryClient } from "../lib/query-client";
 
 export default function RootLayout() {
@@ -29,6 +30,7 @@ export default function RootLayout() {
 
     void (async () => {
       await initializeApi();
+      await runMigrations();
       const accessToken = await getAccessToken();
 
       if (cancelled) {

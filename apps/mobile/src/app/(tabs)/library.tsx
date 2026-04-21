@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   FlatList,
   Pressable,
@@ -8,11 +9,16 @@ import {
   View,
   type ListRenderItem,
 } from "react-native";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BookSummary, PaginatedResponse } from "@calibre/shared";
 import { Ionicons } from "@expo/vector-icons";
+import { Stack } from "expo-router";
+import { useNetInfo } from "@react-native-community/netinfo";
 import { BookCard } from "../../components/BookCard";
 import { useApi } from "../../lib/api";
+import { listLocalBooks } from "../../lib/db";
+import { syncLibrary } from "../../lib/sync";
+import { db } from "../../lib/db";
 
 const PAGE_SIZE = 30;
 
@@ -64,10 +70,16 @@ function EmptyState() {
 export default function LibraryScreen() {
   const client = useApi();
   const queryClient = useQueryClient();
+  const netInfo = useNetInfo();
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+  const isOnline = !isOffline;
 
   const booksQuery = useInfiniteQuery({
     queryKey: LIBRARY_QUERY_KEY,
     initialPageParam: 1,
+    enabled: isOnline,
     queryFn: async ({ pageParam }) => {
       return client.listBooks({
         page: Number(pageParam),
@@ -83,20 +95,71 @@ export default function LibraryScreen() {
     },
   });
 
+  const localBooksQuery = useQuery({
+    queryKey: ["books", "local"] as const,
+    enabled: isOffline,
+    queryFn: async () => {
+      const database = await db;
+      return listLocalBooks(database);
+    },
+  });
+
   const books = useMemo(
-    () => booksQuery.data?.pages.flatMap((page) => page.items) ?? [],
-    [booksQuery.data],
+    () =>
+      isOffline
+        ? localBooksQuery.data ?? []
+        : booksQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [booksQuery.data, isOffline, localBooksQuery.data],
   );
 
   const refreshLibrary = () => {
+    if (isOffline) {
+      void localBooksQuery.refetch();
+      return;
+    }
+
     void queryClient.invalidateQueries({ queryKey: LIBRARY_QUERY_KEY });
   };
 
   const renderItem: ListRenderItem<BookSummary> = ({ item }) => <BookCard book={item} />;
 
-  if (booksQuery.isLoading) {
+  useEffect(() => {
+    if (isOffline) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setIsSyncing(true);
+      try {
+        const database = await db;
+        await syncLibrary(client, database);
+      } catch {
+        return;
+      } finally {
+        if (!cancelled) {
+          setIsSyncing(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, isOffline]);
+
+  const isLoading = isOffline ? localBooksQuery.isLoading : booksQuery.isLoading;
+
+  if (isLoading) {
     return (
       <View style={styles.screen}>
+        <Stack.Screen
+          options={{
+            headerRight: () =>
+              isSyncing ? <ActivityIndicator color="#0f766e" size="small" /> : null,
+          }}
+        />
         <LoadingSkeleton />
       </View>
     );
@@ -104,6 +167,12 @@ export default function LibraryScreen() {
 
   return (
     <View style={styles.screen}>
+      <Stack.Screen
+        options={{
+          headerRight: () =>
+            isSyncing ? <ActivityIndicator color="#0f766e" size="small" /> : null,
+        }}
+      />
       <FlatList
         testID="library-list"
         data={books}
@@ -113,16 +182,20 @@ export default function LibraryScreen() {
         columnWrapperStyle={styles.columnWrapper}
         contentContainerStyle={books.length === 0 ? styles.emptyContentContainer : styles.listContent}
         onRefresh={refreshLibrary}
-        refreshing={booksQuery.isRefetching && !booksQuery.isFetchingNextPage}
+        refreshing={
+          isOffline
+            ? localBooksQuery.isRefetching
+            : booksQuery.isRefetching && !booksQuery.isFetchingNextPage
+        }
         ListEmptyComponent={<EmptyState />}
         onEndReached={() => {
-          if (booksQuery.hasNextPage && !booksQuery.isFetchingNextPage) {
+          if (!isOffline && booksQuery.hasNextPage && !booksQuery.isFetchingNextPage) {
             void booksQuery.fetchNextPage();
           }
         }}
         onEndReachedThreshold={0.7}
         ListFooterComponent={
-          booksQuery.isFetchingNextPage ? (
+          !isOffline && booksQuery.isFetchingNextPage ? (
             <Pressable style={styles.fetchingMore} disabled>
               <Text style={styles.fetchingMoreText}>Loading more…</Text>
             </Pressable>
