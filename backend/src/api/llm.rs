@@ -1,4 +1,5 @@
 use crate::{
+    api::books::load_book_or_not_found,
     db::queries::{books as book_queries, llm as llm_queries},
     llm::classify::classify_book,
     middleware::auth::AuthenticatedUser,
@@ -11,7 +12,6 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::time::Duration;
 
 const HEALTH_TIMEOUT_SECS: u64 = 3;
@@ -160,19 +160,6 @@ async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError
         return Err(AppError::Forbidden);
     }
     Ok(())
-}
-
-async fn load_book_or_not_found(
-    db: &SqlitePool,
-    book_id: &str,
-) -> Result<crate::db::models::Book, AppError> {
-    let Some(book) = book_queries::get_book_by_id(db, book_id)
-        .await
-        .map_err(|_| AppError::Internal)?
-    else {
-        return Err(AppError::NotFound);
-    };
-    Ok(book)
 }
 
 async fn ping_models_endpoint(endpoint: &str) -> bool {

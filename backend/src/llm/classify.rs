@@ -80,8 +80,27 @@ fn parse_strict(raw: &str) -> Option<Vec<TagSuggestion>> {
 }
 
 fn extract_json_block(raw: &str) -> Option<&str> {
-    static JSON_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-    let regex =
-        JSON_BLOCK_REGEX.get_or_init(|| Regex::new(r"(?s)\{.*\}").expect("valid JSON regex"));
-    regex.find(raw).map(|capture| capture.as_str())
+    static JSON_START_REGEX: OnceLock<Regex> = OnceLock::new();
+    let start_regex =
+        JSON_START_REGEX.get_or_init(|| Regex::new(r"\{").expect("valid JSON start regex"));
+    let start = start_regex.find(raw)?.start();
+
+    let mut depth = 0_i32;
+    let mut end = None;
+    for (offset, ch) in raw[start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + offset + ch.len_utf8());
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let end = end?;
+    Some(&raw[start..end])
 }
