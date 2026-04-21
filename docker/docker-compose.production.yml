@@ -1,0 +1,48 @@
+services:
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY:-calibre-web-rs}:latest
+    restart: unless-stopped
+    ports: ["127.0.0.1:8083:8083"]
+    volumes:
+      - ../config.toml:/app/config.toml:ro
+      - library_data:/app/storage
+    environment:
+      APP_DATABASE_URL: sqlite:///app/storage/library.db
+      RUST_LOG: warn
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/api/v1/llm/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: production
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [app]
+
+volumes:
+  library_data:
+  meili_data:
+  caddy_data:
