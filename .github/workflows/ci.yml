@@ -13,4 +13,11 @@ jobs:
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo audit
         continue-on-error: false
-
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench --bench api_benchmarks -- --output-format bencher 2>&1
+        continue-on-error: true
