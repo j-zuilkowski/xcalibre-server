@@ -1,6 +1,6 @@
 import * as SQLite from "expo-sqlite";
 import type { SQLiteDatabase } from "expo-sqlite";
-import type { BookSummary, SeriesRef } from "@calibre/shared";
+import type { BookSummary, DocumentType, SeriesRef } from "@calibre/shared";
 
 export const db = SQLite.openDatabaseAsync("calibre_local.db");
 
@@ -48,7 +48,7 @@ type LocalBookRow = {
   has_cover: number | null;
   language: string | null;
   rating: number | null;
-  document_type: string;
+  document_type: DocumentType;
   series_json: string | null;
   last_modified: string;
   synced_at: string;
@@ -92,7 +92,7 @@ function rowToBookSummary(row: LocalBookRow): BookSummary {
     has_cover: row.has_cover === 1,
     language: row.language,
     rating: row.rating,
-    document_type: row.document_type as BookSummary["document_type"],
+    document_type: row.document_type,
     last_modified: row.last_modified,
   };
 }

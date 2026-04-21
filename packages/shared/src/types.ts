@@ -35,6 +35,15 @@ export type TagRef = {
   confirmed: boolean;
 };
 
+export type DocumentType =
+  | "novel"
+  | "textbook"
+  | "reference"
+  | "magazine"
+  | "datasheet"
+  | "comic"
+  | "unknown";
+
 export type TagSuggestion = {
   name: string;
   confidence: number;
@@ -219,6 +228,7 @@ export type Book = {
   pubdate: string | null;
   language: string | null;
   rating: number | null;
+  document_type: DocumentType;
   series: SeriesRef | null;
   series_index: number | null;
   authors: AuthorRef[];
@@ -244,6 +254,7 @@ export type BookSummary = Pick<
   | "has_cover"
   | "language"
   | "rating"
+  | "document_type"
   | "last_modified"
 >;
 

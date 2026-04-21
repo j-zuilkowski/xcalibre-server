@@ -1,4 +1,4 @@
-import type { ApiClient as CalibreClient, BookSummary } from "@calibre/shared";
+import type { ApiClient as CalibreClient, BookSummary, DocumentType } from "@calibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { runMigrations } from "./db";
 
@@ -11,6 +11,10 @@ type SyncStateRow = {
 
 function serializeSeries(series: BookSummary["series"]): string | null {
   return series ? JSON.stringify(series) : null;
+}
+
+function toDocumentType(value: BookSummary["document_type"]): DocumentType {
+  return value;
 }
 
 async function getLastSyncAt(database: SQLiteDatabase): Promise<string | null> {
@@ -82,7 +86,7 @@ export async function syncLibrary(
           book.has_cover ? 1 : 0,
           book.language,
           book.rating,
-          book.document_type,
+          toDocumentType(book.document_type),
           serializeSeries(book.series),
           book.last_modified,
           syncedAt,

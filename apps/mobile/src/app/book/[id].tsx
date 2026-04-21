@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { Image } from "expo-image";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { Book } from "@calibre/shared";
 import { useApi } from "../../lib/api";
@@ -42,7 +42,36 @@ function starRating(ratingOutOfTen: number | null): string {
   return `${"★".repeat(filled)}${"☆".repeat(5 - filled)}`;
 }
 
+function normalizeProgress(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  if (value > 1) {
+    return Math.max(0, Math.min(1, value / 100));
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function parseStoredProgress(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as { percentage?: number };
+    if (typeof parsed.percentage !== "number") {
+      return null;
+    }
+    return normalizeProgress(parsed.percentage);
+  } catch {
+    return null;
+  }
+}
+
 export default function BookDetailScreen() {
+  const router = useRouter();
   const client = useApi();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const bookId = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -51,6 +80,7 @@ export default function BookDetailScreen() {
   const [downloadedFormats, setDownloadedFormats] = useState<Record<string, string>>({});
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [readingProgress, setReadingProgress] = useState<number | null>(null);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -99,6 +129,34 @@ export default function BookDetailScreen() {
       if (!cancelled) {
         setDownloadedFormats(localFiles);
       }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookQuery.data]);
+
+  useEffect(() => {
+    const book = bookQuery.data;
+    if (!book) {
+      setReadingProgress(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const database = await db;
+      const row = await database.getFirstAsync<{ value: string | null }>(
+        "SELECT value FROM local_sync_state WHERE key = ?",
+        [`progress_${book.id}`],
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setReadingProgress(parseStoredProgress(row?.value ?? null));
     })();
 
     return () => {
@@ -156,7 +214,12 @@ export default function BookDetailScreen() {
     return (withDocumentType?.document_type ?? "unknown").toUpperCase();
   }, [book]);
 
-  const hasReadableDownload = Boolean(downloadedFormats.EPUB || downloadedFormats.PDF);
+  const preferredReadFormat = downloadedFormats.EPUB ? "EPUB" : downloadedFormats.PDF ? "PDF" : null;
+  const hasReadableDownload = Boolean(preferredReadFormat);
+  const readProgressPercent =
+    typeof readingProgress === "number" && readingProgress > 0
+      ? `${Math.round(readingProgress * 100)}%`
+      : null;
 
   if (!bookId) {
     return (
@@ -285,9 +348,25 @@ export default function BookDetailScreen() {
         <Pressable
           style={[styles.readButton, !hasReadableDownload ? styles.readButtonDisabled : null]}
           disabled={!hasReadableDownload}
+          onPress={() => {
+            if (!preferredReadFormat) {
+              return;
+            }
+
+            router.push({
+              pathname: "/reader/[id]",
+              params: {
+                id: book.id,
+                format: preferredReadFormat,
+              },
+            });
+          }}
         >
           <Text style={styles.readButtonText}>Read</Text>
         </Pressable>
+        {readProgressPercent ? (
+          <Text style={styles.readProgressText}>Progress: {readProgressPercent}</Text>
+        ) : null}
       </View>
 
       {llmHealthQuery.data?.enabled ? (
@@ -581,6 +660,11 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "700",
+  },
+  readProgressText: {
+    color: "#3f3f46",
+    fontSize: 12,
+    fontWeight: "500",
   },
   aiTabs: {
     flexDirection: "row",
