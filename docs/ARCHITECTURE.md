@@ -620,54 +620,57 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 
 ## Phased Build Plan
 
-### Phase 1 — Foundation (Backend)
-- [ ] Cargo workspace + sqlx setup
-- [ ] Initial schema design + migrations
-- [ ] Auth routes (register, login, refresh, logout)
-- [ ] Books CRUD API (read from new DB)
-- [ ] File serving with range request support
-- [ ] Cover pipeline (ingest → resize → store)
-- [ ] HTTP security headers middleware
-- [ ] Account lockout logic
-- [ ] Config file permission check on startup
-- [ ] `cargo audit` in CI
-- [ ] Docker build + docker-compose + Caddyfile
+### Phase 1 — Foundation (Backend) ✅ Complete
+- [x] Cargo workspace + sqlx setup
+- [x] Initial schema design + migrations
+- [x] Auth routes (register, login, refresh, logout)
+- [x] Books CRUD API (read from new DB)
+- [x] File serving with range request support
+- [x] Cover pipeline (ingest → resize → store)
+- [x] HTTP security headers middleware
+- [x] Account lockout logic
+- [x] Config file permission check on startup
+- [x] `cargo audit` in CI
+- [x] Docker build + docker-compose + Caddyfile
 
-### Phase 2 — Migration
-- [ ] `calibre-migrate` CLI: books, authors, tags, covers
-- [ ] Dry-run mode + idempotency
-- [ ] Validation report output
+### Phase 2 — Migration ✅ Complete
+- [x] `calibre-migrate` CLI: books, authors, tags, covers
+- [x] Dry-run mode + idempotency
+- [x] Validation report output
 
-### Phase 3 — Web Frontend
-- [ ] Monorepo setup (pnpm + Turborepo)
-- [ ] `packages/shared` — types + API client
-- [ ] React SPA: library grid, book detail, search
-- [ ] Auth UI (login, user management for admins)
-- [ ] Epub reader integration (epub.js)
-- [ ] PDF reader integration
-- [ ] Admin panel
+### Phase 3 — Web Frontend ✅ Complete
+- [x] Monorepo setup (pnpm + Turborepo)
+- [x] `packages/shared` — types + API client
+- [x] React SPA: library grid, book detail, search
+- [x] Auth UI (login, user management for admins)
+- [x] Epub reader integration (epub.js)
+- [x] PDF reader integration
+- [x] Admin panel
 
-### Phase 4 — Search
-- [ ] Meilisearch integration (index books on ingest)
-- [ ] Full-text search UI
-- [ ] LLM semantic search (sqlite-vec embeddings)
+### Phase 4 — Search ✅ Complete
+- [x] FTS5 full-text search (SQLite virtual table + sync triggers)
+- [x] Meilisearch optional tier with graceful fallback to FTS5
+- [x] LLM semantic search (sqlite-vec embeddings, gated behind llm.enabled)
+- [x] Frontend search wiring (SearchPage, SearchBar, semantic tab)
 
-### Phase 5 — LLM Features + Agentic RAG Surface
-- [ ] Port all 7 LLM routes from Python to Rust
-- [ ] Job queue for async classification tasks
-- [ ] UI for tag suggestions, validation results, derived works
-- [ ] Admin Jobs page (job queue management)
-- [ ] Text extraction API — `GET /books/:id/chapters` and `GET /books/:id/text?chapter=N`
-- [ ] Text extraction: EPUB spine parsing + HTML stripping; PDF page grouping
-- [ ] No LLM dependency on extraction routes — always available when server is running
+### Phase 5 — LLM Features + Agentic RAG Surface ✅ Complete
+- [x] ChatClient + classify pipeline + confirm/reject API (4/4 tests)
+- [x] validate / quality / derive / organize routes (13/13 tests)
+- [x] Text extraction API — `GET /books/:id/chapters` and `GET /books/:id/text?chapter=N`
+- [x] Document type classification at ingest (novel/textbook/reference/magazine/datasheet/comic/unknown)
+- [x] Job runner extended for classify and organize job types
+- [x] Admin Jobs API — list/detail/cancel (5/5 tests)
+- [x] Frontend AI panel on BookDetailPage (Classify/Validate/Derive tabs)
+- [x] AdminJobsPage with real-time polling
 
 ### Phase 6 — Mobile
-- [ ] Expo project setup + Expo Router
-- [ ] Consume `packages/shared` API client
-- [ ] Library browse + book detail
-- [ ] Offline: Expo SQLite sync + file download
-- [ ] Epub + PDF reader (mobile)
-- [ ] Expo EAS build configuration
+- [ ] Expo project setup + Expo Router + NativeWind
+- [ ] Auth screens + SecureStore token handling
+- [ ] Library browse (grid) + book detail screen
+- [ ] Offline: Expo SQLite sync + expo-file-system downloads
+- [ ] EPUB reader (foliojs-port) + PDF reader (expo-pdf)
+- [ ] Reading progress tracking + server sync
+- [ ] Expo EAS build configuration (iOS + Android)
 
 ### Phase 7 — Hardening
 - [ ] Multi-architecture Docker builds (amd64, arm64, armv7)
