@@ -8,7 +8,9 @@ use common::{auth_header, TestContext};
 async fn test_fts_search_finds_by_title() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let target = ctx.create_book("The Rust Programming Language", "Steve Klabnik").await;
+    let target = ctx
+        .create_book("The Rust Programming Language", "Steve Klabnik")
+        .await;
     let _ = ctx.create_book("Cooking with Fire", "Chef Doe").await;
 
     let response = ctx
@@ -68,8 +70,12 @@ async fn test_fts_search_prefix_match() {
 async fn test_fts_search_empty_query_returns_all() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let first = ctx.create_book("A Wizard of Earthsea", "Ursula Le Guin").await;
-    let second = ctx.create_book("The Left Hand of Darkness", "Ursula Le Guin").await;
+    let first = ctx
+        .create_book("A Wizard of Earthsea", "Ursula Le Guin")
+        .await;
+    let second = ctx
+        .create_book("The Left Hand of Darkness", "Ursula Le Guin")
+        .await;
 
     let response = ctx
         .server

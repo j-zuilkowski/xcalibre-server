@@ -65,10 +65,11 @@ async fn test_import_copies_cover_to_storage() {
     let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
-    let row = sqlx::query("SELECT has_cover, cover_path FROM books WHERE title = 'Cover Book' LIMIT 1")
-        .fetch_one(&target_db)
-        .await
-        .expect("cover row");
+    let row =
+        sqlx::query("SELECT has_cover, cover_path FROM books WHERE title = 'Cover Book' LIMIT 1")
+            .fetch_one(&target_db)
+            .await
+            .expect("cover row");
     let has_cover: i64 = row.try_get("has_cover").expect("has_cover");
     let cover_path: String = row.try_get("cover_path").expect("cover_path");
     assert_eq!(has_cover, 1);

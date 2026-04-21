@@ -48,9 +48,8 @@ impl StorageBackend for LocalFsStorage {
     fn put(&self, relative_path: &str, bytes: &[u8]) -> anyhow::Result<()> {
         let full_path = self.resolve(relative_path)?;
         if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("create parent directory for {}", full_path.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create parent directory for {}", full_path.display()))?;
         }
         std::fs::write(&full_path, bytes)
             .with_context(|| format!("write file {}", full_path.display()))?;

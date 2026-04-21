@@ -1,5 +1,7 @@
 use crate::{
     db::queries::{books as book_queries, llm as llm_queries},
+    ingest::text as ingest_text,
+    llm::classify_type::{classify_document_type, DocumentType},
     middleware::auth::AuthenticatedUser,
     AppError, AppState,
 };
@@ -33,6 +35,8 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_book).patch(patch_book).delete(delete_book),
         )
         .route("/api/v1/books/:id/cover", get(get_cover))
+        .route("/api/v1/books/:id/chapters", get(get_chapters))
+        .route("/api/v1/books/:id/text", get(get_text))
         .route(
             "/api/v1/books/:id/formats/:format/download",
             get(download_format),
@@ -96,6 +100,27 @@ struct PatchBookRequest {
     authors: Option<Vec<String>>,
     #[serde(default)]
     identifiers: Option<Vec<IdentifierPatch>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GetBookTextQuery {
+    chapter: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChaptersResponse {
+    book_id: String,
+    format: String,
+    chapters: Vec<ingest_text::Chapter>,
+}
+
+#[derive(Debug, Serialize)]
+struct BookTextResponse {
+    book_id: String,
+    format: String,
+    chapter: Option<u32>,
+    text: String,
+    word_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -199,14 +224,21 @@ async fn get_book(
     State(state): State<AppState>,
     Path(book_id): Path<String>,
 ) -> Result<Json<crate::db::models::Book>, AppError> {
-    let Some(book) = book_queries::get_book_by_id(&state.db, &book_id)
+    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    Ok(Json(book))
+}
+
+pub(crate) async fn load_book_or_not_found(
+    db: &sqlx::SqlitePool,
+    book_id: &str,
+) -> Result<crate::db::models::Book, AppError> {
+    let Some(book) = book_queries::get_book_by_id(db, book_id)
         .await
         .map_err(|_| AppError::Internal)?
     else {
         return Err(AppError::NotFound);
     };
-
-    Ok(Json(book))
+    Ok(book)
 }
 
 async fn upload_book(
@@ -245,6 +277,21 @@ async fn upload_book(
         .clone()
         .filter(|t| !t.trim().is_empty())
         .ok_or(AppError::Unprocessable)?;
+    let author_names = if ingest.authors.is_empty() {
+        vec!["Unknown Author".to_string()]
+    } else {
+        ingest.authors.clone()
+    };
+    let authors_csv = author_names.join(", ");
+    let description_for_type = ingest.description.clone().unwrap_or_default();
+    let document_type = if let Some(client) = state.chat_client.as_ref() {
+        classify_document_type(client, &title, &authors_csv, &description_for_type)
+            .await
+            .as_str()
+            .to_string()
+    } else {
+        DocumentType::Unknown.as_str().to_string()
+    };
 
     if let Some(rating) = ingest.rating {
         if !(0..=10).contains(&rating) {
@@ -277,13 +324,10 @@ async fn upload_book(
             pubdate: ingest.pubdate,
             language: ingest.language,
             rating: ingest.rating,
+            document_type,
             series_id: ingest.series_id,
             series_index: ingest.series_index,
-            author_names: if ingest.authors.is_empty() {
-                vec!["Unknown Author".to_string()]
-            } else {
-                ingest.authors
-            },
+            author_names,
             identifiers: ingest.identifiers,
             format: detected_format.as_db_format().to_string(),
             format_path: relative_path.clone(),
@@ -486,6 +530,59 @@ async fn get_cover(
     serve_file(request, full_path).await
 }
 
+async fn get_chapters(
+    State(state): State<AppState>,
+    Path(book_id): Path<String>,
+) -> Result<Json<ChaptersResponse>, AppError> {
+    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
+
+    let format_file = book_queries::find_format_file(&state.db, &book.id, format)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NoExtractableFormat)?;
+    let full_path = state
+        .storage
+        .resolve(&format_file.path)
+        .map_err(|_| AppError::Internal)?;
+
+    let chapters = ingest_text::list_chapters(&full_path, format).unwrap_or_default();
+    Ok(Json(ChaptersResponse {
+        book_id,
+        format: format.to_string(),
+        chapters,
+    }))
+}
+
+async fn get_text(
+    State(state): State<AppState>,
+    Path(book_id): Path<String>,
+    Query(query): Query<GetBookTextQuery>,
+) -> Result<Json<BookTextResponse>, AppError> {
+    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
+
+    let format_file = book_queries::find_format_file(&state.db, &book.id, format)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NoExtractableFormat)?;
+    let full_path = state
+        .storage
+        .resolve(&format_file.path)
+        .map_err(|_| AppError::Internal)?;
+
+    let text = ingest_text::extract_text(&full_path, format, query.chapter).unwrap_or_default();
+    let word_count = text.split_whitespace().count();
+
+    Ok(Json(BookTextResponse {
+        book_id,
+        format: format.to_string(),
+        chapter: query.chapter,
+        text,
+        word_count,
+    }))
+}
+
 async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -495,6 +592,24 @@ async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(
         return Err(AppError::Forbidden);
     }
     Ok(())
+}
+
+fn preferred_extractable_format(book: &crate::db::models::Book) -> Option<&str> {
+    if book
+        .formats
+        .iter()
+        .any(|format| format.format.eq_ignore_ascii_case("EPUB"))
+    {
+        return Some("EPUB");
+    }
+    if book
+        .formats
+        .iter()
+        .any(|format| format.format.eq_ignore_ascii_case("PDF"))
+    {
+        return Some("PDF");
+    }
+    None
 }
 
 fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {

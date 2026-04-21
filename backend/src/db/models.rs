@@ -61,6 +61,7 @@ pub struct Book {
     pub pubdate: Option<String>,
     pub language: Option<String>,
     pub rating: Option<i64>,
+    pub document_type: String,
     pub series: Option<SeriesRef>,
     pub series_index: Option<f64>,
     pub authors: Vec<AuthorRef>,
@@ -95,4 +96,3 @@ pub struct Shelf {
     pub created_at: String,
     pub last_modified: String,
 }
-

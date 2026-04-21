@@ -67,8 +67,7 @@ async fn connect_and_migrate(target_db_url: &str) -> anyhow::Result<sqlx::Sqlite
         .connect_with(options)
         .await?;
 
-    let migration_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../backend/migrations/sqlite");
+    let migration_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../backend/migrations/sqlite");
     let migrator = sqlx::migrate::Migrator::new(migration_path.as_path()).await?;
     migrator.run(&pool).await?;
 

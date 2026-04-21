@@ -311,7 +311,7 @@ fn meili_filters(query: &SearchQuery) -> Option<Value> {
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
     {
-        filters.push(format!("tags = \"{tag}\""));
+        filters.push(format!("tags = \"{}\"", sanitize_meili_value(tag)));
     }
 
     if let Some(language) = query
@@ -320,7 +320,7 @@ fn meili_filters(query: &SearchQuery) -> Option<Value> {
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
     {
-        filters.push(format!("language = \"{language}\""));
+        filters.push(format!("language = \"{}\"", sanitize_meili_value(language)));
     }
 
     if query
@@ -338,6 +338,10 @@ fn meili_filters(query: &SearchQuery) -> Option<Value> {
     } else {
         Some(json!(filters))
     }
+}
+
+fn sanitize_meili_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 fn clamp_page_size(page_size: u32) -> u32 {

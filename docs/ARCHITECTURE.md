@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
 _Status: Draft — decisions in progress_
-_Last updated: 2026-04-17_
+_Last updated: 2026-04-20_
 
 ---
 
@@ -74,6 +74,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | Prompt eval framework | ✅ Must | Required if any LLM ships in v1 |
 | LLM classification + tagging | ✅ Should | Core differentiator |
 | Semantic search | ✅ Should | Core differentiator |
+| **Text extraction API** | ✅ Should | Foundational for agentic RAG — chapter-level EPUB/PDF text |
 | Metadata validation | ⏳ Phase 2 | Useful but not blocking |
 | Content quality check | ⏳ Phase 2 | Useful but not blocking |
 | Library organization rules | ⏳ Phase 2 | |
@@ -361,15 +362,75 @@ Available to any role with upload permission:
 
 ```
 File received
-    → Format detection
+    → Format detection (magic bytes)
     → Metadata extraction (title, author, ISBN, cover, description)
     → Cover resize + thumbnail generation (image crate)
     → Duplicate check (ISBN + title/author)
+    → Document type classification (LLM if enabled → 'unknown' fallback)
     → Write to DB + StorageBackend
     → Meilisearch index update
-    → LLM classification job queued (if enabled)
+    → LLM tag classification job queued (if enabled)
     → Response to client
 ```
+
+**Document type** is set synchronously at ingest from a single fast LLM call (separate from tag classification, which is queued async). Valid values: `novel`, `textbook`, `reference`, `magazine`, `datasheet`, `comic`, `unknown`. When LLM is disabled, all books ingest as `unknown` and can be reclassified later. Document type becomes a first-class filter for RAG agents — an agent can scope retrieval to `document_type = 'textbook'` before running semantic search.
+
+---
+
+## Agentic RAG Integration
+
+calibre-web-rs is designed to function as a **tool provider** for external agentic AI systems (LangGraph, smolagents, custom agents), in addition to its primary role as a library management UI.
+
+### The Two-Tier Retrieval Model
+
+An agent orchestrating RAG against this library has two distinct retrieval surfaces:
+
+| Tier | Mechanism | Use case |
+|---|---|---|
+| **Structured** | REST API → SQLite metadata | Author lookup, tag filter, series navigation, exact match |
+| **Semantic** | REST API → sqlite-vec embeddings | Meaning-based similarity, concept search across content |
+
+The metadata tier is always faster and scopes the corpus before semantic search runs — always filter by structured metadata first to reduce hallucination surface.
+
+### Agent Tool Surface
+
+The following routes are designed to be consumed directly as agent tools. They are available to any authenticated client, including external agent frameworks:
+
+| Tool | Route | Description |
+|---|---|---|
+| `search_books` | `GET /api/v1/books?q=&author=&tags=` | Structured metadata query with filters |
+| `get_book_metadata` | `GET /api/v1/books/:id` | Full metadata record including authors, tags, series |
+| `list_chapters` | `GET /api/v1/books/:id/chapters` | Table of contents: chapter indices + titles + word counts |
+| `get_book_text` | `GET /api/v1/books/:id/text?chapter=N` | Extracted plain text — full book or one chapter |
+| `semantic_search` | `GET /api/v1/search?q=&mode=semantic` | Vector similarity search across embedded chunks |
+
+### Text Extraction Pipeline
+
+Exposing book content as plain text is the foundational capability for RAG. EPUB and PDF formats are extracted server-side:
+
+```
+EPUB: unzip → parse OPF manifest → identify spine items (chapters)
+      → extract HTML per chapter → strip tags → normalize whitespace → return clean text
+
+PDF:  parse structure → extract text per page → group into logical sections → return clean text
+```
+
+**Chunking strategy:**
+- EPUB: OPF spine items are the natural chunk boundary — each spine item is one chapter
+- PDF: page groups (default 5 pages) when no logical chapter structure is present
+- `?chapter=N` requests a single chunk; omitting returns all chapters concatenated with `\n\n---\n\n`
+
+**Text extraction is not gated behind `llm.enabled`** — it is a content API, available whenever the server is running. No LLM is involved in extraction.
+
+### How Classification Enriches RAG
+
+The LLM features (Phase 5) represent calibre-web-rs calling the LLM. The agentic RAG surface represents an external agent calling calibre-web-rs. These are complementary:
+
+- LLM classification enriches metadata → better structured retrieval tier for agents
+- Text extraction enables agents to retrieve actual book content for synthesis
+- Semantic search (Phase 4) provides the vector similarity tier
+
+A typical agentic query: user question → agent calls `search_books` (filter by author/tag) → agent calls `get_book_text?chapter=N` on matching books → agent synthesizes across retrieved passages.
 
 ---
 
@@ -525,15 +586,17 @@ semantic_search_relevance  │ ✅ PASS    │ ✅ PASS   │ ❌ FAIL │
 
 ### LLM Features (all from current implementation)
 
-| Feature | Route |
-|---|---|
-| Health check | `GET /api/health` |
-| Library organization | `POST /api/organize-library` |
-| Classification & tagging | `GET /library/classify/:id` |
-| Metadata validation | `GET /library/validate/:id` |
-| Content quality check | `GET /library/quality/:id` |
-| Semantic search | `GET /library/search/semantic?q=` |
-| Derived works | `GET /library/derive/:id` |
+| Feature | Route | LLM Required |
+|---|---|---|
+| Health check | `GET /api/v1/llm/health` | No |
+| Library organization | `POST /api/v1/organize` | Yes |
+| Classification & tagging | `GET /api/v1/books/:id/classify` | Yes |
+| Metadata validation | `GET /api/v1/books/:id/validate` | Yes |
+| Content quality check | `GET /api/v1/books/:id/quality` | Yes |
+| Semantic search | `GET /api/v1/search?mode=semantic` | Embedding only |
+| Derived works | `GET /api/v1/books/:id/derive` | Yes |
+| **Chapter listing** | `GET /api/v1/books/:id/chapters` | **No — content API** |
+| **Text extraction** | `GET /api/v1/books/:id/text?chapter=N` | **No — content API** |
 
 ---
 
@@ -589,10 +652,14 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 - [ ] Full-text search UI
 - [ ] LLM semantic search (sqlite-vec embeddings)
 
-### Phase 5 — LLM Features
+### Phase 5 — LLM Features + Agentic RAG Surface
 - [ ] Port all 7 LLM routes from Python to Rust
 - [ ] Job queue for async classification tasks
 - [ ] UI for tag suggestions, validation results, derived works
+- [ ] Admin Jobs page (job queue management)
+- [ ] Text extraction API — `GET /books/:id/chapters` and `GET /books/:id/text?chapter=N`
+- [ ] Text extraction: EPUB spine parsing + HTML stripping; PDF page grouping
+- [ ] No LLM dependency on extraction routes — always available when server is running
 
 ### Phase 6 — Mobile
 - [ ] Expo project setup + Expo Router
@@ -607,6 +674,20 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 - [ ] Synology deployment documentation
 - [ ] Performance testing on Raspberry Pi 4/5
 - [ ] Security audit (OWASP top 10 review)
+
+### Phase 8 — MCP Server
+Expose the library as a first-class tool provider for external agentic AI systems. The REST API built in Phases 1–5 is the foundation; Phase 8 adds an MCP transport layer on top of the already-stable routes.
+
+- [ ] Implement MCP server in Rust (stdio + SSE transports) alongside the existing Axum server
+- [ ] Expose agent tool surface as MCP tools:
+  - `search_books(query, filters)` — wraps `GET /api/v1/books`
+  - `get_book_metadata(book_id)` — wraps `GET /api/v1/books/:id`
+  - `list_chapters(book_id)` — wraps `GET /api/v1/books/:id/chapters`
+  - `get_book_text(book_id, chapter?)` — wraps `GET /api/v1/books/:id/text`
+  - `semantic_search(query)` — wraps `GET /api/v1/search?mode=semantic`
+- [ ] Auth: MCP tools require a configured API token (separate from JWT — long-lived, admin-generated)
+- [ ] Register MCP server in `claude mcp add` for Claude Code + Claude Desktop integration
+- [ ] Documentation: how to connect LangGraph, smolagents, and Claude Desktop to the library
 
 ---
 

@@ -4,7 +4,9 @@ mod common;
 
 use axum_test::multipart::{MultipartForm, Part};
 use chrono::{Duration, Utc};
-use common::{auth_header, epub_with_cover_bytes, minimal_epub_bytes, minimal_pdf_bytes, TestContext};
+use common::{
+    auth_header, epub_with_cover_bytes, minimal_epub_bytes, minimal_pdf_bytes, TestContext,
+};
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -541,7 +543,10 @@ async fn test_patch_book_writes_audit_log() {
     .await
     .expect("query audit rows");
     let count: i64 = row.get("count");
-    assert!(count >= 2, "expected at least 2 field audit rows, got {count}");
+    assert!(
+        count >= 2,
+        "expected at least 2 field audit rows, got {count}"
+    );
 }
 
 #[tokio::test]
@@ -573,7 +578,10 @@ async fn test_delete_book_removes_files() {
         .await;
 
     assert_status!(response, 200);
-    assert!(!file_path.exists(), "format file should be removed from storage");
+    assert!(
+        !file_path.exists(),
+        "format file should be removed from storage"
+    );
 
     let row = sqlx::query("SELECT COUNT(1) AS count FROM books WHERE id = ?")
         .bind(&book.id)

@@ -228,7 +228,10 @@ impl CalibreReader {
             }
         }
 
-        Ok(entries.into_values().map(EntryBuilder::into_entry).collect())
+        Ok(entries
+            .into_values()
+            .map(EntryBuilder::into_entry)
+            .collect())
     }
 
     pub fn file_path(&self, entry: &CalibreEntry, format: &CalibreFormat) -> PathBuf {

@@ -149,6 +149,108 @@ describe("ApiClient", () => {
     );
   });
 
+  test("test_search_builds_correct_url", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.get("http://example.test/api/v1/search", ({ request }) => {
+        requestSpy(request.url.toString());
+        return HttpResponse.json({
+          items: [],
+          total: 0,
+          page: 2,
+          page_size: 20,
+        });
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.search({
+      q: "wind",
+      author_id: "author-1",
+      series_id: "series-1",
+      tag: ["fiction", "classic"],
+      language: "en",
+      format: "epub",
+      page: 2,
+      page_size: 20,
+      sort: "title",
+    });
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      "http://example.test/api/v1/search?q=wind&author_id=author-1&series_id=series-1&tag=fiction&tag=classic&language=en&format=epub&page=2&page_size=20&sort=title",
+    );
+  });
+
+  test("test_search_routes_semantic_queries_to_semantic_endpoint", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.get("http://example.test/api/v1/search/semantic", ({ request }) => {
+        requestSpy(request.url.toString());
+        return HttpResponse.json({
+          items: [],
+          total: 0,
+          page: 1,
+          page_size: 20,
+        });
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.search({
+      q: "wind",
+      page: 1,
+      page_size: 20,
+      semantic: true,
+    });
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      "http://example.test/api/v1/search/semantic?q=wind&page=1&page_size=20",
+    );
+  });
+
+  test("test_search_suggestions_builds_correct_url", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.get("http://example.test/api/v1/search/suggestions", ({ request }) => {
+        requestSpy(request.url.toString());
+        return HttpResponse.json({
+          suggestions: ["Dune", "Dune Messiah"],
+        });
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.searchSuggestions("dune", 5);
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      "http://example.test/api/v1/search/suggestions?q=dune&limit=5",
+    );
+  });
+
+  test("test_search_status_returns_backend_capabilities", async () => {
+    server.use(
+      http.get("http://example.test/api/v1/system/search-status", () =>
+        HttpResponse.json({
+          fts: true,
+          meilisearch: true,
+          semantic: false,
+          backend: "meilisearch",
+        }),
+      ),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await expect(client.getSearchStatus()).resolves.toMatchObject({
+      fts: true,
+      meilisearch: true,
+      semantic: false,
+      backend: "meilisearch",
+    });
+  });
+
   test("test_get_book_returns_book", async () => {
     server.use(
       http.get("http://example.test/api/v1/books/abc", () =>

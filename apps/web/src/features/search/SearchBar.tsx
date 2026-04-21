@@ -18,6 +18,13 @@ function recentSearchStorageKey(userId: string | null): string {
 }
 
 function readRecentSearches(userId: string | null): string[] {
+  return readRecentSearchesRaw(userId)
+    .sort((left, right) => right.at - left.at)
+    .slice(0, RECENT_SEARCH_LIMIT)
+    .map((item) => item.query);
+}
+
+function readRecentSearchesRaw(userId: string | null): RecentSearch[] {
   if (
     typeof localStorage === "undefined" ||
     typeof localStorage.getItem !== "function"
@@ -32,11 +39,10 @@ function readRecentSearches(userId: string | null): string[] {
 
   try {
     const parsed = JSON.parse(raw) as RecentSearch[];
-    return parsed
-      .filter((item) => typeof item?.query === "string")
-      .sort((left, right) => right.at - left.at)
-      .slice(0, RECENT_SEARCH_LIMIT)
-      .map((item) => item.query);
+    return parsed.filter(
+      (item): item is RecentSearch =>
+        typeof item?.query === "string" && typeof item.at === "number",
+    );
   } catch {
     return [];
   }
@@ -52,10 +58,16 @@ function saveRecentSearch(userId: string | null, query: string): void {
   }
 
   const key = recentSearchStorageKey(userId);
-  const existing = readRecentSearches(userId);
-  const next = [query, ...existing.filter((item) => item.toLowerCase() !== query.toLowerCase())]
-    .slice(0, RECENT_SEARCH_LIMIT)
-    .map((item) => ({ query: item, at: Date.now() }));
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return;
+  }
+  const existingEntries = readRecentSearchesRaw(userId);
+  const newEntry: RecentSearch = { query: trimmed, at: Date.now() };
+  const next = [
+    newEntry,
+    ...existingEntries.filter((item) => item.query.toLowerCase() !== trimmed.toLowerCase()),
+  ].slice(0, RECENT_SEARCH_LIMIT);
 
   localStorage.setItem(key, JSON.stringify(next));
 }
@@ -101,11 +113,12 @@ export function SearchBar() {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
   const recentSearches = useMemo(() => readRecentSearches(user?.id ?? null), [user?.id, open]);
+  const trimmedQuery = query.trim();
 
   const suggestionsQuery = useQuery({
-    queryKey: ["search-suggestions", query],
-    queryFn: () => apiClient.listBooks({ q: query, page_size: 5, sort: "title" }),
-    enabled: open && query.trim().length > 0,
+    queryKey: ["search-suggestions", trimmedQuery],
+    queryFn: () => apiClient.searchSuggestions(trimmedQuery, 5),
+    enabled: open && trimmedQuery.length > 0,
   });
 
   useEffect(() => {
@@ -134,7 +147,7 @@ export function SearchBar() {
     }, 120);
   }
 
-  const books = suggestionsQuery.data?.items ?? [];
+  const suggestions = suggestionsQuery.data?.suggestions ?? [];
 
   return (
     <div className="relative w-full max-w-[36rem]">
@@ -183,16 +196,26 @@ export function SearchBar() {
             </section>
           ) : null}
 
-          {query.trim().length > 0 ? (
+          {trimmedQuery.length > 0 ? (
             <section className="space-y-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 Quick results
               </div>
-              <div className="space-y-2">
-                {books.length > 0 ? (
-                  books.map((book) => <SearchMiniCard key={book.id} book={book} />)
+              <div className="flex flex-wrap gap-2">
+                {suggestions.length > 0 ? (
+                  suggestions.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => commitSearch(item)}
+                      className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-800 transition hover:border-teal-300 hover:bg-teal-100"
+                    >
+                      {item}
+                    </button>
+                  ))
                 ) : (
-                  <p className="px-1 py-2 text-sm text-zinc-500">No matching books.</p>
+                  <p className="px-1 py-2 text-sm text-zinc-500">No suggestions.</p>
                 )}
               </div>
             </section>

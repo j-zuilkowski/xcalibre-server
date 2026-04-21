@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Book, ReadingProgress, User } from "@calibre/shared";
 import { ReaderPage } from "../features/reader/ReaderPage";
 import { apiClient } from "../lib/api-client";
@@ -144,8 +144,17 @@ function renderReader(pathname: string) {
   );
 }
 
+async function renderReaderAndFlush(pathname: string) {
+  renderReader(pathname);
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
 describe("ReaderPage", () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     getBookMock.mockReset();
     getReadingProgressMock.mockReset();
     patchReadingProgressMock.mockReset();
@@ -164,51 +173,54 @@ describe("ReaderPage", () => {
   });
 
   afterEach(() => {
-    cleanup();
+    vi.runAllTimers();
+    vi.clearAllTimers();
     vi.useRealTimers();
+    cleanup();
   });
 
   test("test_epub_reader_renders_for_epub_format", async () => {
-    renderReader("/books/book-1/read/epub");
+    await renderReaderAndFlush("/books/book-1/read/epub");
 
-    expect(await screen.findByTestId("epub-reader")).toBeTruthy();
+    expect(screen.getByTestId("epub-reader")).toBeTruthy();
     expect(screen.queryByTestId("pdf-reader")).toBeNull();
   });
 
   test("test_pdf_reader_renders_for_pdf_format", async () => {
-    renderReader("/books/book-1/read/pdf");
+    await renderReaderAndFlush("/books/book-1/read/pdf");
 
-    expect(await screen.findByTestId("pdf-reader")).toBeTruthy();
+    expect(screen.getByTestId("pdf-reader")).toBeTruthy();
     expect(screen.queryByTestId("epub-reader")).toBeNull();
   });
 
   test("test_reader_saves_progress_on_advance", async () => {
-    renderReader("/books/book-1/read/epub");
-    await screen.findByTestId("epub-reader");
+    await renderReaderAndFlush("/books/book-1/read/epub");
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
 
-    await waitFor(() => {
-      expect(patchReadingProgressMock).toHaveBeenCalledWith(
-        "book-1",
-        expect.objectContaining({ format_id: "format-1", percentage: expect.any(Number) }),
-      );
-    }, { timeout: 2000 });
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(patchReadingProgressMock).toHaveBeenCalledWith(
+      "book-1",
+      expect.objectContaining({ format_id: "format-1", percentage: expect.any(Number) }),
+    );
   });
 
   test("test_reader_restores_progress_on_load", async () => {
     getReadingProgressMock.mockResolvedValue(makeProgress({ percentage: 42, cfi: "epubcfi(/6/2)" }));
 
-    renderReader("/books/book-1/read/epub");
+    await renderReaderAndFlush("/books/book-1/read/epub");
 
-    const label = await screen.findByTestId("reader-progress-label");
+    const label = screen.getByTestId("reader-progress-label");
     expect(label.textContent).toContain("42%");
   });
 
   test("test_toolbar_fades_in_on_mouse_move", async () => {
-    renderReader("/books/book-1/read/epub");
+    await renderReaderAndFlush("/books/book-1/read/epub");
 
-    const reader = await screen.findByTestId("epub-reader");
+    const reader = screen.getByTestId("epub-reader");
     const toolbar = screen.getByTestId("reader-toolbar");
 
     expect(toolbar.getAttribute("data-visible")).toBe("false");
@@ -219,13 +231,17 @@ describe("ReaderPage", () => {
   });
 
   test("test_settings_panel_opens_on_settings_click", async () => {
-    renderReader("/books/book-1/read/epub");
+    await renderReaderAndFlush("/books/book-1/read/epub");
 
-    const reader = await screen.findByTestId("epub-reader");
+    const reader = screen.getByTestId("epub-reader");
     fireEvent.mouseMove(reader);
 
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
 
-    expect(await screen.findByText("Reader settings")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("Reader settings")).toBeTruthy();
   });
 });

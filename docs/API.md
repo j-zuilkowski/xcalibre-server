@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
 _Status: Draft_
-_Last updated: 2026-04-17_
+_Last updated: 2026-04-20_
 
 ---
 
@@ -47,6 +47,7 @@ interface ApiError {
 | 409 | `conflict` | Duplicate (ISBN, username, etc.) |
 | 413 | `payload_too_large` | Upload exceeds configured size limit |
 | 422 | `unprocessable` | Valid JSON but fails validation |
+| 422 | `no_extractable_format` | Book has no EPUB or PDF format available for text extraction |
 | 503 | `llm_unavailable` | LLM feature requested but disabled or unreachable |
 | 500 | `internal_error` | Unexpected server error |
 
@@ -64,6 +65,8 @@ interface PaginatedResponse<T> {
   page_size: number
 }
 
+type DocumentType = 'novel' | 'textbook' | 'reference' | 'magazine' | 'datasheet' | 'comic' | 'unknown'
+
 interface Book {
   id: string
   title: string
@@ -72,6 +75,7 @@ interface Book {
   pubdate: string | null
   language: string | null
   rating: number | null           // 0–10
+  document_type: DocumentType     // set at ingest; 'unknown' until classified
   series: SeriesRef | null
   series_index: number | null
   authors: AuthorRef[]
@@ -96,6 +100,7 @@ interface BookSummary {           // used in lists — subset of Book
   has_cover: boolean
   language: string | null
   rating: number | null
+  document_type: DocumentType
   last_modified: string
 }
 
@@ -581,6 +586,54 @@ Role
 
 // Response 202 Accepted
 { job_id: string }
+```
+
+---
+
+### Content API (Agentic RAG Surface)
+
+These routes expose book content as plain text. They have **no LLM dependency** — they work regardless of `llm.enabled` and never return 503. Designed to be consumed as agent tools by external frameworks (LangGraph, smolagents, MCP clients).
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/books/:id/chapters` | Yes | Any | List chapters with titles and word counts |
+| GET | `/books/:id/text` | Yes | Any | Extract plain text — full book or single chapter |
+
+#### `GET /books/:id/chapters`
+```typescript
+// Query params: none
+
+// Response 200
+{
+  book_id: string
+  format: string                  // "EPUB" or "PDF" — whichever was used
+  chapters: Array<{
+    index: number                 // 0-based spine position
+    title: string                 // chapter title from OPF or "Pages N–M" for PDF
+    word_count: number
+  }>
+}
+
+// Response 404 — book not found
+// Response 422 — { error: "no_extractable_format" } — no EPUB or PDF format on this book
+```
+
+#### `GET /books/:id/text`
+```typescript
+// Query params
+{ chapter?: number }              // omit for full book; 0-based index matching /chapters
+
+// Response 200
+{
+  book_id: string
+  format: string
+  chapter: number | null          // null when full book was requested
+  text: string                    // plain text, whitespace-normalized
+  word_count: number
+}
+
+// Response 404 — book not found
+// Response 422 — { error: "no_extractable_format" }
 ```
 
 ---

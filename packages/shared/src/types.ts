@@ -191,6 +191,21 @@ export type PaginatedResponse<T> = {
   page_size: number;
 };
 
+export type SearchResultItem = BookSummary & {
+  score?: number;
+};
+
+export type SearchSuggestionsResponse = {
+  suggestions: string[];
+};
+
+export type SearchStatusResponse = {
+  fts: boolean;
+  meilisearch: boolean;
+  semantic: boolean;
+  backend: string;
+};
+
 export type ApiError = {
   message: string;
   status: number;
@@ -231,4 +246,8 @@ export type ListBooksParams = {
   page?: number;
   page_size?: number;
   since?: string;
+};
+
+export type SearchQuery = ListBooksParams & {
+  semantic?: boolean;
 };

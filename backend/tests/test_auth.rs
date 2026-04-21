@@ -2,12 +2,12 @@
 
 mod common;
 
+use axum::http::{HeaderName, HeaderValue};
 use chrono::{Duration, Utc};
 use common::{auth_header, TestContext};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::Row;
-use axum::http::{HeaderName, HeaderValue};
 
 #[tokio::test]
 async fn test_register_first_user_becomes_admin() {
@@ -125,8 +125,7 @@ async fn test_login_lockout_after_max_attempts() {
             .post("/api/v1/auth/login")
             .add_header(
                 forwarded_for.clone(),
-                HeaderValue::from_str(&format!("198.51.100.{}", attempt + 10))
-                    .expect("valid IP"),
+                HeaderValue::from_str(&format!("198.51.100.{}", attempt + 10)).expect("valid IP"),
             )
             .json(&serde_json::json!({
                 "username": user.username,
@@ -139,10 +138,7 @@ async fn test_login_lockout_after_max_attempts() {
     let locked_response = ctx
         .server
         .post("/api/v1/auth/login")
-        .add_header(
-            forwarded_for,
-            HeaderValue::from_static("198.51.100.250"),
-        )
+        .add_header(forwarded_for, HeaderValue::from_static("198.51.100.250"))
         .json(&serde_json::json!({
             "username": user.username,
             "password": password
@@ -173,8 +169,7 @@ async fn test_login_lockout_resets_after_duration() {
             .post("/api/v1/auth/login")
             .add_header(
                 forwarded_for.clone(),
-                HeaderValue::from_str(&format!("198.51.101.{}", attempt + 10))
-                    .expect("valid IP"),
+                HeaderValue::from_str(&format!("198.51.101.{}", attempt + 10)).expect("valid IP"),
             )
             .json(&serde_json::json!({
                 "username": user.username,
@@ -194,10 +189,7 @@ async fn test_login_lockout_resets_after_duration() {
     let response = ctx
         .server
         .post("/api/v1/auth/login")
-        .add_header(
-            forwarded_for,
-            HeaderValue::from_static("198.51.101.250"),
-        )
+        .add_header(forwarded_for, HeaderValue::from_static("198.51.101.250"))
         .json(&serde_json::json!({
             "username": user.username,
             "password": password

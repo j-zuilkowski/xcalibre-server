@@ -2,6 +2,7 @@ pub mod api;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod ingest;
 pub mod llm;
 pub mod middleware;
 pub mod search;
@@ -35,6 +36,7 @@ pub async fn bootstrap() -> anyhow::Result<(AppState, tokio::net::TcpListener)> 
 pub async fn run() -> anyhow::Result<()> {
     let (state, listener) = bootstrap().await?;
     if state.config.llm.enabled {
+        crate::llm::job_runner::reset_orphaned_semantic_jobs(&state).await?;
         tokio::spawn(crate::llm::job_runner::run_semantic_job_runner(
             state.clone(),
         ));

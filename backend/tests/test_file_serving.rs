@@ -2,10 +2,10 @@
 
 mod common;
 
+use axum::http::HeaderValue;
 use axum_test::multipart::{MultipartForm, Part};
 use chrono::Utc;
 use common::{auth_header, epub_with_cover_bytes, minimal_pdf_bytes, TestContext};
-use axum::http::HeaderValue;
 
 #[tokio::test]
 async fn test_download_returns_full_file() {
@@ -17,10 +17,7 @@ async fn test_download_returns_full_file() {
 
     let response = ctx
         .server
-        .get(&format!(
-            "/api/v1/books/{}/formats/EPUB/download",
-            book.id
-        ))
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
         .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
         .await;
 
@@ -48,9 +45,7 @@ async fn test_stream_supports_range_requests() {
 
     assert_status!(response, 206);
     let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
-    let content_range = content_range_header
-        .to_str()
-        .expect("content-range header");
+    let content_range = content_range_header.to_str().expect("content-range header");
     assert!(content_range.starts_with("bytes 0-0/"));
 }
 
@@ -104,9 +99,7 @@ async fn test_cover_returns_image() {
 
     assert_status!(response, 200);
     let content_type_header = response.header(axum::http::header::CONTENT_TYPE);
-    let content_type = content_type_header
-        .to_str()
-        .expect("content-type");
+    let content_type = content_type_header.to_str().expect("content-type");
     assert!(content_type.starts_with("image/jpeg"));
     assert!(!response.as_bytes().is_empty());
 }
@@ -141,10 +134,7 @@ async fn test_path_traversal_rejected() {
 
     let response = ctx
         .server
-        .get(&format!(
-            "/api/v1/books/{}/formats/EPUB/download",
-            book.id
-        ))
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
         .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
         .await;
 
@@ -162,10 +152,7 @@ async fn test_download_requires_auth() {
 
     let response = ctx
         .server
-        .get(&format!(
-            "/api/v1/books/{}/formats/EPUB/download",
-            book.id
-        ))
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
         .await;
 
     assert_status!(response, 401);
@@ -197,10 +184,7 @@ async fn test_download_requires_download_permission() {
 
     let response = ctx
         .server
-        .get(&format!(
-            "/api/v1/books/{}/formats/EPUB/download",
-            book.id
-        ))
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
         .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
         .await;
 

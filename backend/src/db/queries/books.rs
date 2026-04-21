@@ -19,6 +19,7 @@ pub struct BookSummary {
     pub has_cover: bool,
     pub language: Option<String>,
     pub rating: Option<i64>,
+    pub document_type: String,
     pub last_modified: String,
 }
 
@@ -82,6 +83,7 @@ pub struct UploadBookInput {
     pub pubdate: Option<String>,
     pub language: Option<String>,
     pub rating: Option<i64>,
+    pub document_type: String,
     pub series_id: Option<String>,
     pub series_index: Option<f64>,
     pub author_names: Vec<String>,
@@ -141,7 +143,8 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     let offset = (page - 1) * page_size;
     let fts_query = normalize_fts_query(params.q.as_deref());
 
-    let mut total_query = QueryBuilder::<Sqlite>::new("SELECT COUNT(DISTINCT b.id) AS total FROM books b");
+    let mut total_query =
+        QueryBuilder::<Sqlite>::new("SELECT COUNT(DISTINCT b.id) AS total FROM books b");
     if fts_query.is_some() {
         total_query.push(
             " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
@@ -168,6 +171,7 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             b.cover_path AS cover_path,
             b.language AS language,
             b.rating AS rating,
+            b.document_type AS document_type,
             b.last_modified AS last_modified,
             s.id AS series_id,
             s.name AS series_name
@@ -207,15 +211,18 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             title: row.get("title"),
             sort_title: row.get("sort_title"),
             authors: load_book_authors(db, &book_id).await?,
-            series: row.get::<Option<String>, _>("series_id").map(|id| SeriesRef {
-                id,
-                name: row.get("series_name"),
-            }),
+            series: row
+                .get::<Option<String>, _>("series_id")
+                .map(|id| SeriesRef {
+                    id,
+                    name: row.get("series_name"),
+                }),
             series_index: row.get("series_index"),
             cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
             has_cover,
             language: row.get("language"),
             rating: row.get("rating"),
+            document_type: row.get("document_type"),
             last_modified: row.get("last_modified"),
         });
     }
@@ -247,6 +254,7 @@ pub async fn list_book_summaries_by_ids(
             b.cover_path AS cover_path,
             b.language AS language,
             b.rating AS rating,
+            b.document_type AS document_type,
             b.last_modified AS last_modified,
             s.id AS series_id,
             s.name AS series_name
@@ -282,15 +290,18 @@ pub async fn list_book_summaries_by_ids(
                 title: row.get("title"),
                 sort_title: row.get("sort_title"),
                 authors: load_book_authors(db, &book_id).await?,
-                series: row.get::<Option<String>, _>("series_id").map(|id| SeriesRef {
-                    id,
-                    name: row.get("series_name"),
-                }),
+                series: row
+                    .get::<Option<String>, _>("series_id")
+                    .map(|id| SeriesRef {
+                        id,
+                        name: row.get("series_name"),
+                    }),
                 series_index: row.get("series_index"),
                 cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
                 has_cover,
                 language: row.get("language"),
                 rating: row.get("rating"),
+                document_type: row.get("document_type"),
                 last_modified: row.get("last_modified"),
             },
         );
@@ -321,6 +332,7 @@ pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Op
             b.pubdate AS pubdate,
             b.language AS language,
             b.rating AS rating,
+            b.document_type AS document_type,
             b.series_index AS series_index,
             b.has_cover AS has_cover,
             b.cover_path AS cover_path,
@@ -353,10 +365,13 @@ pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Op
         pubdate: row.get("pubdate"),
         language: row.get("language"),
         rating: row.get("rating"),
-        series: row.get::<Option<String>, _>("series_id").map(|id| SeriesRef {
-            id,
-            name: row.get("series_name"),
-        }),
+        document_type: row.get("document_type"),
+        series: row
+            .get::<Option<String>, _>("series_id")
+            .map(|id| SeriesRef {
+                id,
+                name: row.get("series_name"),
+            }),
         series_index: row.get("series_index"),
         authors: load_book_authors(db, book_id).await?,
         tags: load_book_tags(db, book_id).await?,
@@ -418,8 +433,8 @@ pub async fn insert_uploaded_book(db: &SqlitePool, input: UploadBookInput) -> an
         r#"
         INSERT INTO books (
             id, title, sort_title, description, pubdate, language, rating, series_id, series_index,
-            has_cover, cover_path, flags, indexed_at, created_at, last_modified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?)
+            document_type, has_cover, cover_path, flags, indexed_at, created_at, last_modified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?)
         "#,
     )
     .bind(&book_id)
@@ -431,6 +446,7 @@ pub async fn insert_uploaded_book(db: &SqlitePool, input: UploadBookInput) -> an
     .bind(input.rating)
     .bind(optional_trimmed(input.series_id))
     .bind(input.series_index)
+    .bind(input.document_type.trim().to_lowercase())
     .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
@@ -567,7 +583,11 @@ pub async fn patch_book_with_audit(
     if let Some(pubdate) = patch.pubdate {
         let pubdate = pubdate.and_then(non_empty_option);
         if pubdate != existing.pubdate {
-            changes.push(("pubdate".to_string(), json!(existing.pubdate), json!(pubdate)));
+            changes.push((
+                "pubdate".to_string(),
+                json!(existing.pubdate),
+                json!(pubdate),
+            ));
             next_pubdate = pubdate;
         }
     }
@@ -813,7 +833,10 @@ pub async fn find_format_file(
     }))
 }
 
-pub async fn find_book_cover_path(db: &SqlitePool, book_id: &str) -> anyhow::Result<Option<String>> {
+pub async fn find_book_cover_path(
+    db: &SqlitePool,
+    book_id: &str,
+) -> anyhow::Result<Option<String>> {
     let row = sqlx::query(
         r#"
         SELECT cover_path
@@ -1024,9 +1047,7 @@ fn apply_list_filters(
         .filter(|v| !v.is_empty())
     {
         and_where(qb);
-        qb.push(
-            "EXISTS (SELECT 1 FROM formats f WHERE f.book_id = b.id AND upper(f.format) = ",
-        );
+        qb.push("EXISTS (SELECT 1 FROM formats f WHERE f.book_id = b.id AND upper(f.format) = ");
         qb.push_bind(format.to_uppercase());
         qb.push(")");
     }

@@ -117,6 +117,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
   const { toolbarVisible, showToolbar } = useReaderToolbar();
 
   const [settings, setSettings] = useState<EpubSettings>(() => readSettings(user?.id ?? null));
+  const settingsRef = useRef(settings);
 
   useEffect(() => {
     setProgress(initialProgress?.percentage ?? 0);
@@ -181,7 +182,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
         }
 
         renditionRef.current = rendition;
-        applyReaderTheme(rendition, settings);
+        applyReaderTheme(rendition, settingsRef.current);
 
         const startCfi = initialProgress?.cfi ?? undefined;
         await rendition.display(startCfi);
@@ -222,7 +223,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
       renditionRef.current?.destroy?.();
       renditionRef.current = null;
     };
-  }, [applyReaderTheme, initialProgress?.cfi, onProgressChange, settings, streamUrl]);
+  }, [applyReaderTheme, initialProgress?.cfi, onProgressChange, streamUrl]);
 
   useEffect(() => {
     if (!renditionRef.current) {

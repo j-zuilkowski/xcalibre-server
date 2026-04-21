@@ -10,9 +10,7 @@ use std::{
     sync::Arc,
 };
 use tower_governor::{
-    governor::GovernorConfigBuilder,
-    key_extractor::KeyExtractor,
-    GovernorError, GovernorLayer,
+    governor::GovernorConfigBuilder, key_extractor::KeyExtractor, GovernorError, GovernorLayer,
 };
 
 const X_CONTENT_TYPE_OPTIONS: &str = "x-content-type-options";
@@ -31,8 +29,8 @@ const PERMISSIONS_POLICY_VALUE: &str = "camera=(), microphone=(), geolocation=()
 const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 10;
 const UPLOAD_ROUTE: &str = "/api/v1/books";
 
-pub(crate) fn auth_rate_limit_layer()
--> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
+pub(crate) fn auth_rate_limit_layer(
+) -> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
     governor_layer(AUTH_RATE_LIMIT_PER_MINUTE)
 }
 
@@ -46,10 +44,18 @@ pub(crate) async fn apply_security_headers(request: AxumRequest, next: Next) -> 
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
-    put_static_header(headers, X_CONTENT_TYPE_OPTIONS, X_CONTENT_TYPE_OPTIONS_VALUE);
+    put_static_header(
+        headers,
+        X_CONTENT_TYPE_OPTIONS,
+        X_CONTENT_TYPE_OPTIONS_VALUE,
+    );
     put_static_header(headers, X_FRAME_OPTIONS, X_FRAME_OPTIONS_VALUE);
     put_static_header(headers, REFERRER_POLICY, REFERRER_POLICY_VALUE);
-    put_static_header(headers, CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY_VALUE);
+    put_static_header(
+        headers,
+        CONTENT_SECURITY_POLICY,
+        CONTENT_SECURITY_POLICY_VALUE,
+    );
     put_static_header(headers, PERMISSIONS_POLICY, PERMISSIONS_POLICY_VALUE);
 
     response
@@ -82,7 +88,10 @@ fn is_upload_request(request: &AxumRequest) -> bool {
 }
 
 fn put_static_header(headers: &mut HeaderMap, name: &'static str, value: &'static str) {
-    headers.insert(HeaderName::from_static(name), HeaderValue::from_static(value));
+    headers.insert(
+        HeaderName::from_static(name),
+        HeaderValue::from_static(value),
+    );
 }
 
 fn governor_layer(

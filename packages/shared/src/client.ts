@@ -13,6 +13,10 @@ import type {
   LoginResponse,
   PaginatedResponse,
   ImportStatus,
+  SearchQuery,
+  SearchResultItem,
+  SearchStatusResponse,
+  SearchSuggestionsResponse,
   ReadingProgress,
   ReadingProgressPatch,
   SystemStats,
@@ -108,6 +112,40 @@ export class ApiClient {
     }
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return this.requestJson<PaginatedResponse<BookSummary>>(`/api/v1/books${suffix}`);
+  }
+
+  async search(params: SearchQuery): Promise<PaginatedResponse<SearchResultItem>> {
+    const { semantic, ...searchParams } = params;
+    const search = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(searchParams)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item) => search.append(key, item));
+      } else {
+        search.set(key, String(value));
+      }
+    }
+
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    const path = semantic ? "/api/v1/search/semantic" : "/api/v1/search";
+    return this.requestJson<PaginatedResponse<SearchResultItem>>(`${path}${suffix}`);
+  }
+
+  async searchSuggestions(q: string, limit = 5): Promise<SearchSuggestionsResponse> {
+    const search = new URLSearchParams();
+    search.set("q", q);
+    search.set("limit", String(limit));
+
+    return this.requestJson<SearchSuggestionsResponse>(
+      `/api/v1/search/suggestions?${search.toString()}`,
+    );
+  }
+
+  async getSearchStatus(): Promise<SearchStatusResponse> {
+    return this.requestJson<SearchStatusResponse>("/api/v1/system/search-status");
   }
 
   async getBook(id: string): Promise<Book> {

@@ -81,11 +81,13 @@ impl SemanticSearch {
             r#"
             SELECT book_id, vec_distance_cosine(embedding, ?) AS distance
             FROM book_embeddings
+            WHERE model_id = ?
             ORDER BY distance ASC
             LIMIT ? OFFSET ?
             "#,
         )
         .bind(vector_blob)
+        .bind(self.model_id())
         .bind(i64::from(page_size))
         .bind(offset)
         .fetch_all(&self.db)
@@ -102,9 +104,11 @@ impl SemanticSearch {
             })
             .collect::<Vec<_>>();
 
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM book_embeddings")
-            .fetch_one(&self.db)
-            .await?;
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(1) FROM book_embeddings WHERE model_id = ?")
+                .bind(self.model_id())
+                .fetch_one(&self.db)
+                .await?;
 
         Ok(SearchPage {
             hits,

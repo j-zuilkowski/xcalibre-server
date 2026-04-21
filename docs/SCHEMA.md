@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Database Schema
 
 _Status: Draft_
-_Last updated: 2026-04-17_
+_Last updated: 2026-04-20_
 
 ---
 
@@ -165,6 +165,8 @@ CREATE TABLE books (
     series_index  REAL,                        -- position within series
     has_cover     INTEGER NOT NULL DEFAULT 0,
     cover_path    TEXT,                        -- bucketed: covers/{first2}/{uuid}.jpg
+    document_type TEXT NOT NULL DEFAULT 'unknown'
+                  CHECK(document_type IN ('novel', 'textbook', 'reference', 'magazine', 'datasheet', 'comic', 'unknown')),
     flags         TEXT,                        -- JSON: arbitrary feature flags
     indexed_at    TEXT,                        -- NULL or < last_modified = needs Meilisearch reindex
     created_at    TEXT NOT NULL,

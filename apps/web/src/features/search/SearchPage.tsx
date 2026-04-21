@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ListBooksParams } from "@calibre/shared";
+import type { ListBooksParams, SearchQuery } from "@calibre/shared";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "../library/BookCard";
@@ -100,9 +100,20 @@ export function SearchPage() {
     };
   }, []);
 
-  const params = useMemo<ListBooksParams>(
+  const searchStatusQuery = useQuery({
+    queryKey: ["search-status"],
+    queryFn: () => apiClient.getSearchStatus(),
+    staleTime: 60_000,
+  });
+
+  const queryText = searchState.q.trim();
+  const hasQuery = queryText.length > 0;
+  const semanticEnabled = searchStatusQuery.data?.semantic === true;
+  const effectiveTab = searchState.tab === "semantic" && semanticEnabled ? "semantic" : "library";
+
+  const params = useMemo<SearchQuery>(
     () => ({
-      q: searchState.q || undefined,
+      q: queryText || undefined,
       author_id: searchState.author_id,
       series_id: searchState.series_id,
       tag: searchState.tag,
@@ -111,13 +122,15 @@ export function SearchPage() {
       sort: searchState.sort,
       page: searchState.page,
       page_size: PAGE_SIZE,
+      semantic: effectiveTab === "semantic",
     }),
-    [searchState],
+    [effectiveTab, queryText, searchState],
   );
 
   const booksQuery = useQuery({
     queryKey: ["search-books", params],
-    queryFn: () => apiClient.listBooks(params),
+    queryFn: () => apiClient.search(params),
+    enabled: hasQuery,
   });
 
   function updateSearchState(next: Partial<SearchState>) {
@@ -146,9 +159,9 @@ export function SearchPage() {
     } as Partial<SearchState>);
   }
 
-  const books = booksQuery.data?.items ?? [];
-  const total = booksQuery.data?.total ?? 0;
-  const pageSize = booksQuery.data?.page_size ?? PAGE_SIZE;
+  const books = hasQuery ? booksQuery.data?.items ?? [] : [];
+  const total = hasQuery ? booksQuery.data?.total ?? 0 : 0;
+  const pageSize = hasQuery ? booksQuery.data?.page_size ?? PAGE_SIZE : PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
@@ -159,21 +172,21 @@ export function SearchPage() {
             <div>
               <h1 className="text-2xl font-semibold text-zinc-900">Search</h1>
               <p className="text-sm text-zinc-500">
-                {searchState.q ? `Results for "${searchState.q}"` : "Browse your library."}
+                {hasQuery ? `Results for "${queryText}"` : "Enter a search to browse results."}
               </p>
             </div>
 
             <div className="flex items-center gap-2">
               {(["library", "semantic"] as const).map((tab) => {
-                const active = searchState.tab === tab;
-                const disabled = tab === "semantic";
+                const active = effectiveTab === tab;
+                const disabled = tab === "semantic" && !semanticEnabled;
                 return (
                   <button
                     key={tab}
                     type="button"
                     title={disabled ? "Semantic search is unavailable right now." : undefined}
                     disabled={disabled}
-                    onClick={() => updateSearchState({ tab })}
+                    onClick={() => updateSearchState({ tab, page: 1 })}
                     className={`rounded-lg border px-3 py-2 text-sm ${
                       active
                         ? "border-zinc-900 bg-zinc-900 text-zinc-50"
@@ -227,7 +240,7 @@ export function SearchPage() {
           </div>
         </header>
 
-        {booksQuery.isLoading ? (
+        {hasQuery && booksQuery.isLoading ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
             {Array.from({ length: 8 }).map((_, index) => (
               <div key={index} className="aspect-[2/3] animate-pulse rounded-lg bg-zinc-200" />
@@ -235,18 +248,33 @@ export function SearchPage() {
           </div>
         ) : null}
 
-        {!booksQuery.isLoading && books.length === 0 ? (
+        {!hasQuery ? (
+          <section className="rounded-xl border border-zinc-200 bg-white p-10 text-center">
+            <h2 className="text-2xl font-semibold text-zinc-900">Search your library</h2>
+            <p className="mt-2 text-zinc-500">
+              Use the search bar above or refine with filters once you enter a query.
+            </p>
+          </section>
+        ) : null}
+
+        {hasQuery && booksQuery.isError ? (
+          <section className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
+            Unable to search right now.
+          </section>
+        ) : null}
+
+        {hasQuery && !booksQuery.isLoading && !booksQuery.isError && books.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-10 text-center">
             <h2 className="text-2xl font-semibold text-zinc-900">No matching books</h2>
             <p className="mt-2 text-zinc-500">Try a different query or clear the filters.</p>
           </section>
         ) : null}
 
-        {!booksQuery.isLoading && books.length > 0 ? (
+        {hasQuery && !booksQuery.isLoading && books.length > 0 ? (
           <>
             <section className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
               {books.map((book) => (
-                <BookCard key={book.id} book={book} />
+                <BookCard key={book.id} book={book} score={book.score} />
               ))}
             </section>
 

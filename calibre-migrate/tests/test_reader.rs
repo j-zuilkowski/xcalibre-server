@@ -17,7 +17,10 @@ fn test_reader_loads_books() {
     assert_eq!(first.book.title, "Cover Book");
     assert_eq!(first.book.sort, "Cover Book");
     assert_eq!(first.book.author_sort, "Author One");
-    assert_eq!(first.book.pubdate.as_deref(), Some("2020-01-01T00:00:00+00:00"));
+    assert_eq!(
+        first.book.pubdate.as_deref(),
+        Some("2020-01-01T00:00:00+00:00")
+    );
     assert_eq!(first.book.series_index, Some(1.0));
     assert_eq!(first.book.rating, Some(8));
     assert!(first.book.has_cover);
@@ -83,9 +86,18 @@ fn test_reader_loads_comments() {
     let reader = CalibreReader::open(library.path()).expect("open calibre fixture");
     let entries = reader.read_all_entries().expect("read calibre entries");
 
-    assert_eq!(entries[0].comment.as_ref().map(|c| c.text.as_str()), Some("Cover book description"));
-    assert_eq!(entries[1].comment.as_ref().map(|c| c.text.as_str()), Some("ISBN book description"));
-    assert_eq!(entries[2].comment.as_ref().map(|c| c.text.as_str()), Some("MOBI book description"));
+    assert_eq!(
+        entries[0].comment.as_ref().map(|c| c.text.as_str()),
+        Some("Cover book description")
+    );
+    assert_eq!(
+        entries[1].comment.as_ref().map(|c| c.text.as_str()),
+        Some("ISBN book description")
+    );
+    assert_eq!(
+        entries[2].comment.as_ref().map(|c| c.text.as_str()),
+        Some("MOBI book description")
+    );
 }
 
 #[test]
@@ -94,8 +106,14 @@ fn test_reader_loads_series() {
     let reader = CalibreReader::open(library.path()).expect("open calibre fixture");
     let entries = reader.read_all_entries().expect("read calibre entries");
 
-    assert_eq!(entries[0].series.as_ref().map(|s| s.name.as_str()), Some("Series A"));
-    assert_eq!(entries[1].series.as_ref().map(|s| s.sort.as_str()), Some("Series A"));
+    assert_eq!(
+        entries[0].series.as_ref().map(|s| s.name.as_str()),
+        Some("Series A")
+    );
+    assert_eq!(
+        entries[1].series.as_ref().map(|s| s.sort.as_str()),
+        Some("Series A")
+    );
     assert!(entries[2].series.is_none());
 }
 

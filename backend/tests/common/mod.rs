@@ -154,6 +154,7 @@ impl TestContext {
             pubdate: None,
             language: None,
             rating: None,
+            document_type: "unknown".to_string(),
             series: None,
             series_index: None,
             authors: vec![AuthorRef {
@@ -281,6 +282,10 @@ pub fn minimal_epub_bytes() -> Vec<u8> {
 
 pub fn minimal_pdf_bytes() -> Vec<u8> {
     include_bytes!("../fixtures/minimal.pdf").to_vec()
+}
+
+pub fn minimal_mobi_bytes() -> Vec<u8> {
+    include_bytes!("../fixtures/minimal.mobi").to_vec()
 }
 
 pub fn epub_with_cover_bytes() -> Vec<u8> {

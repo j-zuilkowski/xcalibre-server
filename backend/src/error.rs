@@ -1,4 +1,8 @@
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde_json::json;
 use thiserror::Error;
 
@@ -18,6 +22,8 @@ pub enum AppError {
     PayloadTooLarge,
     #[error("unprocessable")]
     Unprocessable,
+    #[error("no extractable format")]
+    NoExtractableFormat,
     #[error("service unavailable")]
     ServiceUnavailable,
     #[error("internal error")]
@@ -34,6 +40,9 @@ impl IntoResponse for AppError {
             AppError::Conflict => (StatusCode::CONFLICT, "conflict"),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             AppError::Unprocessable => (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable"),
+            AppError::NoExtractableFormat => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "no_extractable_format")
+            }
             AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
@@ -50,4 +59,3 @@ impl From<sqlx::Error> for AppError {
         AppError::Internal
     }
 }
-

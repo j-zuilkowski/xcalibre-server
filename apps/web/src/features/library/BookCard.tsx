@@ -6,6 +6,7 @@ type BookCardProps = {
   book: BookSummary;
   readFormat?: string;
   progressPercentage?: number;
+  score?: number;
 };
 
 function authorLabel(book: BookSummary): string {
@@ -15,8 +16,15 @@ function authorLabel(book: BookSummary): string {
   return book.authors.map((author) => author.name).join(", ");
 }
 
-export function BookCard({ book, readFormat = "epub", progressPercentage = 0 }: BookCardProps) {
+export function BookCard({
+  book,
+  readFormat = "epub",
+  progressPercentage = 0,
+  score,
+}: BookCardProps) {
   const safeProgress = Math.max(0, Math.min(100, progressPercentage));
+  const scorePercentage =
+    typeof score === "number" && score > 0 ? Math.round(Math.max(0, Math.min(1, score)) * 100) : null;
   const readHref = `/books/${encodeURIComponent(book.id)}/read/${encodeURIComponent(readFormat)}`;
   const downloadHref = apiClient.downloadUrl(book.id, readFormat);
 
@@ -65,12 +73,19 @@ export function BookCard({ book, readFormat = "epub", progressPercentage = 0 }: 
         ) : null}
       </div>
 
-      <a
-        href={`/books/${encodeURIComponent(book.id)}`}
-        className="mt-2 block truncate text-sm font-semibold text-zinc-900"
-      >
-        {book.title}
-      </a>
+      <div className="mt-2 flex items-center gap-2">
+        <a
+          href={`/books/${encodeURIComponent(book.id)}`}
+          className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900"
+        >
+          {book.title}
+        </a>
+        {scorePercentage !== null ? (
+          <span className="inline-flex shrink-0 items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700">
+            Match {scorePercentage}%
+          </span>
+        ) : null}
+      </div>
       <p className="truncate text-sm text-zinc-500">{authorLabel(book)}</p>
     </article>
   );

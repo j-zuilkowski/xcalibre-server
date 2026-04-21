@@ -105,11 +105,7 @@ impl SearchBackend for Fts5Backend {
     }
 }
 
-fn apply_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
-    query: &SearchQuery,
-    match_query: &str,
-) {
+fn apply_filters(qb: &mut QueryBuilder<'_, Sqlite>, query: &SearchQuery, match_query: &str) {
     let mut where_added = false;
     let mut and_where = |qb: &mut QueryBuilder<'_, Sqlite>| {
         if !where_added {
@@ -131,7 +127,9 @@ fn apply_filters(
         .filter(|v| !v.is_empty())
     {
         and_where(qb);
-        qb.push("EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id AND ba.author_id = ");
+        qb.push(
+            "EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id AND ba.author_id = ",
+        );
         qb.push_bind(author_id);
         qb.push(")");
     }

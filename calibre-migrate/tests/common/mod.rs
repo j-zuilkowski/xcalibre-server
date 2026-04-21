@@ -154,9 +154,30 @@ pub fn calibre_fixture_library_dir() -> TempDir {
         conn.execute(sql, []).expect("insert fixture rows");
     }
 
-    create_book_fixture_file(temp_dir.path(), "Author One", "Cover Book", 1, "cover-book", "epub");
-    create_book_fixture_file(temp_dir.path(), "Author Two", "Isbn Book", 2, "isbn-book", "epub");
-    create_book_fixture_file(temp_dir.path(), "Author Three", "Mobi Book", 3, "mobi-book", "mobi");
+    create_book_fixture_file(
+        temp_dir.path(),
+        "Author One",
+        "Cover Book",
+        1,
+        "cover-book",
+        "epub",
+    );
+    create_book_fixture_file(
+        temp_dir.path(),
+        "Author Two",
+        "Isbn Book",
+        2,
+        "isbn-book",
+        "epub",
+    );
+    create_book_fixture_file(
+        temp_dir.path(),
+        "Author Three",
+        "Mobi Book",
+        3,
+        "mobi-book",
+        "mobi",
+    );
     create_cover_fixture_file(temp_dir.path(), "Author One", "Cover Book", 1);
 
     temp_dir
@@ -172,8 +193,11 @@ fn create_book_fixture_file(
 ) {
     let book_dir = book_dir_path(library_path, author_sort, title, book_id);
     fs::create_dir_all(&book_dir).expect("create fixture book directory");
-    fs::write(book_dir.join(format!("{name}.{format}")), b"fixture-book-data")
-        .expect("write fixture book file");
+    fs::write(
+        book_dir.join(format!("{name}.{format}")),
+        b"fixture-book-data",
+    )
+    .expect("write fixture book file");
 }
 
 fn create_cover_fixture_file(library_path: &Path, author_sort: &str, title: &str, book_id: i64) {

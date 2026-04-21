@@ -24,7 +24,11 @@ fn render_cover_variants(raw_cover: &[u8]) -> anyhow::Result<(Vec<u8>, Vec<u8>)>
     Ok((cover_writer.into_inner(), thumb_writer.into_inner()))
 }
 
-pub fn copy_cover(source_cover_path: &Path, target_cover_path: &Path, target_thumb_path: &Path) -> anyhow::Result<()> {
+pub fn copy_cover(
+    source_cover_path: &Path,
+    target_cover_path: &Path,
+    target_thumb_path: &Path,
+) -> anyhow::Result<()> {
     let source_bytes = std::fs::read(source_cover_path)
         .with_context(|| format!("read source cover {}", source_cover_path.display()))?;
     let (cover_bytes, thumb_bytes) = render_cover_variants(&source_bytes)?;

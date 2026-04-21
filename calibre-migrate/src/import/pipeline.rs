@@ -7,7 +7,9 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::calibre::reader::CalibreReader;
-use crate::calibre::schema::{CalibeSeries, CalibreAuthor, CalibreEntry, CalibreFormat, CalibreTag};
+use crate::calibre::schema::{
+    CalibeSeries, CalibreAuthor, CalibreEntry, CalibreFormat, CalibreTag,
+};
 use crate::import::covers;
 use crate::report::{FailureRecord, MigrationReport};
 
@@ -102,7 +104,10 @@ impl ImportPipeline {
                 continue;
             }
 
-            match self.import_single_entry(&entry, &available_formats, reader).await {
+            match self
+                .import_single_entry(&entry, &available_formats, reader)
+                .await
+            {
                 Ok(()) => {
                     report.imported += 1;
                 }
@@ -145,7 +150,11 @@ impl ImportPipeline {
         let copied_formats = self.copy_formats(available_formats)?;
         let (has_cover, cover_path) = self.copy_cover_if_present(entry, &book_id, reader)?;
 
-        let mut tx = self.target_db.begin().await.context("begin import transaction")?;
+        let mut tx = self
+            .target_db
+            .begin()
+            .await
+            .context("begin import transaction")?;
         let series_id = self
             .get_or_create_series(&mut tx, entry.series.as_ref(), &now)
             .await?;
@@ -181,22 +190,28 @@ impl ImportPipeline {
 
         self.insert_authors(&mut tx, &book_id, &entry.authors, &now)
             .await?;
-        self.insert_tags(&mut tx, &book_id, &entry.tags, &now).await?;
+        self.insert_tags(&mut tx, &book_id, &entry.tags, &now)
+            .await?;
         self.insert_formats(&mut tx, &book_id, &copied_formats, &now)
             .await?;
-        self.insert_identifiers(&mut tx, &book_id, entry, &now).await?;
+        self.insert_identifiers(&mut tx, &book_id, entry, &now)
+            .await?;
 
         tx.commit().await.context("commit import transaction")?;
         Ok(())
     }
 
-    fn copy_formats(&self, available_formats: &[AvailableFormat]) -> anyhow::Result<Vec<CopiedFormat>> {
+    fn copy_formats(
+        &self,
+        available_formats: &[AvailableFormat],
+    ) -> anyhow::Result<Vec<CopiedFormat>> {
         let mut copied = Vec::with_capacity(available_formats.len());
         for format in available_formats {
             let format_id = Uuid::new_v4().to_string();
             let extension = format.source.format.to_ascii_lowercase();
             let relative_path = format!("books/{}/{format_id}.{extension}", &format_id[..2]);
-            self.storage.copy_from(&format.source_path, &relative_path)?;
+            self.storage
+                .copy_from(&format.source_path, &relative_path)?;
             let size_bytes = std::fs::metadata(&format.source_path)
                 .map(|metadata| metadata.len() as i64)
                 .unwrap_or_else(|_| format.source.uncompressed_size.unwrap_or(0));
@@ -273,11 +288,12 @@ impl ImportPipeline {
         now: &str,
     ) -> anyhow::Result<()> {
         for (display_order, author) in authors.iter().enumerate() {
-            let author_id = if let Some(row) = sqlx::query("SELECT id FROM authors WHERE name = ? LIMIT 1")
-                .bind(&author.name)
-                .fetch_optional(tx.as_mut())
-                .await
-                .context("query existing author")?
+            let author_id = if let Some(row) =
+                sqlx::query("SELECT id FROM authors WHERE name = ? LIMIT 1")
+                    .bind(&author.name)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .context("query existing author")?
             {
                 row.try_get::<String, _>("id").context("read author id")?
             } else {
@@ -316,11 +332,12 @@ impl ImportPipeline {
         now: &str,
     ) -> anyhow::Result<()> {
         for tag in tags {
-            let tag_id = if let Some(row) = sqlx::query("SELECT id FROM tags WHERE name = ? LIMIT 1")
-                .bind(&tag.name)
-                .fetch_optional(tx.as_mut())
-                .await
-                .context("query existing tag")?
+            let tag_id = if let Some(row) =
+                sqlx::query("SELECT id FROM tags WHERE name = ? LIMIT 1")
+                    .bind(&tag.name)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .context("query existing tag")?
             {
                 row.try_get::<String, _>("id").context("read tag id")?
             } else {
