@@ -7,6 +7,7 @@ import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
 
 const getBookMock = vi.spyOn(apiClient, "getBook");
+const getLlmHealthMock = vi.spyOn(apiClient, "getLlmHealth");
 
 function makeBook(): Book {
   return {
@@ -86,8 +87,17 @@ function renderPage() {
 describe("BookDetailPage", () => {
   beforeEach(() => {
     getBookMock.mockReset();
+    getLlmHealthMock.mockReset();
     window.history.replaceState({}, "", "/books/book-1");
     setUser(makeUser({ name: "admin", can_edit: true }));
+    getLlmHealthMock.mockResolvedValue({
+      enabled: false,
+      librarian: {
+        available: false,
+        model_id: null,
+        endpoint: "http://llm.local",
+      },
+    });
   });
 
   afterEach(() => {

@@ -7,8 +7,13 @@ import type {
   BulkImportRequest,
   BulkImportResponse,
   Book,
+  BookChapters,
   BookSummary,
+  BookText,
+  ClassifyResult,
+  DeriveResult,
   ListBooksParams,
+  LlmHealth,
   LoginRequest,
   LoginResponse,
   PaginatedResponse,
@@ -24,6 +29,7 @@ import type {
   RefreshResponse,
   RegisterRequest,
   User,
+  ValidationResult,
 } from "./types";
 
 type ClientOptions = {
@@ -177,6 +183,48 @@ export class ApiClient {
     });
   }
 
+  async classifyBook(bookId: string): Promise<ClassifyResult> {
+    return this.requestJson<ClassifyResult>(`/api/v1/books/${encodeURIComponent(bookId)}/classify`);
+  }
+
+  async confirmTags(bookId: string, confirm: string[], reject: string[]): Promise<Book> {
+    return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(bookId)}/tags/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ confirm, reject }),
+    });
+  }
+
+  async confirmAllTags(bookId: string): Promise<Book> {
+    return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(bookId)}/tags/confirm-all`, {
+      method: "POST",
+    });
+  }
+
+  async validateBook(bookId: string): Promise<ValidationResult> {
+    return this.requestJson<ValidationResult>(`/api/v1/books/${encodeURIComponent(bookId)}/validate`);
+  }
+
+  async deriveBook(bookId: string): Promise<DeriveResult> {
+    return this.requestJson<DeriveResult>(`/api/v1/books/${encodeURIComponent(bookId)}/derive`);
+  }
+
+  async listChapters(bookId: string): Promise<BookChapters> {
+    return this.requestJson<BookChapters>(`/api/v1/books/${encodeURIComponent(bookId)}/chapters`);
+  }
+
+  async getBookText(bookId: string, chapter?: number): Promise<BookText> {
+    const search = new URLSearchParams();
+    if (chapter !== undefined) {
+      search.set("chapter", String(chapter));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<BookText>(`/api/v1/books/${encodeURIComponent(bookId)}/text${suffix}`);
+  }
+
+  async getLlmHealth(): Promise<LlmHealth> {
+    return this.requestJson<LlmHealth>("/api/v1/llm/health");
+  }
+
   async getReadingProgress(id: string): Promise<ReadingProgress | null> {
     try {
       return await this.requestJson<ReadingProgress>(
@@ -238,6 +286,15 @@ export class ApiClient {
     page?: number;
     page_size?: number;
   } = {}): Promise<PaginatedResponse<AdminJob>> {
+    return this.listAdminJobs(params);
+  }
+
+  async listAdminJobs(params: {
+    status?: string;
+    job_type?: string;
+    page?: number;
+    page_size?: number;
+  } = {}): Promise<PaginatedResponse<AdminJob>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
       if (value === undefined || value === null || value === "") {
@@ -250,7 +307,11 @@ export class ApiClient {
   }
 
   async cancelJob(id: string): Promise<void> {
-    await this.requestJson<void>(`/api/v1/admin/jobs/${encodeURIComponent(id)}`, {
+    await this.cancelAdminJob(id);
+  }
+
+  async cancelAdminJob(jobId: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/jobs/${encodeURIComponent(jobId)}`, {
       method: "DELETE",
     });
   }

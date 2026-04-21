@@ -5,7 +5,7 @@ import { RegisterPage } from "./features/auth/RegisterPage";
 import { AdminLayout } from "./features/admin/AdminLayout";
 import { DashboardPage } from "./features/admin/DashboardPage";
 import { ImportPage } from "./features/admin/ImportPage";
-import { JobsPage } from "./features/admin/JobsPage";
+import { AdminJobsPage } from "./features/admin/AdminJobsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -98,7 +98,7 @@ const adminImportRoute = createRoute({
 const adminJobsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "jobs",
-  component: JobsPage,
+  component: AdminJobsPage,
 });
 
 const loginRoute = createRoute({

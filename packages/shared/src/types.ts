@@ -35,6 +35,49 @@ export type TagRef = {
   confirmed: boolean;
 };
 
+export type TagSuggestion = {
+  name: string;
+  confidence: number;
+};
+
+export type ClassifyResult = {
+  book_id: string;
+  suggestions: TagSuggestion[];
+  model_id: string;
+  pending_count: number;
+};
+
+export type ValidationIssue = {
+  field: string;
+  severity: "warning" | "error";
+  message: string;
+  suggestion: string | null;
+};
+
+export type ValidationResult = {
+  book_id: string;
+  severity: "ok" | "warning" | "error";
+  issues: ValidationIssue[];
+  model_id: string;
+};
+
+export type DeriveResult = {
+  book_id: string;
+  summary: string;
+  related_titles: string[];
+  discussion_questions: string[];
+  model_id: string;
+};
+
+export type LlmHealth = {
+  enabled: boolean;
+  librarian: {
+    available: boolean;
+    model_id: string | null;
+    endpoint: string;
+  };
+};
+
 export type FormatRef = {
   id: string;
   format: string;
@@ -87,13 +130,33 @@ export type AdminUserUpdateRequest = {
 export type AdminJob = {
   id: string;
   job_type: string;
-  status: string;
+  status: "pending" | "running" | "completed" | "failed";
   book_id: string | null;
   book_title: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
   error_text: string | null;
+};
+
+export type Chapter = {
+  index: number;
+  title: string;
+  word_count: number;
+};
+
+export type BookChapters = {
+  book_id: string;
+  format: string;
+  chapters: Chapter[];
+};
+
+export type BookText = {
+  book_id: string;
+  format: string;
+  chapter: number | null;
+  text: string;
+  word_count: number;
 };
 
 export type SystemStats = {

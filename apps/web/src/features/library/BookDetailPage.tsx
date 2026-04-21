@@ -1,6 +1,6 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type { Book, FormatRef, TagRef } from "@calibre/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ApiError, Book, FormatRef, TagSuggestion, ValidationResult } from "@calibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import {
@@ -14,7 +14,8 @@ type BookDetailPageProps = {
   bookId?: string;
 };
 
-type SectionKey = "description" | "formats" | "identifiers" | "series" | "history";
+type SectionKey = "description" | "formats" | "identifiers" | "series" | "history" | "ai";
+type AiTab = "classify" | "validate" | "derive";
 
 const READ_FORMAT_PRIORITY = ["epub", "pdf", "azw3", "mobi"];
 
@@ -114,6 +115,39 @@ function pushLibraryTagFilter(tag: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function toLlmErrorMessage(error: unknown): string {
+  const apiError = error as ApiError;
+  if (apiError?.status === 503) {
+    return "LLM unavailable";
+  }
+  return "Unable to complete this request right now.";
+}
+
+function confidencePercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function severityStyles(severity: ValidationResult["severity"]): string {
+  if (severity === "ok") {
+    return "border-green-200 bg-green-50 text-green-700";
+  }
+
+  if (severity === "warning") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  return "border-red-200 bg-red-50 text-red-700";
+}
+
+function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-label="Loading"
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-teal-600 ${className}`}
+    />
+  );
+}
+
 function CollapsibleSection({
   label,
   open,
@@ -143,21 +177,67 @@ function CollapsibleSection({
 export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const resolvedBookId = resolveBookId(bookId);
   const user = useAuthStore((state) => state.user);
+  const queryClient = useQueryClient();
 
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [aiTab, setAiTab] = useState<AiTab>("classify");
+  const [pendingSuggestions, setPendingSuggestions] = useState<TagSuggestion[]>([]);
   const [sectionsOpen, setSectionsOpen] = useState<Record<SectionKey, boolean>>({
     description: false,
     formats: false,
     identifiers: false,
     series: false,
     history: false,
+    ai: false,
   });
 
   const bookQuery = useQuery({
     queryKey: ["book", resolvedBookId],
     queryFn: () => apiClient.getBook(resolvedBookId as string),
     enabled: Boolean(resolvedBookId),
+  });
+
+  const llmHealthQuery = useQuery({
+    queryKey: ["llm-health"],
+    queryFn: () => apiClient.getLlmHealth(),
+    enabled: Boolean(resolvedBookId),
+    staleTime: 60_000,
+  });
+
+  const classifyMutation = useMutation({
+    mutationFn: () => apiClient.classifyBook(resolvedBookId as string),
+    onSuccess: (result) => {
+      setPendingSuggestions(result.suggestions);
+    },
+  });
+
+  const confirmTagMutation = useMutation({
+    mutationFn: (payload: { confirm: string[]; reject: string[] }) =>
+      apiClient.confirmTags(resolvedBookId as string, payload.confirm, payload.reject),
+    onSuccess: (updatedBook, payload) => {
+      queryClient.setQueryData(["book", resolvedBookId], updatedBook);
+      const removedNames = new Set([...payload.confirm, ...payload.reject]);
+      setPendingSuggestions((previous) =>
+        previous.filter((suggestion) => !removedNames.has(suggestion.name)),
+      );
+    },
+  });
+
+  const confirmAllMutation = useMutation({
+    mutationFn: () => apiClient.confirmAllTags(resolvedBookId as string),
+    onSuccess: (updatedBook) => {
+      queryClient.setQueryData(["book", resolvedBookId], updatedBook);
+      setPendingSuggestions([]);
+    },
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: () => apiClient.validateBook(resolvedBookId as string),
+  });
+
+  const deriveMutation = useMutation({
+    mutationFn: () => apiClient.deriveBook(resolvedBookId as string),
   });
 
   const book = bookQuery.data;
@@ -200,6 +280,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const authorsLabel = getAuthorsLabel(book);
   const rating = buildStars(book.rating);
   const confirmedTags = book.tags.filter((tag) => tag.confirmed);
+  const showAiPanel = llmHealthQuery.data?.enabled === true;
 
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-6 text-zinc-900 md:px-6 lg:px-8">
@@ -332,7 +413,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             <span className="flex flex-wrap items-center gap-1">
               <strong>Tags:</strong>
               {confirmedTags.length > 0 ? (
-                confirmedTags.map((tag: TagRef) => (
+                confirmedTags.map((tag) => (
                   <button
                     key={tag.id}
                     type="button"
@@ -458,6 +539,208 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
               }
             >
               No history entries yet.
+            </CollapsibleSection>
+          ) : null}
+
+          {showAiPanel ? (
+            <CollapsibleSection
+              label="AI"
+              open={sectionsOpen.ai}
+              onToggle={() =>
+                setSectionsOpen((previous) => ({
+                  ...previous,
+                  ai: !previous.ai,
+                }))
+              }
+            >
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {(["classify", "validate", "derive"] as const).map((tab) => {
+                    const active = aiTab === tab;
+                    return (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setAiTab(tab)}
+                        className={`rounded-lg border px-3 py-2 text-sm ${
+                          active
+                            ? "border-teal-600 bg-teal-600 text-white"
+                            : "border-zinc-300 bg-white text-zinc-700"
+                        }`}
+                      >
+                        {tab === "classify" ? "Classify" : tab === "validate" ? "Validate" : "Derive"}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {aiTab === "classify" ? (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => void classifyMutation.mutateAsync()}
+                      disabled={classifyMutation.isPending}
+                      className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
+                    >
+                      {classifyMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
+                      Classify
+                    </button>
+
+                    {classifyMutation.isError ? (
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(classifyMutation.error)}</p>
+                    ) : null}
+
+                    {pendingSuggestions.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          {pendingSuggestions.map((suggestion) => (
+                            <div
+                              key={suggestion.name}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs text-teal-800"
+                            >
+                              <span className="font-medium">
+                                {suggestion.name} ({confidencePercent(suggestion.confidence)})
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Confirm ${suggestion.name}`}
+                                disabled={confirmTagMutation.isPending}
+                                onClick={() =>
+                                  void confirmTagMutation.mutateAsync({
+                                    confirm: [suggestion.name],
+                                    reject: [],
+                                  })
+                                }
+                                className="rounded-full px-1 text-teal-700 hover:bg-teal-100 disabled:opacity-50"
+                              >
+                                ✓
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Reject ${suggestion.name}`}
+                                disabled={confirmTagMutation.isPending}
+                                onClick={() =>
+                                  void confirmTagMutation.mutateAsync({
+                                    confirm: [],
+                                    reject: [suggestion.name],
+                                  })
+                                }
+                                className="rounded-full px-1 text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
+                              >
+                                x
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void confirmAllMutation.mutateAsync()}
+                          disabled={confirmAllMutation.isPending || pendingSuggestions.length === 0}
+                          className="inline-flex items-center gap-2 rounded-lg border border-teal-600 px-3 py-2 text-sm font-semibold text-teal-700 disabled:opacity-50"
+                        >
+                          {confirmAllMutation.isPending ? <Spinner /> : null}
+                          Confirm All
+                        </button>
+                      </div>
+                    ) : classifyMutation.isSuccess ? (
+                      <p className="text-sm text-zinc-600">No pending suggestions.</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {aiTab === "validate" ? (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => void validateMutation.mutateAsync()}
+                      disabled={validateMutation.isPending}
+                      className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
+                    >
+                      {validateMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
+                      Validate
+                    </button>
+
+                    {validateMutation.isError ? (
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(validateMutation.error)}</p>
+                    ) : null}
+
+                    {validateMutation.data ? (
+                      <div className="space-y-3">
+                        <span
+                          className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase ${severityStyles(validateMutation.data.severity)}`}
+                        >
+                          {validateMutation.data.severity}
+                        </span>
+
+                        {validateMutation.data.issues.length === 0 ? (
+                          <p className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                            <span aria-hidden="true">✓</span>
+                            No issues found
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {validateMutation.data.issues.map((issue, index) => (
+                              <article
+                                key={`${issue.field}-${index}`}
+                                className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2"
+                              >
+                                <p className="text-sm font-semibold text-zinc-900">{issue.field}</p>
+                                <p className="mt-1 text-sm text-zinc-700">{issue.message}</p>
+                                {issue.suggestion ? (
+                                  <p className="mt-1 text-xs text-zinc-500">Suggestion: {issue.suggestion}</p>
+                                ) : null}
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {aiTab === "derive" ? (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => void deriveMutation.mutateAsync()}
+                      disabled={deriveMutation.isPending}
+                      className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
+                    >
+                      {deriveMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
+                      Generate
+                    </button>
+
+                    {deriveMutation.isError ? (
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(deriveMutation.error)}</p>
+                    ) : null}
+
+                    {deriveMutation.data ? (
+                      <div className="space-y-3 text-zinc-700">
+                        <p>{deriveMutation.data.summary}</p>
+
+                        <div>
+                          <p className="font-semibold text-zinc-900">Related titles</p>
+                          <ul className="ml-5 list-disc">
+                            {deriveMutation.data.related_titles.map((title) => (
+                              <li key={title}>{title}</li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div>
+                          <p className="font-semibold text-zinc-900">Discussion questions</p>
+                          <ol className="ml-5 list-decimal">
+                            {deriveMutation.data.discussion_questions.map((question) => (
+                              <li key={question}>{question}</li>
+                            ))}
+                          </ol>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             </CollapsibleSection>
           ) : null}
         </div>
