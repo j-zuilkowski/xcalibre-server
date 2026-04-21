@@ -8,7 +8,8 @@ import {
   saveTokens,
 } from "./auth";
 
-const BASE_URL_KEY = "api_base_url";
+const BASE_URL_KEY = "server_url";
+const LEGACY_BASE_URL_KEY = "api_base_url";
 const DEFAULT_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 let baseUrl = DEFAULT_BASE_URL;
@@ -38,7 +39,9 @@ export async function initializeApi(): Promise<void> {
 
   await hydrateAuthTokens();
 
-  const storedBaseUrl = await SecureStore.getItemAsync(BASE_URL_KEY);
+  const storedBaseUrl =
+    (await SecureStore.getItemAsync(BASE_URL_KEY)) ??
+    (await SecureStore.getItemAsync(LEGACY_BASE_URL_KEY));
   if (storedBaseUrl && storedBaseUrl.trim().length > 0) {
     baseUrl = storedBaseUrl.trim();
     client = createClient(baseUrl);
@@ -60,9 +63,11 @@ export async function setApiBaseUrl(nextBaseUrl: string): Promise<void> {
   if (normalized.length === 0) {
     baseUrl = DEFAULT_BASE_URL;
     await SecureStore.deleteItemAsync(BASE_URL_KEY);
+    await SecureStore.deleteItemAsync(LEGACY_BASE_URL_KEY);
   } else {
     baseUrl = normalized.replace(/\/$/, "");
     await SecureStore.setItemAsync(BASE_URL_KEY, baseUrl);
+    await SecureStore.deleteItemAsync(LEGACY_BASE_URL_KEY);
   }
 
   client = createClient(baseUrl);

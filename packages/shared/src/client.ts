@@ -97,6 +97,10 @@ export class ApiClient {
     return this.requestJson<User>("/api/v1/auth/me");
   }
 
+  async getMe(): Promise<User> {
+    return this.me();
+  }
+
   async changePassword(current: string, next: string): Promise<void> {
     await this.requestJson<void>("/api/v1/auth/me/password", {
       method: "PATCH",
