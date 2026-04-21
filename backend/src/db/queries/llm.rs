@@ -1,5 +1,6 @@
 use crate::llm::classify::TagSuggestion;
 use chrono::Utc;
+use serde::Serialize;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use uuid::Uuid;
 
@@ -8,6 +9,19 @@ pub struct SemanticIndexJob {
     pub id: String,
     pub job_type: String,
     pub book_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct JobRow {
+    pub id: String,
+    pub job_type: String,
+    pub status: String,
+    pub book_id: Option<String>,
+    pub book_title: Option<String>,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub error_text: Option<String>,
 }
 
 pub async fn enqueue_semantic_index_job(db: &SqlitePool, book_id: &str) -> anyhow::Result<bool> {
@@ -412,4 +426,158 @@ pub async fn confirm_all_pending_tags(db: &SqlitePool, book_id: &str) -> anyhow:
     .await?;
 
     Ok(result.rows_affected() as usize)
+}
+
+pub async fn list_jobs(
+    db: &SqlitePool,
+    status: Option<&str>,
+    job_type: Option<&str>,
+    page: u32,
+    page_size: u32,
+) -> anyhow::Result<(Vec<JobRow>, i64)> {
+    let page = page.max(1);
+    let page_size = page_size.max(1);
+    let offset = ((page - 1) as i64) * (page_size as i64);
+
+    let status = status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let job_type = job_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let mut count_query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT COUNT(1) AS total
+        FROM llm_jobs lj
+        LEFT JOIN books b ON b.id = lj.book_id
+        "#,
+    );
+    apply_job_filters(&mut count_query, status.as_deref(), job_type.as_deref());
+    let total: i64 = count_query.build_query_scalar().fetch_one(db).await?;
+
+    let mut data_query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            lj.id,
+            lj.job_type,
+            lj.status,
+            lj.book_id,
+            b.title AS book_title,
+            lj.created_at,
+            lj.started_at,
+            lj.completed_at,
+            lj.error_text
+        FROM llm_jobs lj
+        LEFT JOIN books b ON b.id = lj.book_id
+        "#,
+    );
+    apply_job_filters(&mut data_query, status.as_deref(), job_type.as_deref());
+    data_query.push(" ORDER BY lj.created_at DESC LIMIT ");
+    data_query.push_bind(page_size as i64);
+    data_query.push(" OFFSET ");
+    data_query.push_bind(offset);
+
+    let rows = data_query.build().fetch_all(db).await?;
+    let items = rows
+        .into_iter()
+        .map(|row| JobRow {
+            id: row.get("id"),
+            job_type: row.get("job_type"),
+            status: row.get("status"),
+            book_id: row.get("book_id"),
+            book_title: row.get("book_title"),
+            created_at: row.get("created_at"),
+            started_at: row.get("started_at"),
+            completed_at: row.get("completed_at"),
+            error_text: row.get("error_text"),
+        })
+        .collect::<Vec<_>>();
+
+    Ok((items, total))
+}
+
+pub async fn get_job(db: &SqlitePool, job_id: &str) -> anyhow::Result<Option<JobRow>> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            lj.id,
+            lj.job_type,
+            lj.status,
+            lj.book_id,
+            b.title AS book_title,
+            lj.created_at,
+            lj.started_at,
+            lj.completed_at,
+            lj.error_text
+        FROM llm_jobs lj
+        LEFT JOIN books b ON b.id = lj.book_id
+        WHERE lj.id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(job_id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|row| JobRow {
+        id: row.get("id"),
+        job_type: row.get("job_type"),
+        status: row.get("status"),
+        book_id: row.get("book_id"),
+        book_title: row.get("book_title"),
+        created_at: row.get("created_at"),
+        started_at: row.get("started_at"),
+        completed_at: row.get("completed_at"),
+        error_text: row.get("error_text"),
+    }))
+}
+
+pub async fn cancel_job(db: &SqlitePool, job_id: &str) -> anyhow::Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        r#"
+        UPDATE llm_jobs
+        SET status = 'failed',
+            error_text = 'cancelled by admin',
+            completed_at = ?
+        WHERE id = ?
+          AND status = 'pending'
+        "#,
+    )
+    .bind(now)
+    .bind(job_id)
+    .execute(db)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+fn apply_job_filters(
+    qb: &mut QueryBuilder<'_, Sqlite>,
+    status: Option<&str>,
+    job_type: Option<&str>,
+) {
+    let mut where_added = false;
+    let mut and_where = |qb: &mut QueryBuilder<'_, Sqlite>| {
+        if !where_added {
+            qb.push(" WHERE ");
+            where_added = true;
+        } else {
+            qb.push(" AND ");
+        }
+    };
+
+    if let Some(status) = status {
+        and_where(qb);
+        qb.push("lj.status = ");
+        qb.push_bind(status.to_string());
+    }
+    if let Some(job_type) = job_type {
+        and_where(qb);
+        qb.push("lj.job_type = ");
+        qb.push_bind(job_type.to_string());
+    }
 }

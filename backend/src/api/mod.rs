@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
+pub mod admin;
 pub mod auth;
 pub mod books;
 pub mod llm;
@@ -18,6 +19,7 @@ pub fn router(state: crate::AppState) -> Router {
 
     Router::new()
         .nest("/api/v1/auth", auth_router)
+        .merge(admin::router(state.clone()))
         .merge(books::router(state.clone()))
         .merge(llm::router(state.clone()))
         .merge(search::router(state.clone()))
