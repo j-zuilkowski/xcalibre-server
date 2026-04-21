@@ -1,5 +1,6 @@
+use crate::llm::classify::TagSuggestion;
 use chrono::Utc;
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -161,4 +162,144 @@ pub async fn mark_running_semantic_jobs_for_book_failed(
     .await?;
 
     Ok(())
+}
+
+pub async fn insert_tag_suggestions(
+    db: &SqlitePool,
+    book_id: &str,
+    suggestions: &[TagSuggestion],
+) -> anyhow::Result<usize> {
+    let now = Utc::now().to_rfc3339();
+    let mut inserted_book_tags = 0usize;
+    let mut tx = db.begin().await?;
+
+    for suggestion in suggestions {
+        let tag_name = suggestion.name.trim();
+        if tag_name.is_empty() {
+            continue;
+        }
+
+        let generated_tag_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO tags (id, name, source, last_modified)
+            VALUES (?, ?, 'llm', ?)
+            "#,
+        )
+        .bind(generated_tag_id)
+        .bind(tag_name)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        let tag_id: Option<String> = sqlx::query_scalar("SELECT id FROM tags WHERE name = ?")
+            .bind(tag_name)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+        let Some(tag_id) = tag_id else {
+            continue;
+        };
+
+        let result = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO book_tags (book_id, tag_id, confirmed)
+            VALUES (?, ?, 0)
+            "#,
+        )
+        .bind(book_id)
+        .bind(tag_id)
+        .execute(&mut *tx)
+        .await?;
+
+        inserted_book_tags += result.rows_affected() as usize;
+    }
+
+    tx.commit().await?;
+    Ok(inserted_book_tags)
+}
+
+pub async fn list_pending_tags(
+    db: &SqlitePool,
+    book_id: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT t.id, t.name
+        FROM book_tags bt
+        JOIN tags t ON t.id = bt.tag_id
+        WHERE bt.book_id = ?
+          AND bt.confirmed = 0
+        ORDER BY t.name ASC
+        "#,
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get("id"), row.get("name")))
+        .collect())
+}
+
+pub async fn confirm_tags(
+    db: &SqlitePool,
+    book_id: &str,
+    confirm_names: &[String],
+    reject_names: &[String],
+) -> anyhow::Result<usize> {
+    let mut tx = db.begin().await?;
+    let mut confirmed_rows = 0usize;
+
+    if !confirm_names.is_empty() {
+        let mut query =
+            QueryBuilder::<Sqlite>::new("UPDATE book_tags SET confirmed = 1 WHERE book_id = ");
+        query.push_bind(book_id);
+        query.push(" AND tag_id IN (SELECT id FROM tags WHERE name IN (");
+        {
+            let mut separated = query.separated(", ");
+            for name in confirm_names {
+                separated.push_bind(name);
+            }
+        }
+        query.push("))");
+
+        let result = query.build().execute(&mut *tx).await?;
+        confirmed_rows = result.rows_affected() as usize;
+    }
+
+    if !reject_names.is_empty() {
+        let mut query = QueryBuilder::<Sqlite>::new("DELETE FROM book_tags WHERE book_id = ");
+        query.push_bind(book_id);
+        query.push(" AND tag_id IN (SELECT id FROM tags WHERE name IN (");
+        {
+            let mut separated = query.separated(", ");
+            for name in reject_names {
+                separated.push_bind(name);
+            }
+        }
+        query.push("))");
+
+        query.build().execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(confirmed_rows)
+}
+
+pub async fn confirm_all_pending_tags(db: &SqlitePool, book_id: &str) -> anyhow::Result<usize> {
+    let result = sqlx::query(
+        r#"
+        UPDATE book_tags
+        SET confirmed = 1
+        WHERE book_id = ?
+          AND confirmed = 0
+        "#,
+    )
+    .bind(book_id)
+    .execute(db)
+    .await?;
+
+    Ok(result.rows_affected() as usize)
 }

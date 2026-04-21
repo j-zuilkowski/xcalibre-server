@@ -1,4 +1,7 @@
-use crate::{config::AppConfig, llm::embeddings::EmbeddingClient};
+use crate::{
+    config::AppConfig,
+    llm::{chat::ChatClient, embeddings::EmbeddingClient},
+};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -9,6 +12,7 @@ pub struct AppState {
     pub storage: Arc<dyn crate::storage::StorageBackend>,
     pub search: Arc<dyn crate::search::SearchBackend>,
     pub semantic_search: Option<Arc<crate::search::semantic::SemanticSearch>>,
+    pub chat_client: Option<ChatClient>,
 }
 
 impl AppState {
@@ -31,12 +35,14 @@ impl AppState {
         } else {
             None
         };
+        let chat_client = ChatClient::new(&config);
         Self {
             db,
             config,
             storage,
             search,
             semantic_search,
+            chat_client,
         }
     }
 }

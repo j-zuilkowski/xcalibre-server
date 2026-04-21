@@ -1,16 +1,11 @@
-use axum::{
-    extract::Request as AxumRequest,
-    http::Method,
-    middleware,
-    response::Response,
-    Router,
-};
+use axum::{extract::Request as AxumRequest, http::Method, middleware, response::Response, Router};
 use std::path::PathBuf;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
 pub mod auth;
 pub mod books;
+pub mod llm;
 pub mod search;
 
 pub fn router(state: crate::AppState) -> Router {
@@ -24,12 +19,13 @@ pub fn router(state: crate::AppState) -> Router {
     Router::new()
         .nest("/api/v1/auth", auth_router)
         .merge(books::router(state.clone()))
+        .merge(llm::router(state.clone()))
         .merge(search::router(state.clone()))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .fallback(spa_fallback)
-        .layer(crate::middleware::security_headers::global_rate_limit_layer(
-            global_rate_limit_per_ip,
-        ))
+        .layer(
+            crate::middleware::security_headers::global_rate_limit_layer(global_rate_limit_per_ip),
+        )
         .layer(middleware::from_fn_with_state(
             upload_max_bytes,
             crate::middleware::security_headers::enforce_upload_size,
