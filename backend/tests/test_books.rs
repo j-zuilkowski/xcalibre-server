@@ -590,6 +590,16 @@ async fn test_delete_book_removes_files() {
         .expect("query book count");
     let count: i64 = row.get("count");
     assert_eq!(count, 0);
+
+    let audit_row = sqlx::query(
+        "SELECT COUNT(1) AS count FROM audit_log WHERE entity = 'book' AND entity_id = ? AND action = 'delete' AND diff_json LIKE '%\"event\":\"book_delete\"%'",
+    )
+    .bind(&book.id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("query delete audit row");
+    let audit_count: i64 = audit_row.get("count");
+    assert!(audit_count >= 1);
 }
 
 #[tokio::test]

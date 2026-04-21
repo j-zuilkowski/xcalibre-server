@@ -25,7 +25,7 @@ storage_path = "/var/lib/calibre"
 url = "sqlite://books.db"
 
 [auth]
-jwt_secret = "from-file"
+jwt_secret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 "#,
     )
     .unwrap();
@@ -37,7 +37,10 @@ jwt_secret = "from-file"
     assert_eq!(config.app.base_url, "https://example.com");
     assert_eq!(config.app.storage_path, "/var/lib/calibre");
     assert_eq!(config.database.url, "sqlite://books.db");
-    assert_eq!(config.auth.jwt_secret, "from-file");
+    assert_eq!(
+        config.auth.jwt_secret,
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+    );
 }
 
 #[tokio::test]
@@ -130,6 +133,103 @@ jwt_secret = ""
     let rewritten = std::fs::read_to_string(&path).unwrap();
     assert!(rewritten.contains("jwt_secret"));
     assert!(!rewritten.contains("jwt_secret = \"\""));
+}
+
+#[tokio::test]
+async fn test_jwt_secret_must_be_base64_and_256_bits() {
+    let _guard = env_lock().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[app]
+base_url = "https://example.com"
+storage_path = "/var/lib/calibre"
+
+[database]
+url = "sqlite://books.db"
+
+[auth]
+jwt_secret = "Zm9vYmFy"
+"#,
+    )
+    .unwrap();
+
+    std::env::set_var("CONFIG_PATH", &path);
+    let result = backend::config::load_config().await;
+    std::env::remove_var("CONFIG_PATH");
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_llm_private_endpoint_allowed_with_warning() {
+    let _guard = env_lock().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[app]
+base_url = "https://example.com"
+storage_path = "/var/lib/calibre"
+
+[database]
+url = "sqlite://books.db"
+
+[auth]
+jwt_secret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
+[llm]
+enabled = false
+allow_private_endpoints = false
+
+[llm.librarian]
+endpoint = "http://192.168.1.20:1234/v1"
+"#,
+    )
+    .unwrap();
+
+    std::env::set_var("CONFIG_PATH", &path);
+    let result = backend::config::load_config().await;
+    std::env::remove_var("CONFIG_PATH");
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_llm_endpoint_rejects_non_http_scheme() {
+    let _guard = env_lock().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[app]
+base_url = "https://example.com"
+storage_path = "/var/lib/calibre"
+
+[database]
+url = "sqlite://books.db"
+
+[auth]
+jwt_secret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
+[llm]
+enabled = true
+
+[llm.librarian]
+endpoint = "file:///tmp/model.sock"
+"#,
+    )
+    .unwrap();
+
+    std::env::set_var("CONFIG_PATH", &path);
+    let result = backend::config::load_config().await;
+    std::env::remove_var("CONFIG_PATH");
+
+    assert!(result.is_err());
 }
 
 #[tokio::test]

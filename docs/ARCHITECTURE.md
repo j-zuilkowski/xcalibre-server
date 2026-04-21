@@ -248,6 +248,7 @@ The `Secure` cookie flag is set automatically when `APP_BASE_URL` starts with `h
 
 - Local user accounts stored in app DB (not Calibre's user table)
 - Passwords hashed with **argon2** — work factor configurable in `config.toml`
+- Argon2 defaults: memory `65536 KiB`, iterations `3`, parallelism `4` (minimum enforced at startup)
 - JWT access tokens (15 min TTL) + refresh tokens (30 day TTL, stored in DB)
 - Web: httpOnly cookies (not localStorage)
 - Mobile: Expo SecureStore

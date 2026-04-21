@@ -452,7 +452,8 @@ async fn delete_book(
         return Err(AppError::Forbidden);
     }
 
-    let Some(paths) = book_queries::delete_book_and_collect_paths(&state.db, &book_id)
+    let Some(paths) =
+        book_queries::delete_book_and_collect_paths(&state.db, &book_id, &auth_user.user.id)
         .await
         .map_err(|err| {
             tracing::error!(book_id = %book_id, error = %err, "failed to delete book from database");
@@ -518,9 +519,12 @@ async fn stream_format(
 
 async fn get_cover(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
     request: Request<Body>,
 ) -> Result<axum::response::Response, AppError> {
+    ensure_download_permission(&state, &auth_user.user.id).await?;
+
     let cover_path = book_queries::find_book_cover_path(&state.db, &book_id)
         .await
         .map_err(|_| AppError::Internal)?
@@ -532,8 +536,11 @@ async fn get_cover(
 
 async fn get_chapters(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<ChaptersResponse>, AppError> {
+    ensure_download_permission(&state, &auth_user.user.id).await?;
+
     let book = load_book_or_not_found(&state.db, &book_id).await?;
     let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
 
@@ -556,9 +563,12 @@ async fn get_chapters(
 
 async fn get_text(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
     Query(query): Query<GetBookTextQuery>,
 ) -> Result<Json<BookTextResponse>, AppError> {
+    ensure_download_permission(&state, &auth_user.user.id).await?;
+
     let book = load_book_or_not_found(&state.db, &book_id).await?;
     let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
 

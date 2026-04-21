@@ -105,6 +105,35 @@ async fn test_cancel_non_pending_job() {
     assert_eq!(body["message"], "Job is not in pending status");
 }
 
+#[tokio::test]
+async fn test_non_admin_cannot_list_jobs_returns_403() {
+    let ctx = TestContext::new().await;
+    let token = ctx.user_token().await;
+
+    let response = ctx
+        .server
+        .get("/api/v1/admin/jobs")
+        .add_header(header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(response, 403);
+}
+
+#[tokio::test]
+async fn test_non_admin_get_missing_job_returns_403_not_404() {
+    let ctx = TestContext::new().await;
+    let token = ctx.user_token().await;
+    let missing = Uuid::new_v4().to_string();
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/admin/jobs/{missing}"))
+        .add_header(header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(response, 403);
+}
+
 async fn insert_job(db: &sqlx::SqlitePool, job_type: &str, status: &str) -> String {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();

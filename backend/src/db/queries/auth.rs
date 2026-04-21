@@ -2,6 +2,7 @@ use crate::db::models::{RoleRef, User};
 use anyhow::Context;
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
@@ -271,6 +272,89 @@ pub async fn revoke_refresh_token_by_id(db: &SqlitePool, token_id: &str) -> anyh
     )
     .bind(now)
     .bind(token_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn audit_login_success(
+    db: &SqlitePool,
+    user_id: &str,
+    username: &str,
+    client_ip: Option<&str>,
+) -> anyhow::Result<()> {
+    write_user_audit_log(
+        db,
+        Some(user_id),
+        user_id,
+        json!({
+            "event": "login_success",
+            "username": username,
+            "client_ip": client_ip,
+        }),
+    )
+    .await
+}
+
+pub async fn audit_login_failure(
+    db: &SqlitePool,
+    user_id: Option<&str>,
+    username: &str,
+    reason: &str,
+    client_ip: Option<&str>,
+) -> anyhow::Result<()> {
+    let entity_id = if let Some(user_id) = user_id {
+        user_id.to_string()
+    } else if username.trim().is_empty() {
+        "unknown".to_string()
+    } else {
+        username.trim().to_string()
+    };
+
+    write_user_audit_log(
+        db,
+        user_id,
+        &entity_id,
+        json!({
+            "event": "login_failure",
+            "username": username,
+            "reason": reason,
+            "client_ip": client_ip,
+        }),
+    )
+    .await
+}
+
+pub async fn audit_password_change(db: &SqlitePool, user_id: &str) -> anyhow::Result<()> {
+    write_user_audit_log(
+        db,
+        Some(user_id),
+        user_id,
+        json!({
+            "event": "password_change",
+        }),
+    )
+    .await
+}
+
+async fn write_user_audit_log(
+    db: &SqlitePool,
+    user_id: Option<&str>,
+    entity_id: &str,
+    details: serde_json::Value,
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        INSERT INTO audit_log (id, user_id, action, entity, entity_id, diff_json, created_at)
+        VALUES (?, ?, 'update', 'user', ?, ?, ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(user_id)
+    .bind(entity_id)
+    .bind(details.to_string())
+    .bind(now)
     .execute(db)
     .await?;
     Ok(())

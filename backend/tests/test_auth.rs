@@ -4,7 +4,7 @@ mod common;
 
 use axum::http::{HeaderName, HeaderValue};
 use chrono::{Duration, Utc};
-use common::{auth_header, TestContext};
+use common::{auth_header, TestContext, TEST_JWT_SECRET};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::Row;
@@ -427,4 +427,147 @@ async fn test_change_password_wrong_current_returns_400() {
         .await;
 
     assert_status!(response, 400);
+}
+
+#[tokio::test]
+async fn test_login_success_writes_audit_log() {
+    let ctx = TestContext::new().await;
+    let (user, password) = ctx.create_user().await;
+
+    let response = ctx
+        .server
+        .post("/api/v1/auth/login")
+        .json(&serde_json::json!({
+            "username": user.username,
+            "password": password
+        }))
+        .await;
+    assert_status!(response, 200);
+
+    let row = sqlx::query(
+        "SELECT COUNT(1) AS count FROM audit_log WHERE entity = 'user' AND entity_id = ? AND diff_json LIKE '%\"event\":\"login_success\"%'",
+    )
+    .bind(&user.id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("query login success audit");
+    let count: i64 = row.get("count");
+    assert!(count >= 1);
+}
+
+#[tokio::test]
+async fn test_login_failure_writes_audit_log() {
+    let ctx = TestContext::new().await;
+    let (user, _) = ctx.create_user().await;
+
+    let response = ctx
+        .server
+        .post("/api/v1/auth/login")
+        .json(&serde_json::json!({
+            "username": user.username,
+            "password": "wrong-password"
+        }))
+        .await;
+    assert_status!(response, 401);
+
+    let row = sqlx::query(
+        "SELECT COUNT(1) AS count FROM audit_log WHERE entity = 'user' AND entity_id = ? AND diff_json LIKE '%\"event\":\"login_failure\"%'",
+    )
+    .bind(&user.id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("query login failure audit");
+    let count: i64 = row.get("count");
+    assert!(count >= 1);
+}
+
+#[tokio::test]
+async fn test_change_password_writes_audit_log() {
+    let ctx = TestContext::new().await;
+    let (user, password) = ctx.create_user().await;
+    let login = ctx.login(&user.username, &password).await;
+
+    let response = ctx
+        .server
+        .patch("/api/v1/auth/me/password")
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(&login.access_token),
+        )
+        .json(&serde_json::json!({
+            "current_password": password,
+            "new_password": "Password123!"
+        }))
+        .await;
+    assert_status!(response, 200);
+
+    let row = sqlx::query(
+        "SELECT COUNT(1) AS count FROM audit_log WHERE entity = 'user' AND entity_id = ? AND diff_json LIKE '%\"event\":\"password_change\"%'",
+    )
+    .bind(&user.id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("query password-change audit");
+    let count: i64 = row.get("count");
+    assert!(count >= 1);
+}
+
+#[tokio::test]
+async fn test_login_sets_secure_refresh_cookie_when_base_url_is_https() {
+    let mut config = backend::config::AppConfig::default();
+    config.app.base_url = "https://library.example.com".to_string();
+    config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
+    let ctx = TestContext::new_with_config(config).await;
+    let (user, password) = ctx.create_user().await;
+
+    let response = ctx
+        .server
+        .post("/api/v1/auth/login")
+        .json(&serde_json::json!({
+            "username": user.username,
+            "password": password
+        }))
+        .await;
+    assert_status!(response, 200);
+
+    let set_cookie = response.header(axum::http::header::SET_COOKIE);
+    let cookie = set_cookie.to_str().expect("set-cookie header");
+    assert!(cookie.contains("refresh_token="));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Secure"));
+}
+
+#[tokio::test]
+async fn test_role_change_writes_audit_log() {
+    let ctx = TestContext::new().await;
+    let (user, _password) = ctx.create_user().await;
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO roles (id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified)
+        VALUES ('audited_admin', 'audited_admin', 1, 1, 1, 1, ?, ?)
+        "#,
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(&ctx.db)
+    .await
+    .expect("insert audited_admin role");
+
+    sqlx::query("UPDATE users SET role_id = 'audited_admin' WHERE id = ?")
+        .bind(&user.id)
+        .execute(&ctx.db)
+        .await
+        .expect("update user role");
+
+    let row = sqlx::query(
+        "SELECT COUNT(1) AS count FROM audit_log WHERE entity = 'user' AND entity_id = ? AND action = 'update' AND diff_json LIKE '%\"event\":\"role_change\"%'",
+    )
+    .bind(&user.id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("query role-change audit");
+    let count: i64 = row.get("count");
+    assert!(count >= 1);
 }

@@ -17,7 +17,7 @@ use std::{
 use tempfile::TempDir;
 use uuid::Uuid;
 
-pub const TEST_JWT_SECRET: &str = "test-jwt-secret-stage-3";
+pub const TEST_JWT_SECRET: &str = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct LoginResult {

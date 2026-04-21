@@ -96,7 +96,7 @@ COPY --from=web-builder /app/apps/web/dist /app/web
 
 ENV WEB_DIST_DIR=/app/web
 
-ENV RUST_LOG=info
+ENV RUST_LOG=warn
 EXPOSE 8083
 USER app
 CMD ["/app/backend"]

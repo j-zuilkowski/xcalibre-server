@@ -190,3 +190,88 @@ async fn test_download_requires_download_permission() {
 
     assert_status!(response, 403);
 }
+
+#[tokio::test]
+async fn test_cover_requires_download_permission() {
+    let ctx = TestContext::new().await;
+    let admin_token = ctx.admin_token().await;
+    let user_token = ctx.user_token().await;
+    let now = Utc::now().to_rfc3339();
+
+    let upload = MultipartForm::new().add_part(
+        "file",
+        Part::bytes(epub_with_cover_bytes())
+            .file_name("with-cover.epub")
+            .mime_type("application/epub+zip"),
+    );
+    let created = ctx
+        .server
+        .post("/api/v1/books")
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(&admin_token),
+        )
+        .multipart(upload)
+        .await;
+    assert_status!(created, 201);
+    let body: serde_json::Value = created.json();
+    let book_id = body["id"].as_str().expect("book id").to_string();
+
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO roles (id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified)
+        VALUES ('no_download', 'no_download', 0, 0, 1, 0, ?, ?)
+        "#,
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(&ctx.db)
+    .await
+    .expect("insert role");
+
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE username = 'user'")
+        .execute(&ctx.db)
+        .await
+        .expect("update user role");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{book_id}/cover"))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_token))
+        .await;
+
+    assert_status!(response, 403);
+}
+
+#[tokio::test]
+async fn test_text_requires_download_permission() {
+    let ctx = TestContext::new().await;
+    let token = ctx.user_token().await;
+    let (book, _path) = ctx.create_book_with_file("No Text Access", "EPUB").await;
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO roles (id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified)
+        VALUES ('no_download', 'no_download', 0, 0, 1, 0, ?, ?)
+        "#,
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(&ctx.db)
+    .await
+    .expect("insert role");
+
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE username = 'user'")
+        .execute(&ctx.db)
+        .await
+        .expect("update user role");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/text", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(response, 403);
+}

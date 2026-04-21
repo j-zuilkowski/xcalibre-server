@@ -13,6 +13,7 @@ const REFERRER_POLICY: &str = "referrer-policy";
 const CONTENT_SECURITY_POLICY: &str = "content-security-policy";
 const PERMISSIONS_POLICY: &str = "permissions-policy";
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
+const EXPECTED_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:";
 
 fn assert_security_headers(response: &TestResponse) {
     assert_header(response, X_CONTENT_TYPE_OPTIONS, "nosniff");
@@ -21,7 +22,7 @@ fn assert_security_headers(response: &TestResponse) {
     assert_header(
         response,
         CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+        EXPECTED_CSP,
     );
     assert_header(
         response,
@@ -73,7 +74,7 @@ async fn test_csp_header_present() {
     assert_header(
         &response,
         CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+        EXPECTED_CSP,
     );
 }
 
@@ -221,4 +222,40 @@ async fn test_upload_over_size_limit_returns_413() {
         .await;
 
     assert_status!(response, 413);
+}
+
+#[tokio::test]
+async fn test_cors_allows_configured_base_url_origin() {
+    let storage = tempfile::tempdir().expect("tempdir");
+    let db = test_db().await;
+    let mut config = AppConfig::default();
+    config.app.base_url = "https://app.example.com".to_string();
+    config.app.storage_path = storage.path().to_string_lossy().to_string();
+    config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
+
+    let server = TestServer::new(app(AppState::new(db, config).await)).expect("build test server");
+    let response = server
+        .method(axum::http::Method::OPTIONS, "/api/v1/books")
+        .add_header(
+            header::ORIGIN,
+            HeaderValue::from_static("https://app.example.com"),
+        )
+        .add_header(
+            header::ACCESS_CONTROL_REQUEST_METHOD,
+            HeaderValue::from_static("GET"),
+        )
+        .await;
+
+    let status = response.status_code();
+    assert!(
+        status == StatusCode::OK || status == StatusCode::NO_CONTENT,
+        "expected preflight success, got {status}"
+    );
+    assert_eq!(
+        response
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .to_str()
+            .expect("allow-origin"),
+        "https://app.example.com"
+    );
 }

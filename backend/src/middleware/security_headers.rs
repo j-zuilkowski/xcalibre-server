@@ -8,10 +8,12 @@ use axum::{
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::KeyExtractor, GovernorError, GovernorLayer,
 };
+use tower_http::cors::CorsLayer;
 
 const X_CONTENT_TYPE_OPTIONS: &str = "x-content-type-options";
 const X_FRAME_OPTIONS: &str = "x-frame-options";
@@ -23,7 +25,7 @@ const X_CONTENT_TYPE_OPTIONS_VALUE: &str = "nosniff";
 const X_FRAME_OPTIONS_VALUE: &str = "DENY";
 const REFERRER_POLICY_VALUE: &str = "strict-origin-when-cross-origin";
 const CONTENT_SECURITY_POLICY_VALUE: &str =
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'";
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:";
 const PERMISSIONS_POLICY_VALUE: &str = "camera=(), microphone=(), geolocation=()";
 
 const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 10;
@@ -38,6 +40,31 @@ pub(crate) fn global_rate_limit_layer(
     requests_per_minute: u32,
 ) -> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
     governor_layer(requests_per_minute.max(1))
+}
+
+pub(crate) fn cors_layer(base_url: &str) -> CorsLayer {
+    let base = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .max_age(Duration::from_secs(3_600));
+
+    match cors_origin_from_base_url(base_url) {
+        Ok(origin) => base.allow_origin(origin),
+        Err(err) => {
+            tracing::warn!(
+                base_url = %base_url,
+                error = %err,
+                "invalid APP_BASE_URL for CORS origin; no origins will be allowed"
+            );
+            base
+        }
+    }
 }
 
 pub(crate) async fn apply_security_headers(request: AxumRequest, next: Next) -> Response {
@@ -92,6 +119,24 @@ fn put_static_header(headers: &mut HeaderMap, name: &'static str, value: &'stati
         HeaderName::from_static(name),
         HeaderValue::from_static(value),
     );
+}
+
+fn cors_origin_from_base_url(base_url: &str) -> Result<HeaderValue, String> {
+    let parsed = reqwest::Url::parse(base_url).map_err(|err| err.to_string())?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("unsupported scheme: {scheme}"));
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "APP_BASE_URL has no host".to_string())?;
+    let origin = if let Some(port) = parsed.port() {
+        format!("{scheme}://{host}:{port}")
+    } else {
+        format!("{scheme}://{host}")
+    };
+    HeaderValue::from_str(&origin).map_err(|err| err.to_string())
 }
 
 fn governor_layer(

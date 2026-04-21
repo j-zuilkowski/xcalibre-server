@@ -771,6 +771,7 @@ pub async fn patch_book_with_audit(
 pub async fn delete_book_and_collect_paths(
     db: &SqlitePool,
     book_id: &str,
+    actor_user_id: &str,
 ) -> anyhow::Result<Option<Vec<String>>> {
     let rows = sqlx::query("SELECT path FROM formats WHERE book_id = ?")
         .bind(book_id)
@@ -791,6 +792,7 @@ pub async fn delete_book_and_collect_paths(
         .map(|row| row.get::<String, _>("path"))
         .collect::<Vec<_>>();
 
+    let now = Utc::now().to_rfc3339();
     let mut tx = db.begin().await?;
     let deleted = sqlx::query("DELETE FROM books WHERE id = ?")
         .bind(book_id)
@@ -801,6 +803,19 @@ pub async fn delete_book_and_collect_paths(
         tx.rollback().await?;
         return Ok(None);
     }
+    sqlx::query(
+        r#"
+        INSERT INTO audit_log (id, user_id, action, entity, entity_id, diff_json, created_at)
+        VALUES (?, ?, 'delete', 'book', ?, ?, ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(actor_user_id)
+    .bind(book_id)
+    .bind(json!({"event":"book_delete"}).to_string())
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
 
     Ok(Some(format_paths))

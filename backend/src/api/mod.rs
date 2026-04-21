@@ -35,6 +35,9 @@ pub fn router(state: crate::AppState) -> Router {
         .layer(middleware::from_fn(
             crate::middleware::security_headers::apply_security_headers,
         ))
+        .layer(crate::middleware::security_headers::cors_layer(
+            &state.config.app.base_url,
+        ))
         .with_state(state)
 }
 

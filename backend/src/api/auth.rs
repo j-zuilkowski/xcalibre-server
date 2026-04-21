@@ -1,14 +1,19 @@
 use crate::{
+    config::AuthSection,
     db::queries::auth as auth_queries,
     middleware::auth::{issue_access_token, AuthenticatedUser},
     AppError, AppState,
 };
 use argon2::{
+    Algorithm, Argon2, Params, Version,
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
 };
 use axum::{
     extract::{Extension, State},
+    http::{
+        header::{HeaderName, SET_COOKIE},
+        HeaderMap, HeaderValue, StatusCode,
+    },
     middleware,
     routing::{get, patch, post},
     Json, Router,
@@ -77,7 +82,7 @@ struct SuccessResponse {
 async fn register(
     State(state): State<AppState>,
     Json(payload): Json<RegisterRequest>,
-) -> Result<(axum::http::StatusCode, Json<crate::db::models::User>), AppError> {
+) -> Result<(StatusCode, Json<crate::db::models::User>), AppError> {
     validate_registration(&payload)?;
 
     let user_count = auth_queries::count_users(&state.db)
@@ -87,7 +92,7 @@ async fn register(
         return Err(AppError::Conflict);
     }
 
-    let password_hash = hash_password(&payload.password)?;
+    let password_hash = hash_password(&payload.password, &state.config.auth)?;
     let user = auth_queries::create_first_admin_user(
         &state.db,
         payload.username.trim(),
@@ -97,29 +102,53 @@ async fn register(
     .await
     .map_err(|_| AppError::Internal)?;
 
-    Ok((axum::http::StatusCode::CREATED, Json(user)))
+    Ok((StatusCode::CREATED, Json(user)))
 }
 
 async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, AppError> {
+) -> Result<(HeaderMap, Json<LoginResponse>), AppError> {
+    let username = payload.username.trim();
+    let client_ip = client_ip_from_headers(&headers);
+
     if payload.username.trim().is_empty() || payload.password.is_empty() {
         return Err(AppError::BadRequest);
     }
 
-    let mut user = auth_queries::find_user_auth_by_username(&state.db, payload.username.trim())
+    let mut user = auth_queries::find_user_auth_by_username(&state.db, username)
         .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::Unauthorized)?;
+        .map_err(|_| AppError::Internal)?;
+    let Some(mut user) = user.take() else {
+        record_login_failure(&state, None, username, "invalid_credentials", client_ip.as_deref())
+            .await;
+        return Err(AppError::Unauthorized);
+    };
 
     if !user.user.is_active {
+        record_login_failure(
+            &state,
+            Some(&user.user.id),
+            username,
+            "inactive_user",
+            client_ip.as_deref(),
+        )
+        .await;
         return Err(AppError::Unauthorized);
     }
 
     let now = Utc::now();
     if let Some(locked_until) = user.locked_until {
         if locked_until > now {
+            record_login_failure(
+                &state,
+                Some(&user.user.id),
+                username,
+                "account_locked",
+                client_ip.as_deref(),
+            )
+            .await;
             return Err(AppError::Unauthorized);
         }
         auth_queries::clear_login_lockout(&state.db, &user.user.id)
@@ -140,6 +169,14 @@ async fn login(
         )
         .await
         .map_err(|_| AppError::Internal)?;
+        record_login_failure(
+            &state,
+            Some(&user.user.id),
+            username,
+            "invalid_credentials",
+            client_ip.as_deref(),
+        )
+        .await;
         return Err(AppError::Unauthorized);
     }
 
@@ -148,14 +185,23 @@ async fn login(
         .map_err(|_| AppError::Internal)?;
 
     let response = create_login_response(&state, &user.user).await?;
-    Ok(Json(response))
+    record_login_success(&state, &user.user.id, username, client_ip.as_deref()).await;
+
+    Ok((
+        refresh_cookie_headers(
+            &state.config.app.base_url,
+            &response.refresh_token,
+            state.config.auth.refresh_token_ttl_days,
+        )?,
+        Json(response),
+    ))
 }
 
 async fn logout(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Json(payload): Json<RefreshRequest>,
-) -> Result<Json<SuccessResponse>, AppError> {
+) -> Result<(HeaderMap, Json<SuccessResponse>), AppError> {
     if payload.refresh_token.trim().is_empty() {
         return Err(AppError::BadRequest);
     }
@@ -173,13 +219,16 @@ async fn logout(
         .await
         .map_err(|_| AppError::Internal)?;
 
-    Ok(Json(SuccessResponse { success: true }))
+    Ok((
+        clear_refresh_cookie_headers(&state.config.app.base_url)?,
+        Json(SuccessResponse { success: true }),
+    ))
 }
 
 async fn refresh(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
-) -> Result<Json<RefreshResponse>, AppError> {
+) -> Result<(HeaderMap, Json<RefreshResponse>), AppError> {
     if payload.refresh_token.trim().is_empty() {
         return Err(AppError::Unauthorized);
     }
@@ -220,10 +269,19 @@ async fn refresh(
     .await
     .map_err(|_| AppError::Internal)?;
 
-    Ok(Json(RefreshResponse {
+    let response = RefreshResponse {
         access_token,
         refresh_token,
-    }))
+    };
+
+    Ok((
+        refresh_cookie_headers(
+            &state.config.app.base_url,
+            &response.refresh_token,
+            state.config.auth.refresh_token_ttl_days,
+        )?,
+        Json(response),
+    ))
 }
 
 async fn me(
@@ -250,10 +308,13 @@ async fn change_password(
         return Err(AppError::BadRequest);
     }
 
-    let new_hash = hash_password(&payload.new_password)?;
+    let new_hash = hash_password(&payload.new_password, &state.config.auth)?;
     auth_queries::update_password_hash(&state.db, &auth_user.user.id, &new_hash)
         .await
         .map_err(|_| AppError::Internal)?;
+    if let Err(err) = auth_queries::audit_password_change(&state.db, &auth_user.user.id).await {
+        tracing::warn!(error = %err, user_id = %auth_user.user.id, "failed to write password-change audit log");
+    }
 
     Ok(Json(SuccessResponse { success: true }))
 }
@@ -284,12 +345,20 @@ async fn create_login_response(
     })
 }
 
-fn hash_password(password: &str) -> Result<String, AppError> {
+fn hash_password(password: &str, auth_config: &AuthSection) -> Result<String, AppError> {
     if password.trim().is_empty() {
         return Err(AppError::BadRequest);
     }
     let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
+    let params = Params::new(
+        auth_config.argon2_memory_kib,
+        auth_config.argon2_iterations,
+        auth_config.argon2_parallelism,
+        None,
+    )
+    .map_err(|_| AppError::Internal)?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    argon2
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|_| AppError::Internal)
@@ -319,4 +388,94 @@ fn validate_registration(payload: &RegisterRequest) -> Result<(), AppError> {
         return Err(AppError::BadRequest);
     }
     Ok(())
+}
+
+fn refresh_cookie_headers(
+    base_url: &str,
+    refresh_token: &str,
+    refresh_ttl_days: u64,
+) -> Result<HeaderMap, AppError> {
+    let mut headers = HeaderMap::new();
+    let secure = base_url
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("https://");
+    let max_age = refresh_ttl_days.saturating_mul(24 * 60 * 60);
+
+    let mut cookie = format!(
+        "refresh_token={refresh_token}; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age={max_age}"
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+
+    headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| AppError::Internal)?,
+    );
+    Ok(headers)
+}
+
+fn clear_refresh_cookie_headers(base_url: &str) -> Result<HeaderMap, AppError> {
+    let mut headers = HeaderMap::new();
+    let secure = base_url
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("https://");
+
+    let mut cookie =
+        "refresh_token=; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+    if secure {
+        cookie.push_str("; Secure");
+    }
+
+    headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| AppError::Internal)?,
+    );
+    Ok(headers)
+}
+
+fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(HeaderName::from_static("x-forwarded-for"))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            headers
+                .get(HeaderName::from_static("x-real-ip"))
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+}
+
+async fn record_login_success(
+    state: &AppState,
+    user_id: &str,
+    username: &str,
+    client_ip: Option<&str>,
+) {
+    if let Err(err) = auth_queries::audit_login_success(&state.db, user_id, username, client_ip).await
+    {
+        tracing::warn!(error = %err, user_id = %user_id, "failed to write login-success audit log");
+    }
+}
+
+async fn record_login_failure(
+    state: &AppState,
+    user_id: Option<&str>,
+    username: &str,
+    reason: &str,
+    client_ip: Option<&str>,
+) {
+    if let Err(err) =
+        auth_queries::audit_login_failure(&state.db, user_id, username, reason, client_ip).await
+    {
+        tracing::warn!(error = %err, username = %username, "failed to write login-failure audit log");
+    }
 }
