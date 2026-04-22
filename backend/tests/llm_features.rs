@@ -271,7 +271,7 @@ async fn test_text_works_when_llm_disabled() {
 }
 
 #[tokio::test]
-async fn test_chapters_returns_422_no_extractable_format() {
+async fn test_chapters_returns_mobi_content() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
     let book_id = upload_mobi(&ctx, &token).await;
@@ -282,9 +282,13 @@ async fn test_chapters_returns_422_no_extractable_format() {
         .add_header(header::AUTHORIZATION, auth_header(&token))
         .await;
 
-    assert_status!(response, 422);
+    assert_status!(response, 200);
     let body: serde_json::Value = response.json();
-    assert_eq!(body["error"], "no_extractable_format");
+    assert_eq!(body["format"], "MOBI");
+    assert!(body["chapters"]
+        .as_array()
+        .map(|chapters| !chapters.is_empty())
+        .unwrap_or(false));
 }
 
 #[tokio::test]

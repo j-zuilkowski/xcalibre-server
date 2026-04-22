@@ -29,6 +29,7 @@ type SectionKey = "description" | "formats" | "identifiers" | "series" | "custom
 type AiTab = "classify" | "validate" | "derive";
 
 const READ_FORMAT_PRIORITY = ["epub", "pdf", "azw3", "mobi"];
+const AUDIO_FORMATS = ["mp3", "m4b", "m4a", "ogg", "opus", "flac", "wav", "aac"];
 
 function resolveBookId(bookId?: string): string | null {
   if (bookId && bookId.trim().length > 0) {
@@ -85,6 +86,10 @@ function getReadFormat(formats: FormatRef[]): string | null {
   }
 
   return formats[0]?.format ?? null;
+}
+
+function isAudioFormat(format: string): boolean {
+  return AUDIO_FORMATS.includes(format.toLowerCase());
 }
 
 function getYearLabel(pubdate: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
@@ -499,6 +504,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   }
 
   const readFormat = getReadFormat(book.formats);
+  const isReadActionAudio = readFormat ? isAudioFormat(readFormat) : false;
   const authorsLabel = getAuthorsLabel(book, t);
   const rating = buildStars(book.rating);
   const confirmedTags = book.tags.filter((tag) => tag.confirmed);
@@ -619,7 +625,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   }`}
                   aria-disabled={!readFormat}
                   >
-                  {t("common.read")}
+                  {isReadActionAudio ? "Play" : t("common.read")}
                 </a>
 
                 <button
@@ -782,13 +788,23 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     <span>
                       {format.format.toUpperCase()} <span className="text-zinc-500">({formatBytes(format.size_bytes)})</span>
                     </span>
-                    <a
-                      href={apiClient.downloadUrl(book.id, format.format)}
-                      download
-                      className="text-teal-700 hover:text-teal-800"
-                    >
-                      {t("common.download")}
-                    </a>
+                    <div className="flex items-center gap-3">
+                      {(format.format.toLowerCase() === "mobi" || format.format.toLowerCase() === "azw3") ? (
+                        <a
+                          href={`/books/${encodeURIComponent(book.id)}/read/${encodeURIComponent(format.format)}`}
+                          className="text-teal-700 hover:text-teal-800"
+                        >
+                          {t("common.read")}
+                        </a>
+                      ) : null}
+                      <a
+                        href={apiClient.downloadUrl(book.id, format.format)}
+                        download
+                        className="text-teal-700 hover:text-teal-800"
+                      >
+                        {t("common.download")}
+                      </a>
+                    </div>
                   </li>
                 ))}
               </ul>

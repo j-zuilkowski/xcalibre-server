@@ -291,6 +291,10 @@ pub fn minimal_mobi_bytes() -> Vec<u8> {
     include_bytes!("../fixtures/minimal.mobi").to_vec()
 }
 
+pub fn minimal_azw3_bytes() -> Vec<u8> {
+    include_bytes!("../fixtures/minimal.azw3").to_vec()
+}
+
 pub fn epub_with_cover_bytes() -> Vec<u8> {
     use zip::write::FileOptions;
 

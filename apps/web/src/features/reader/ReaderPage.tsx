@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { ReadingProgressPatch } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { AudioReader } from "./AudioReader";
 import { ComicReader } from "./ComicReader";
+import { DjvuReader } from "./DjvuReader";
 import { EpubReader } from "./EpubReader";
 import { PdfReader } from "./PdfReader";
 import type { ReaderProgressUpdate } from "./types";
@@ -12,6 +14,8 @@ type ReaderParams = {
   bookId: string;
   format: string;
 };
+
+const AUDIO_FORMATS = ["mp3", "m4b", "m4a", "ogg", "opus", "flac", "wav", "aac"] as const;
 
 function parseReaderParams(pathname: string): ReaderParams | null {
   const match = pathname.match(/^\/books\/([^/]+)\/read\/([^/?#]+)/);
@@ -129,19 +133,28 @@ export function ReaderPage() {
 
   const normalizedFormat = params.format.toLowerCase();
   const isComic = normalizedFormat.includes("cbz") || normalizedFormat.includes("cbr");
+  const isEpub = normalizedFormat.includes("epub");
+  const isPdf = normalizedFormat.includes("pdf");
+  const isDjvu = normalizedFormat === "djvu";
+  const isMobiFamily = normalizedFormat === "mobi" || normalizedFormat === "azw3";
+  const isAudio = AUDIO_FORMATS.includes(normalizedFormat as (typeof AUDIO_FORMATS)[number]);
+  const epubStreamUrl = isMobiFamily
+    ? `/api/v1/books/${encodeURIComponent(params.bookId)}/formats/${encodeURIComponent(params.format)}/to-epub`
+    : undefined;
 
   return (
     <main className="fixed inset-0 z-50 bg-zinc-950 text-zinc-100" data-testid="reader-page">
-      {normalizedFormat.includes("epub") ? (
+      {isEpub || isMobiFamily ? (
         <EpubReader
           book={bookQuery.data}
           format={params.format}
+          streamUrl={epubStreamUrl}
           initialProgress={progressQuery.data ?? null}
           onProgressChange={handleProgressChange}
         />
       ) : null}
 
-      {normalizedFormat.includes("pdf") ? (
+      {isPdf ? (
         <PdfReader
           book={bookQuery.data}
           format={params.format}
@@ -150,8 +163,22 @@ export function ReaderPage() {
         />
       ) : null}
 
-      {!normalizedFormat.includes("epub") && !normalizedFormat.includes("pdf") ? (
-        isComic ? (
+      {!isEpub && !isMobiFamily && !isPdf ? (
+        isDjvu ? (
+          <DjvuReader
+            bookId={params.bookId}
+            format="djvu"
+            initialProgressPage={progressQuery.data?.page ?? null}
+            onProgressChange={handleProgressChange}
+          />
+        ) : isAudio ? (
+          <AudioReader
+            book={bookQuery.data}
+            format={params.format}
+            initialProgress={progressQuery.data ?? null}
+            onProgressChange={handleProgressChange}
+          />
+        ) : isComic ? (
           <ComicReader bookId={params.bookId} onProgressChange={handleProgressChange} />
         ) : (
           <div className="grid h-full place-items-center text-zinc-300">

@@ -1,4 +1,5 @@
 use anyhow::Context;
+use mobi::Mobi;
 use regex::Regex;
 use roxmltree::Document;
 use std::{
@@ -21,6 +22,16 @@ pub fn list_chapters(path: &Path, format: &str) -> anyhow::Result<Vec<Chapter>> 
     let output = match normalize_format(format).as_str() {
         "EPUB" => list_epub_chapters(path).unwrap_or_default(),
         "PDF" => list_pdf_chapters(path).unwrap_or_default(),
+        "TXT" => {
+            let content = fs::read_to_string(path).unwrap_or_default();
+            let word_count = content.split_whitespace().count();
+            vec![Chapter {
+                index: 0,
+                title: "Full Text".to_string(),
+                word_count,
+            }]
+        }
+        "MOBI" | "AZW3" => list_mobi_chapters(path).unwrap_or_default(),
         _ => Vec::new(),
     };
     Ok(output)
@@ -30,9 +41,148 @@ pub fn extract_text(path: &Path, format: &str, chapter: Option<u32>) -> anyhow::
     let output = match normalize_format(format).as_str() {
         "EPUB" => extract_epub_text(path, chapter).unwrap_or_default(),
         "PDF" => extract_pdf_text(path, chapter).unwrap_or_default(),
+        "TXT" => fs::read_to_string(path).unwrap_or_default(),
+        "MOBI" | "AZW3" => extract_mobi_text(path, chapter).unwrap_or_default(),
         _ => String::new(),
     };
     Ok(output)
+}
+
+fn list_mobi_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
+    let bytes = fs::read(path)?;
+    let book = Mobi::new(&bytes)?;
+    let chapters = mobi_chapter_fragments(&safe_mobi_content(&book));
+
+    Ok(chapters
+        .into_iter()
+        .enumerate()
+        .map(|(index, fragment)| {
+            let text = strip_html_to_text(&fragment);
+            let word_count = text.split_whitespace().count();
+            let title = extract_chapter_title(&fragment)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("Chapter {}", index + 1));
+            Chapter {
+                index: index as u32,
+                title,
+                word_count,
+            }
+        })
+        .collect())
+}
+
+fn extract_mobi_text(path: &Path, chapter: Option<u32>) -> anyhow::Result<String> {
+    let bytes = fs::read(path)?;
+    let book = Mobi::new(&bytes)?;
+    let chapter_text = mobi_chapter_fragments(&safe_mobi_content(&book))
+        .into_iter()
+        .map(|fragment| strip_html_to_text(&fragment))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>();
+
+    if let Some(chapter_index) = chapter {
+        return Ok(chapter_text
+            .get(chapter_index as usize)
+            .cloned()
+            .unwrap_or_default());
+    }
+
+    Ok(chapter_text.join("\n\n---\n\n"))
+}
+
+fn mobi_chapter_fragments(raw_html: &str) -> Vec<String> {
+    let mut fragments = split_on_mobi_pagebreak(raw_html);
+    if fragments.len() <= 1 {
+        fragments = split_on_heading_tags(raw_html);
+    }
+    if fragments.is_empty() && !raw_html.trim().is_empty() {
+        fragments.push(raw_html.to_string());
+    }
+    fragments
+}
+
+fn safe_mobi_content(book: &Mobi) -> String {
+    let content = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        book.content_as_string_lossy()
+    }))
+    .unwrap_or_default();
+    if !content.trim().is_empty() {
+        return content;
+    }
+    book.description().unwrap_or_default()
+}
+
+fn split_on_mobi_pagebreak(raw_html: &str) -> Vec<String> {
+    let lower = raw_html.to_ascii_lowercase();
+    let marker = "<mbp:pagebreak";
+    let mut cursor = 0usize;
+    let mut chunks = Vec::new();
+
+    while cursor < raw_html.len() {
+        let Some(relative_index) = lower[cursor..].find(marker) else {
+            break;
+        };
+        let marker_start = cursor + relative_index;
+        let fragment = raw_html[cursor..marker_start].trim();
+        if !fragment.is_empty() {
+            chunks.push(fragment.to_string());
+        }
+
+        let marker_rest = &lower[marker_start..];
+        if let Some(relative_end) = marker_rest.find('>') {
+            cursor = marker_start + relative_end + 1;
+        } else {
+            cursor = raw_html.len();
+            break;
+        }
+    }
+
+    let tail = raw_html[cursor..].trim();
+    if !tail.is_empty() {
+        chunks.push(tail.to_string());
+    }
+
+    chunks
+}
+
+fn split_on_heading_tags(raw_html: &str) -> Vec<String> {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut indices = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(index) = find_next_heading_index(&lower, cursor) {
+        indices.push(index);
+        cursor = index.saturating_add(1);
+    }
+
+    if indices.is_empty() {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    if indices[0] > 0 {
+        let prefix = raw_html[..indices[0]].trim();
+        if !prefix.is_empty() {
+            chunks.push(prefix.to_string());
+        }
+    }
+
+    for (position, start) in indices.iter().enumerate() {
+        let end = indices.get(position + 1).copied().unwrap_or(raw_html.len());
+        let segment = raw_html[*start..end].trim();
+        if !segment.is_empty() {
+            chunks.push(segment.to_string());
+        }
+    }
+
+    chunks
+}
+
+fn find_next_heading_index(lower: &str, cursor: usize) -> Option<usize> {
+    ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"]
+        .iter()
+        .filter_map(|marker| lower[cursor..].find(marker).map(|index| cursor + index))
+        .min()
 }
 
 fn list_epub_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {

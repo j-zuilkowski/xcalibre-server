@@ -10,7 +10,7 @@ import { getLocalPath } from "../../lib/downloads";
 import { EpubReaderScreen } from "../../features/reader/EpubReaderScreen";
 import { PdfReaderScreen } from "../../features/reader/PdfReaderScreen";
 
-type ReaderFormat = "EPUB" | "PDF";
+type ReaderFormat = "EPUB" | "PDF" | "MOBI" | "AZW3";
 
 function normalizeFormat(format: string | undefined): ReaderFormat | null {
   if (!format) {
@@ -18,7 +18,12 @@ function normalizeFormat(format: string | undefined): ReaderFormat | null {
   }
 
   const normalized = format.toUpperCase();
-  if (normalized === "EPUB" || normalized === "PDF") {
+  if (
+    normalized === "EPUB"
+    || normalized === "PDF"
+    || normalized === "MOBI"
+    || normalized === "AZW3"
+  ) {
     return normalized;
   }
 
@@ -33,6 +38,8 @@ export default function ReaderEntryScreen() {
   const bookId = Array.isArray(params.id) ? params.id[0] : params.id;
   const formatParam = Array.isArray(params.format) ? params.format[0] : params.format;
   const format = normalizeFormat(formatParam);
+  const isMobiFamily = format === "MOBI" || format === "AZW3";
+  const isEpubFamily = format === "EPUB" || isMobiFamily;
 
   const [loading, setLoading] = useState(true);
   const [localPath, setLocalPath] = useState<string | null>(null);
@@ -56,6 +63,16 @@ export default function ReaderEntryScreen() {
 
     void (async () => {
       const resolvedDatabase = await db;
+      if (isMobiFamily) {
+        if (cancelled) {
+          return;
+        }
+        setDatabase(resolvedDatabase);
+        setLocalPath("");
+        setLoading(false);
+        return;
+      }
+
       const path = await getLocalPath(resolvedDatabase, bookId, format);
 
       if (cancelled) {
@@ -70,7 +87,7 @@ export default function ReaderEntryScreen() {
     return () => {
       cancelled = true;
     };
-  }, [bookId, format]);
+  }, [bookId, format, isMobiFamily]);
 
   const title = useMemo(() => {
     if (bookQuery.data?.title) {
@@ -100,7 +117,7 @@ export default function ReaderEntryScreen() {
     );
   }
 
-  if (!localPath) {
+  if (!localPath && !isMobiFamily) {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ headerShown: false }} />
@@ -115,13 +132,19 @@ export default function ReaderEntryScreen() {
   return (
     <View style={styles.readerScreen}>
       <Stack.Screen options={{ headerShown: false }} />
-      {format === "EPUB" ? (
+      {isEpubFamily ? (
         <EpubReaderScreen
           client={client}
           database={database}
           bookId={bookId}
           title={title}
-          filePath={localPath}
+          format={format}
+          filePath={localPath ?? ""}
+          streamUrl={
+            isMobiFamily
+              ? `/api/v1/books/${encodeURIComponent(bookId)}/formats/${encodeURIComponent(format)}/to-epub`
+              : undefined
+          }
           onBack={() => router.back()}
         />
       ) : null}

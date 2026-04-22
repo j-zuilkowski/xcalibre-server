@@ -106,7 +106,13 @@ function clampProgress(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-export function EpubReader({ book, format, initialProgress, onProgressChange }: ReaderComponentProps) {
+export function EpubReader({
+  book,
+  format,
+  streamUrl,
+  initialProgress,
+  onProgressChange,
+}: ReaderComponentProps) {
   const user = useAuthStore((state) => state.user);
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -137,7 +143,10 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
     localStorage.setItem(settingsStorageKey(user?.id ?? null), JSON.stringify(settings));
   }, [settings, user?.id]);
 
-  const streamUrl = useMemo(() => apiClient.streamUrl(book.id, format), [book.id, format]);
+  const resolvedStreamUrl = useMemo(
+    () => streamUrl ?? apiClient.streamUrl(book.id, format),
+    [book.id, format, streamUrl],
+  );
 
   const applyReaderTheme = useCallback((rendition: EpubRendition, nextSettings: EpubSettings) => {
     const palette = themeStyles(nextSettings.theme);
@@ -169,7 +178,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
           return;
         }
 
-        const epubBook = createBook(streamUrl) as EpubBook;
+        const epubBook = createBook(resolvedStreamUrl) as EpubBook;
         const rendition = epubBook.renderTo(containerRef.current, {
           width: "100%",
           height: "100%",
@@ -225,7 +234,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
       renditionRef.current?.destroy?.();
       renditionRef.current = null;
     };
-  }, [applyReaderTheme, initialProgress?.cfi, onProgressChange, streamUrl]);
+  }, [applyReaderTheme, initialProgress?.cfi, onProgressChange, resolvedStreamUrl]);
 
   useEffect(() => {
     if (!renditionRef.current) {

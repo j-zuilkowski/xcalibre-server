@@ -9,6 +9,7 @@ export type ReaderProgressUpdate = {
 export type ReaderComponentProps = {
   book: Book;
   format: string;
+  streamUrl?: string;
   initialProgress: ReadingProgress | null;
   onProgressChange: (progress: ReaderProgressUpdate) => void;
 };

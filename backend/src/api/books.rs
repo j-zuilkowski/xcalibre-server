@@ -25,14 +25,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 use std::{
-    io::{Read, Seek},
+    io::{Cursor, Read, Seek, Write},
     path::{Component, Path as FsPath, PathBuf},
     sync::Arc,
 };
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 use uuid::Uuid;
-use zip::ZipArchive;
+use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -52,7 +52,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             delete(delete_custom_column),
         )
         .route("/api/v1/books/downloads", get(list_download_history))
-        .route("/api/v1/books/:id/custom-values", get(get_book_custom_values).patch(patch_book_custom_values))
+        .route(
+            "/api/v1/books/:id/custom-values",
+            get(get_book_custom_values).patch(patch_book_custom_values),
+        )
         .route("/api/v1/books/:id/merge", post(merge_book))
         .route(
             "/api/v1/books/:id",
@@ -74,6 +77,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/books/:id/formats/:format/stream",
             get(stream_format),
+        )
+        .route(
+            "/api/v1/books/:id/formats/:format/to-epub",
+            get(mobi_to_epub),
         )
         .route_layer(auth_layer)
 }
@@ -1004,8 +1011,76 @@ async fn stream_format(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
+    let file_extension = validated_download_format_extension(&format_file.format)?;
+    let guessed_mime = mime_guess::from_ext(&file_extension).first_or_octet_stream();
+    let content_type = match file_extension.as_str() {
+        "mp3" => "audio/mpeg",
+        "m4b" | "m4a" => "audio/mp4",
+        "ogg" | "opus" => "audio/ogg",
+        "flac" => "audio/flac",
+        _ => guessed_mime.essence_str(),
+    };
+
     let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
-    serve_file(request, full_path).await
+    let mut response = serve_file(request, full_path).await?;
+    let content_type_header =
+        HeaderValue::from_str(content_type).map_err(|_| AppError::Internal)?;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, content_type_header);
+    Ok(response)
+}
+
+async fn mobi_to_epub(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((book_id, format)): Path<(String, String)>,
+) -> Result<axum::response::Response, AppError> {
+    let normalized_format = format.trim().to_ascii_lowercase();
+    if !matches!(normalized_format.as_str(), "mobi" | "azw3") {
+        return Err(AppError::BadRequest);
+    }
+
+    ensure_download_permission(&state, &auth_user.user.id).await?;
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let format_file = book_queries::find_format_file(&state.db, &book_id, &normalized_format)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
+    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let mobi_book = mobi::Mobi::new(&bytes).map_err(|_| AppError::Internal)?;
+    let epub_bytes = build_epub_from_mobi(&mobi_book)?;
+
+    let source_title = mobi_book.title();
+    let title_for_filename = if source_title.trim().is_empty() {
+        "book".to_string()
+    } else {
+        source_title
+    };
+    let safe_filename = sanitize_file_name_for_header(&title_for_filename);
+    let disposition = HeaderValue::from_str(&format!("inline; filename=\"{safe_filename}.epub\""))
+        .map_err(|_| AppError::Internal)?;
+
+    let mut response = axum::response::Response::new(Body::from(epub_bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/epub+zip"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_DISPOSITION, disposition);
+    Ok(response)
 }
 
 async fn get_cover(
@@ -1961,21 +2036,361 @@ fn normalize_custom_column_type(raw: &str) -> Option<&'static str> {
 }
 
 fn preferred_extractable_format(book: &crate::db::models::Book) -> Option<&str> {
-    if book
-        .formats
+    ["EPUB", "PDF", "MOBI", "AZW3", "TXT"]
+        .into_iter()
+        .find(|candidate| {
+            book.formats
+                .iter()
+                .any(|format| format.format.eq_ignore_ascii_case(candidate))
+        })
+}
+
+#[derive(Debug)]
+struct MobiChapterForEpub {
+    title: String,
+    text: String,
+}
+
+fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
+    let title = {
+        let raw = book.title();
+        if raw.trim().is_empty() {
+            "Converted Book".to_string()
+        } else {
+            raw.trim().to_string()
+        }
+    };
+    let author = book
+        .author()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Unknown Author".to_string());
+    let source_html = safe_mobi_content(book);
+    let chapters = mobi_chapters_for_epub(&source_html);
+
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let mimetype_options = FileOptions::default().compression_method(CompressionMethod::Stored);
+    let compressed_options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    zip.start_file("mimetype", mimetype_options)
+        .map_err(|_| AppError::Internal)?;
+    zip.write_all(b"application/epub+zip")
+        .map_err(|_| AppError::Internal)?;
+
+    zip.start_file("META-INF/container.xml", compressed_options)
+        .map_err(|_| AppError::Internal)?;
+    zip.write_all(
+        br#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+    )
+    .map_err(|_| AppError::Internal)?;
+
+    let manifest_items = chapters
         .iter()
-        .any(|format| format.format.eq_ignore_ascii_case("EPUB"))
-    {
-        return Some("EPUB");
-    }
-    if book
-        .formats
+        .enumerate()
+        .map(|(index, _)| {
+            format!(
+                r#"<item id="chap{index}" href="chapter{}.xhtml" media-type="application/xhtml+xml"/>"#,
+                index + 1
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
+    let spine_items = chapters
         .iter()
-        .any(|format| format.format.eq_ignore_ascii_case("PDF"))
-    {
-        return Some("PDF");
+        .enumerate()
+        .map(|(index, _)| format!(r#"<itemref idref="chap{index}"/>"#))
+        .collect::<Vec<_>>()
+        .join("\n    ");
+    let escaped_title = xml_escape(&title);
+    let escaped_author = xml_escape(&author);
+    let content_opf = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{escaped_title}</dc:title>
+    <dc:creator>{escaped_author}</dc:creator>
+    <dc:language>en</dc:language>
+    <dc:identifier id="bookid">urn:autolibre:{}</dc:identifier>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    {manifest_items}
+  </manifest>
+  <spine toc="ncx">
+    {spine_items}
+  </spine>
+</package>"#,
+        sanitize_file_name_for_header(&title)
+    );
+    zip.start_file("OEBPS/content.opf", compressed_options)
+        .map_err(|_| AppError::Internal)?;
+    zip.write_all(content_opf.as_bytes())
+        .map_err(|_| AppError::Internal)?;
+
+    let nav_points = chapters
+        .iter()
+        .enumerate()
+        .map(|(index, chapter)| {
+            let play_order = index + 1;
+            let chapter_title = xml_escape(&chapter.title);
+            format!(
+                r#"<navPoint id="navPoint-{play_order}" playOrder="{play_order}">
+      <navLabel><text>{chapter_title}</text></navLabel>
+      <content src="chapter{play_order}.xhtml"/>
+    </navPoint>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
+    let toc_ncx = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="urn:autolibre:{}"/>
+  </head>
+  <docTitle><text>{}</text></docTitle>
+  <navMap>
+    {nav_points}
+  </navMap>
+</ncx>"#,
+        sanitize_file_name_for_header(&title),
+        escaped_title
+    );
+    zip.start_file("OEBPS/toc.ncx", compressed_options)
+        .map_err(|_| AppError::Internal)?;
+    zip.write_all(toc_ncx.as_bytes())
+        .map_err(|_| AppError::Internal)?;
+
+    for (index, chapter) in chapters.iter().enumerate() {
+        let chapter_title = xml_escape(&chapter.title);
+        let chapter_body = xml_escape(&chapter.text);
+        let chapter_xhtml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>{chapter_title}</title>
+  </head>
+  <body>
+    <h1>{chapter_title}</h1>
+    <p>{chapter_body}</p>
+  </body>
+</html>"#
+        );
+        zip.start_file(
+            format!("OEBPS/chapter{}.xhtml", index + 1),
+            compressed_options,
+        )
+        .map_err(|_| AppError::Internal)?;
+        zip.write_all(chapter_xhtml.as_bytes())
+            .map_err(|_| AppError::Internal)?;
     }
-    None
+
+    let cursor = zip.finish().map_err(|_| AppError::Internal)?;
+    Ok(cursor.into_inner())
+}
+
+fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
+    let mut segments = split_on_mobi_pagebreaks(raw_html);
+    if segments.len() <= 1 {
+        segments = split_on_heading_tags(raw_html);
+    }
+    if segments.is_empty() {
+        segments.push(raw_html.to_string());
+    }
+
+    let mut chapters = Vec::new();
+    for (index, segment) in segments.into_iter().enumerate() {
+        let text = strip_html_fragment_to_text(&segment);
+        if text.is_empty() {
+            continue;
+        }
+        let title =
+            extract_heading_title(&segment).unwrap_or_else(|| format!("Chapter {}", index + 1));
+        chapters.push(MobiChapterForEpub { title, text });
+    }
+
+    if chapters.is_empty() {
+        let text = strip_html_fragment_to_text(raw_html);
+        if text.is_empty() {
+            vec![MobiChapterForEpub {
+                title: "Chapter 1".to_string(),
+                text: "No content available.".to_string(),
+            }]
+        } else {
+            vec![MobiChapterForEpub {
+                title: "Chapter 1".to_string(),
+                text,
+            }]
+        }
+    } else {
+        chapters
+    }
+}
+
+fn split_on_mobi_pagebreaks(raw_html: &str) -> Vec<String> {
+    let lower = raw_html.to_ascii_lowercase();
+    let marker = "<mbp:pagebreak";
+    let mut cursor = 0usize;
+    let mut chunks = Vec::new();
+
+    while cursor < raw_html.len() {
+        let Some(relative_index) = lower[cursor..].find(marker) else {
+            break;
+        };
+        let marker_start = cursor + relative_index;
+        let candidate = raw_html[cursor..marker_start].trim();
+        if !candidate.is_empty() {
+            chunks.push(candidate.to_string());
+        }
+
+        let marker_rest = &lower[marker_start..];
+        if let Some(relative_end) = marker_rest.find('>') {
+            cursor = marker_start + relative_end + 1;
+        } else {
+            cursor = raw_html.len();
+            break;
+        }
+    }
+
+    let tail = raw_html[cursor..].trim();
+    if !tail.is_empty() {
+        chunks.push(tail.to_string());
+    }
+
+    chunks
+}
+
+fn split_on_heading_tags(raw_html: &str) -> Vec<String> {
+    let lower = raw_html.to_ascii_lowercase();
+    let mut indices = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(index) = find_next_heading_index(&lower, cursor) {
+        indices.push(index);
+        cursor = index.saturating_add(1);
+    }
+
+    if indices.is_empty() {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    if indices[0] > 0 {
+        let prefix = raw_html[..indices[0]].trim();
+        if !prefix.is_empty() {
+            chunks.push(prefix.to_string());
+        }
+    }
+
+    for (pos, start) in indices.iter().enumerate() {
+        let end = indices.get(pos + 1).copied().unwrap_or(raw_html.len());
+        let segment = raw_html[*start..end].trim();
+        if !segment.is_empty() {
+            chunks.push(segment.to_string());
+        }
+    }
+
+    chunks
+}
+
+fn find_next_heading_index(lower: &str, cursor: usize) -> Option<usize> {
+    ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"]
+        .iter()
+        .filter_map(|marker| lower[cursor..].find(marker).map(|index| cursor + index))
+        .min()
+}
+
+fn extract_heading_title(segment: &str) -> Option<String> {
+    let lower = segment.to_ascii_lowercase();
+    let heading_index = find_next_heading_index(&lower, 0)?;
+    let rest = &segment[heading_index..];
+    let open_end = rest.find('>')?;
+    let inner = &rest[open_end + 1..];
+    let close_start = inner.to_ascii_lowercase().find("</h")?;
+    let title = strip_html_fragment_to_text(&inner[..close_start]);
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}
+
+fn strip_html_fragment_to_text(fragment: &str) -> String {
+    let mut in_tag = false;
+    let mut output = String::with_capacity(fragment.len());
+
+    for ch in fragment.chars() {
+        if ch == '<' {
+            in_tag = true;
+            output.push(' ');
+            continue;
+        }
+        if ch == '>' {
+            in_tag = false;
+            output.push(' ');
+            continue;
+        }
+        if !in_tag {
+            output.push(ch);
+        }
+    }
+
+    let decoded = decode_basic_html_entities(&output);
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn decode_basic_html_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn sanitize_file_name_for_header(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars() {
+        let keep = ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '.' | '_' | '-');
+        if keep {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        "book".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn safe_mobi_content(book: &mobi::Mobi) -> String {
+    let content = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        book.content_as_string_lossy()
+    }))
+    .unwrap_or_default();
+    if !content.trim().is_empty() {
+        return content;
+    }
+    book.description().unwrap_or_default()
 }
 
 fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
@@ -2134,7 +2549,21 @@ fn validated_download_format_extension(format: &str) -> Result<String, AppError>
     let normalized = format.trim().to_ascii_lowercase();
     if matches!(
         normalized.as_str(),
-        "epub" | "pdf" | "mobi" | "azw3" | "cbz" | "txt"
+        "epub"
+            | "pdf"
+            | "mobi"
+            | "azw3"
+            | "cbz"
+            | "txt"
+            | "djvu"
+            | "mp3"
+            | "m4b"
+            | "m4a"
+            | "ogg"
+            | "opus"
+            | "flac"
+            | "wav"
+            | "aac"
     ) {
         Ok(normalized)
     } else {

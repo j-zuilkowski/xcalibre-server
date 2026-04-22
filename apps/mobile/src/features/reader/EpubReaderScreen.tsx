@@ -14,7 +14,9 @@ type EpubReaderScreenProps = {
   database: SQLiteDatabase;
   bookId: string;
   title: string;
+  format: "EPUB" | "MOBI" | "AZW3";
   filePath: string;
+  streamUrl?: string;
   onBack: () => void;
 };
 
@@ -96,7 +98,9 @@ export function EpubReaderScreen({
   database,
   bookId,
   title,
+  format,
   filePath,
+  streamUrl,
   onBack,
 }: EpubReaderScreenProps) {
   const { t } = useTranslation();
@@ -109,6 +113,7 @@ export function EpubReaderScreen({
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ cfi?: string; percentage: number } | null>(null);
+  const sourcePath = streamUrl ?? filePath;
 
   useEffect(() => {
     void (async () => {
@@ -177,7 +182,7 @@ export function EpubReaderScreen({
         return;
       }
 
-      void saveProgress(client, database, bookId, "EPUB", {
+      void saveProgress(client, database, bookId, format, {
         cfi: pending.cfi,
         percentage: pending.percentage,
       });
@@ -218,12 +223,12 @@ export function EpubReaderScreen({
         </View>
       ) : EpubRenderer ? (
         <EpubRenderer
-          key={`epub-${bookId}-${initialCfi ?? "start"}-${fontFamily}-${nightMode ? "night" : "day"}`}
-          src={filePath}
-          source={filePath}
-          path={filePath}
-          filePath={filePath}
-          bookPath={filePath}
+          key={`epub-${bookId}-${format}-${initialCfi ?? "start"}-${fontFamily}-${nightMode ? "night" : "day"}`}
+          src={sourcePath}
+          source={sourcePath}
+          path={sourcePath}
+          filePath={sourcePath}
+          bookPath={sourcePath}
           cfi={initialCfi}
           initialCfi={initialCfi}
           initialLocation={initialCfi}
