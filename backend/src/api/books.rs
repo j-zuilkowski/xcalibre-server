@@ -1,5 +1,8 @@
 use crate::{
-    db::queries::{books as book_queries, llm as llm_queries},
+    db::queries::{
+        book_user_state as book_state_queries, books as book_queries,
+        download_history as download_history_queries, llm as llm_queries,
+    },
     ingest::text as ingest_text,
     llm::classify_type::{classify_document_type, DocumentType},
     middleware::auth::AuthenticatedUser,
@@ -10,10 +13,16 @@ use axum::{
     extract::{Extension, Multipart, Path, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
+use lettre::{
+    message::{header::ContentType, Attachment, Mailbox, MultiPart, SinglePart},
+    transport::smtp::authentication::Credentials,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{
     io::{Read, Seek},
     path::{Component, Path as FsPath, PathBuf},
@@ -29,14 +38,24 @@ pub fn router(state: AppState) -> Router<AppState> {
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
 
     Router::new()
-        .route("/api/v1/books", get(list_books).post(upload_book))
+        .route(
+            "/api/v1/books",
+            get(list_books).post(upload_book).patch(bulk_edit_books),
+        )
+        .route("/api/v1/books/downloads", get(list_download_history))
         .route(
             "/api/v1/books/:id",
             get(get_book).patch(patch_book).delete(delete_book),
         )
+        .route("/api/v1/books/:id/read", post(set_read))
+        .route("/api/v1/books/:id/archive", post(set_archive))
         .route("/api/v1/books/:id/cover", get(get_cover))
         .route("/api/v1/books/:id/chapters", get(get_chapters))
         .route("/api/v1/books/:id/text", get(get_text))
+        .route("/api/v1/books/:id/send", post(send_book))
+        .route("/api/v1/books/:id/comic/pages", get(get_comic_pages))
+        .route("/api/v1/books/:id/comic/page/:index", get(get_comic_page))
+        .route("/api/v1/books/:id/metadata-lookup", get(metadata_lookup))
         .route(
             "/api/v1/books/:id/formats/:format/download",
             get(download_format),
@@ -61,6 +80,8 @@ struct ListBooksQuery {
     page: Option<i64>,
     page_size: Option<i64>,
     since: Option<String>,
+    show_archived: Option<bool>,
+    only_read: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +121,105 @@ struct PatchBookRequest {
     authors: Option<Vec<String>>,
     #[serde(default)]
     identifiers: Option<Vec<IdentifierPatch>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendBookRequest {
+    to: String,
+    format: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataLookupQuery {
+    source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ComicPageEntry {
+    index: usize,
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ComicPagesResponse {
+    total_pages: usize,
+    pages: Vec<ComicPageEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BulkEditRequest {
+    book_ids: Vec<String>,
+    fields: BulkEditFieldsRequest,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct BulkEditFieldsRequest {
+    tags: Option<BulkEditTagField>,
+    series: Option<BulkEditStringField>,
+    rating: Option<BulkEditNumberField>,
+    language: Option<BulkEditStringField>,
+    publisher: Option<BulkEditStringField>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BulkEditTagField {
+    mode: String,
+    values: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BulkEditStringField {
+    mode: String,
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BulkEditNumberField {
+    mode: String,
+    value: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct BulkEditResponse {
+    updated: i64,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReadStateRequest {
+    is_read: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchiveStateRequest {
+    is_archived: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct DownloadHistoryQuery {
+    page: Option<i64>,
+    page_size: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct DownloadHistoryResponseItem {
+    book_id: String,
+    title: String,
+    format: String,
+    downloaded_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MetadataLookupResponse {
+    source: String,
+    title: String,
+    authors: Vec<String>,
+    description: Option<String>,
+    publisher: Option<String>,
+    published_date: Option<String>,
+    cover_url: Option<String>,
+    isbn_13: Option<String>,
+    categories: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -192,10 +312,13 @@ impl UploadFormat {
 
 async fn list_books(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<ListBooksQuery>,
 ) -> Result<Json<PaginatedResponse<book_queries::BookSummary>>, AppError> {
+    let library_id = accessible_library_id(&auth_user.user);
     let params = book_queries::ListBooksParams {
         q: query.q,
+        library_id: library_id.map(str::to_string),
         author_id: query.author_id,
         series_id: query.series_id,
         tags: parse_tag_query(query.tag),
@@ -206,6 +329,9 @@ async fn list_books(
         page: query.page.unwrap_or(1),
         page_size: query.page_size.unwrap_or(30),
         since: query.since,
+        user_id: Some(auth_user.user.id.clone()),
+        show_archived: query.show_archived,
+        only_read: query.only_read,
     };
 
     let page = book_queries::list_books(&state.db, &params)
@@ -222,23 +348,113 @@ async fn list_books(
 
 async fn get_book(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<crate::db::models::Book>, AppError> {
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     Ok(Json(book))
+}
+
+async fn set_read(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<ReadStateRequest>,
+) -> Result<StatusCode, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    book_state_queries::set_read(&state.db, &auth_user.user.id, &book_id, payload.is_read)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn set_archive(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<ArchiveStateRequest>,
+) -> Result<StatusCode, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    book_state_queries::set_archived(&state.db, &auth_user.user.id, &book_id, payload.is_archived)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn load_book_or_not_found(
     db: &sqlx::SqlitePool,
     book_id: &str,
+    library_id: Option<&str>,
+    user_id: Option<&str>,
 ) -> Result<crate::db::models::Book, AppError> {
-    let Some(book) = book_queries::get_book_by_id(db, book_id)
+    let Some(book) = book_queries::get_book_by_id(db, book_id, library_id, user_id)
         .await
         .map_err(|_| AppError::Internal)?
     else {
         return Err(AppError::NotFound);
     };
     Ok(book)
+}
+
+async fn list_download_history(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Query(query): Query<DownloadHistoryQuery>,
+) -> Result<Json<PaginatedResponse<DownloadHistoryResponseItem>>, AppError> {
+    let page = download_history_queries::list_download_history(
+        &state.db,
+        &auth_user.user.id,
+        query.page.unwrap_or(1),
+        query.page_size.unwrap_or(50),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(PaginatedResponse {
+        items: page
+            .items
+            .into_iter()
+            .map(|item| DownloadHistoryResponseItem {
+                book_id: item.book_id,
+                title: item.title,
+                format: item.format,
+                downloaded_at: item.downloaded_at,
+            })
+            .collect(),
+        total: page.total,
+        page: page.page,
+        page_size: page.page_size,
+    }))
+}
+
+pub(crate) fn accessible_library_id(user: &crate::db::models::User) -> Option<&str> {
+    if user.role.name.eq_ignore_ascii_case("admin") {
+        None
+    } else {
+        Some(user.default_library_id.as_str())
+    }
 }
 
 async fn upload_book(
@@ -299,7 +515,7 @@ async fn upload_book(
         }
     }
 
-    if book_queries::has_duplicate_isbn(&state.db, &ingest.identifiers, None)
+    if book_queries::has_duplicate_isbn(&state.db, &ingest.identifiers, None::<&str>)
         .await
         .map_err(|_| AppError::Internal)?
     {
@@ -318,6 +534,7 @@ async fn upload_book(
     let insert_result = book_queries::insert_uploaded_book(
         &state.db,
         book_queries::UploadBookInput {
+            library_id: auth_user.user.default_library_id.clone(),
             title: title.clone(),
             sort_title: ingest.sort_title.clone().unwrap_or_else(|| title.clone()),
             description: ingest.description,
@@ -368,9 +585,14 @@ async fn upload_book(
                 return Err(AppError::Internal);
             }
 
-            if let Some(updated_book) = book_queries::get_book_by_id(&state.db, &book.id)
-                .await
-                .map_err(|_| AppError::Internal)?
+            if let Some(updated_book) = book_queries::get_book_by_id(
+                &state.db,
+                &book.id,
+                accessible_library_id(&auth_user.user),
+                Some(auth_user.user.id.as_str()),
+            )
+            .await
+            .map_err(|_| AppError::Internal)?
             {
                 book = updated_book;
             }
@@ -418,8 +640,15 @@ async fn patch_book(
         }),
     };
 
-    let result =
-        book_queries::patch_book_with_audit(&state.db, &book_id, &auth_user.user.id, patch).await;
+    let result = book_queries::patch_book_with_audit(
+        &state.db,
+        &book_id,
+        &auth_user.user.id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+        patch,
+    )
+    .await;
     match result {
         Ok(Some(book)) => {
             enqueue_semantic_index_if_enabled(&state, &book.id).await;
@@ -452,13 +681,17 @@ async fn delete_book(
         return Err(AppError::Forbidden);
     }
 
-    let Some(paths) =
-        book_queries::delete_book_and_collect_paths(&state.db, &book_id, &auth_user.user.id)
-        .await
-        .map_err(|err| {
-            tracing::error!(book_id = %book_id, error = %err, "failed to delete book from database");
-            AppError::Internal
-        })?
+    let Some(paths) = book_queries::delete_book_and_collect_paths(
+        &state.db,
+        &book_id,
+        &auth_user.user.id,
+        accessible_library_id(&auth_user.user),
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(book_id = %book_id, error = %err, "failed to delete book from database");
+        AppError::Internal
+    })?
     else {
         return Err(AppError::NotFound);
     };
@@ -482,21 +715,52 @@ async fn download_format(
     request: Request<Body>,
 ) -> Result<axum::response::Response, AppError> {
     ensure_download_permission(&state, &auth_user.user.id).await?;
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
 
     let format_file = book_queries::find_format_file(&state.db, &book_id, &format)
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
+    let file_extension = validated_download_format_extension(&format_file.format)?;
 
     let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
     let mut response = serve_file(request, full_path).await?;
 
-    let file_name = format!("{}.{}", book_id, format_file.format.to_lowercase());
+    let file_name = format!("{}.{}", book_id, file_extension);
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{file_name}\""))
         .map_err(|_| AppError::Internal)?;
     response
         .headers_mut()
         .insert(header::CONTENT_DISPOSITION, disposition);
+
+    let db = state.db.clone();
+    let history_user_id = auth_user.user.id.clone();
+    let history_book_id = book_id.clone();
+    let history_format = format_file.format.clone();
+    tokio::spawn(async move {
+        if let Err(err) = download_history_queries::insert_download_history(
+            &db,
+            &history_user_id,
+            &history_book_id,
+            &history_format,
+        )
+        .await
+        {
+            tracing::warn!(
+                book_id = %history_book_id,
+                user_id = %history_user_id,
+                format = %history_format,
+                error = %err,
+                "failed to persist download history"
+            );
+        }
+    });
 
     Ok(response)
 }
@@ -508,6 +772,13 @@ async fn stream_format(
     request: Request<Body>,
 ) -> Result<axum::response::Response, AppError> {
     ensure_download_permission(&state, &auth_user.user.id).await?;
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
 
     let format_file = book_queries::find_format_file(&state.db, &book_id, &format)
         .await
@@ -525,6 +796,13 @@ async fn get_cover(
 ) -> Result<axum::response::Response, AppError> {
     ensure_download_permission(&state, &auth_user.user.id).await?;
 
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let cover_path = book_queries::find_book_cover_path(&state.db, &book_id)
         .await
         .map_err(|_| AppError::Internal)?
@@ -541,19 +819,22 @@ async fn get_chapters(
 ) -> Result<Json<ChaptersResponse>, AppError> {
     ensure_download_permission(&state, &auth_user.user.id).await?;
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
 
     let format_file = book_queries::find_format_file(&state.db, &book.id, format)
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NoExtractableFormat)?;
-    let full_path = state
-        .storage
-        .resolve(&format_file.path)
-        .map_err(|_| AppError::Internal)?;
+    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
 
-    let chapters = ingest_text::list_chapters(&full_path, format).unwrap_or_default();
+    let chapters = list_extractable_chapters(&full_path, format);
     Ok(Json(ChaptersResponse {
         book_id,
         format: format.to_string(),
@@ -569,17 +850,33 @@ async fn get_text(
 ) -> Result<Json<BookTextResponse>, AppError> {
     ensure_download_permission(&state, &auth_user.user.id).await?;
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let format = preferred_extractable_format(&book).ok_or(AppError::NoExtractableFormat)?;
 
     let format_file = book_queries::find_format_file(&state.db, &book.id, format)
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NoExtractableFormat)?;
-    let full_path = state
-        .storage
-        .resolve(&format_file.path)
-        .map_err(|_| AppError::Internal)?;
+    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
+
+    let chapters = list_extractable_chapters(&full_path, format);
+    if let Some(chapter) = query.chapter {
+        if chapter as usize >= chapters.len() {
+            tracing::warn!(
+                book_id = %book.id,
+                chapter = chapter,
+                chapter_count = chapters.len(),
+                "chapter index out of range"
+            );
+            return Err(AppError::BadRequest);
+        }
+    }
 
     let text = ingest_text::extract_text(&full_path, format, query.chapter).unwrap_or_default();
     let word_count = text.split_whitespace().count();
@@ -591,6 +888,812 @@ async fn get_text(
         text,
         word_count,
     }))
+}
+
+async fn send_book(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<SendBookRequest>,
+) -> Result<StatusCode, AppError> {
+    let format_name = payload.format.trim();
+    if format_name.is_empty() || payload.to.trim().is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let Some(book) = book_queries::get_book_by_id(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    let Some(format_file) = book_queries::find_format_file(&state.db, &book.id, format_name)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
+    let bytes = std::fs::read(&full_path).map_err(|_| AppError::Internal)?;
+    let email_settings = crate::db::queries::email_settings::get_email_settings(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::ServiceUnavailable)?;
+    if email_settings.smtp_host.trim().is_empty() || email_settings.from_address.trim().is_empty() {
+        return Err(AppError::ServiceUnavailable);
+    }
+
+    send_book_email(
+        &email_settings,
+        &book,
+        &payload.to,
+        &format_file.format,
+        &bytes,
+    )
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn metadata_lookup(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Query(query): Query<MetadataLookupQuery>,
+) -> Result<Json<MetadataLookupResponse>, AppError> {
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+    let identifiers = book_queries::get_book_identifiers(&state.db, &book_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let title = book.title.clone();
+    let authors = book
+        .authors
+        .iter()
+        .map(|author| author.name.clone())
+        .collect::<Vec<_>>();
+
+    let requested_source = query
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+
+    let result = match requested_source.as_deref().unwrap_or("openlibrary") {
+        "googlebooks" => {
+            lookup_google_books(&state, identifiers.as_slice(), &title, &authors).await?
+        }
+        "openlibrary" => {
+            match lookup_openlibrary(&state, identifiers.as_slice(), &title, &authors).await {
+                Ok(result) => result,
+                Err(AppError::ServiceUnavailable) => {
+                    lookup_google_books(&state, identifiers.as_slice(), &title, &authors).await?
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        _ => return Err(AppError::BadRequest),
+    };
+
+    Ok(Json(result))
+}
+
+async fn get_comic_pages(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+) -> Result<Json<ComicPagesResponse>, AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.can_download {
+        return Err(AppError::Forbidden);
+    }
+
+    let comic =
+        load_comic_archive(&state, &book_id, accessible_library_id(&auth_user.user)).await?;
+    let pages = comic
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, _)| ComicPageEntry {
+            index,
+            url: format!("/api/v1/books/{book_id}/comic/page/{index}"),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(ComicPagesResponse {
+        total_pages: pages.len(),
+        pages,
+    }))
+}
+
+async fn get_comic_page(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((book_id, index)): Path<(String, usize)>,
+) -> Result<axum::response::Response, AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.can_download {
+        return Err(AppError::Forbidden);
+    }
+
+    let comic =
+        load_comic_archive(&state, &book_id, accessible_library_id(&auth_user.user)).await?;
+    let Some(entry) = comic.entries.get(index) else {
+        return Err(AppError::NotFound);
+    };
+
+    let body = Body::from(entry.bytes.clone());
+    let mut response = axum::response::Response::new(body);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(entry.content_type),
+    );
+    Ok(response)
+}
+
+async fn bulk_edit_books(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<BulkEditRequest>,
+) -> Result<Json<BulkEditResponse>, AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.is_admin() {
+        return Err(AppError::Forbidden);
+    }
+    if payload.book_ids.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let mut input = book_queries::BulkUpdateBooksInput {
+        book_ids: payload.book_ids,
+        ..Default::default()
+    };
+
+    if let Some(tags) = payload.fields.tags {
+        let mode = match tags.mode.to_lowercase().as_str() {
+            "append" => book_queries::BulkTagMode::Append,
+            "overwrite" => book_queries::BulkTagMode::Overwrite,
+            "remove" => book_queries::BulkTagMode::Remove,
+            _ => return Err(AppError::BadRequest),
+        };
+        input.tags = Some(book_queries::BulkTagUpdateInput {
+            mode,
+            values: tags.values,
+        });
+    }
+
+    if let Some(series) = payload.fields.series {
+        if !series.mode.eq_ignore_ascii_case("overwrite") {
+            return Err(AppError::BadRequest);
+        }
+        input.series = Some(series.value);
+    }
+
+    if let Some(rating) = payload.fields.rating {
+        if !rating.mode.eq_ignore_ascii_case("overwrite") {
+            return Err(AppError::BadRequest);
+        }
+        input.rating = Some(rating.value);
+    }
+
+    if let Some(language) = payload.fields.language {
+        if !language.mode.eq_ignore_ascii_case("overwrite") {
+            return Err(AppError::BadRequest);
+        }
+        input.language = Some(language.value);
+    }
+
+    if let Some(publisher) = payload.fields.publisher {
+        if !publisher.mode.eq_ignore_ascii_case("overwrite") {
+            return Err(AppError::BadRequest);
+        }
+        input.publisher = Some(publisher.value);
+    }
+
+    let result = book_queries::bulk_update_books(&state.db, input)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(BulkEditResponse {
+        updated: result.updated,
+        errors: result.errors,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryBooksResponse {
+    #[serde(flatten)]
+    books: std::collections::HashMap<String, OpenLibraryBookRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryBookRecord {
+    title: Option<String>,
+    authors: Option<Vec<OpenLibraryAuthorRecord>>,
+    publishers: Option<Vec<OpenLibraryPublisherRecord>>,
+    publish_date: Option<String>,
+    cover: Option<OpenLibraryCoverRecord>,
+    identifiers: Option<OpenLibraryIdentifiers>,
+    subjects: Option<Vec<OpenLibrarySubjectRecord>>,
+    description: Option<OpenLibraryDescription>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryAuthorRecord {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryPublisherRecord {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryCoverRecord {
+    large: Option<String>,
+    medium: Option<String>,
+    small: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibraryIdentifiers {
+    isbn_10: Option<Vec<String>>,
+    isbn_13: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibrarySubjectRecord {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OpenLibraryDescription {
+    Text(String),
+    Object { value: String },
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibrarySearchResponse {
+    docs: Vec<OpenLibrarySearchDoc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenLibrarySearchDoc {
+    title: Option<String>,
+    author_name: Option<Vec<String>>,
+    publisher: Option<Vec<String>>,
+    publish_date: Option<Vec<String>>,
+    cover_i: Option<i64>,
+    isbn: Option<Vec<String>>,
+    subject: Option<Vec<String>>,
+    first_sentence: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleBooksResponse {
+    items: Option<Vec<GoogleBooksItem>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleBooksItem {
+    volume_info: GoogleVolumeInfo,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleVolumeInfo {
+    title: Option<String>,
+    authors: Option<Vec<String>>,
+    description: Option<String>,
+    publisher: Option<String>,
+    published_date: Option<String>,
+    categories: Option<Vec<String>>,
+    image_links: Option<GoogleImageLinks>,
+    industry_identifiers: Option<Vec<GoogleIdentifier>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoogleImageLinks {
+    thumbnail: Option<String>,
+    small_thumbnail: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GoogleIdentifier {
+    #[serde(rename = "type")]
+    kind: String,
+    identifier: String,
+}
+
+async fn lookup_openlibrary(
+    state: &AppState,
+    identifiers: &[crate::db::models::Identifier],
+    title: &str,
+    authors: &[String],
+) -> Result<MetadataLookupResponse, AppError> {
+    let base_url = state
+        .config
+        .metadata
+        .openlibrary_base_url
+        .trim()
+        .trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|_| AppError::Internal)?;
+
+    if let Some(isbn) = extract_isbn(identifiers) {
+        let url = format!("{base_url}/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|_| AppError::ServiceUnavailable)?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(AppError::NotFound);
+        }
+        let response = response
+            .error_for_status()
+            .map_err(|_| AppError::ServiceUnavailable)?;
+        let data: OpenLibraryBooksResponse = response
+            .json()
+            .await
+            .map_err(|_| AppError::ServiceUnavailable)?;
+        let Some((_, record)) = data.books.into_iter().next() else {
+            return Err(AppError::NotFound);
+        };
+        return Ok(render_openlibrary_record(record));
+    }
+
+    let search = build_openlibrary_search_query(title, authors);
+    let url = format!("{base_url}/search.json?{}", search);
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|_| AppError::ServiceUnavailable)?
+        .error_for_status()
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    let data: OpenLibrarySearchResponse = response
+        .json()
+        .await
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    let Some(doc) = data.docs.into_iter().next() else {
+        return Err(AppError::NotFound);
+    };
+    Ok(render_openlibrary_search_doc(doc))
+}
+
+async fn lookup_google_books(
+    state: &AppState,
+    identifiers: &[crate::db::models::Identifier],
+    title: &str,
+    authors: &[String],
+) -> Result<MetadataLookupResponse, AppError> {
+    let base_url = state
+        .config
+        .metadata
+        .googlebooks_base_url
+        .trim()
+        .trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|_| AppError::Internal)?;
+
+    let query = if let Some(isbn) = extract_isbn(identifiers) {
+        format!("isbn:{isbn}")
+    } else {
+        build_google_books_query(title, authors)
+    };
+
+    let url = format!(
+        "{base_url}/books/v1/volumes?q={}",
+        urlencoding::encode(&query)
+    );
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(AppError::NotFound);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    let data: GoogleBooksResponse = response
+        .json()
+        .await
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    let Some(item) = data.items.and_then(|mut items| items.pop()) else {
+        return Err(AppError::NotFound);
+    };
+    Ok(render_google_books_item(item))
+}
+
+fn render_openlibrary_record(record: OpenLibraryBookRecord) -> MetadataLookupResponse {
+    let authors = record
+        .authors
+        .unwrap_or_default()
+        .into_iter()
+        .map(|author| author.name)
+        .collect::<Vec<_>>();
+    let publisher = record
+        .publishers
+        .and_then(|values| values.into_iter().next())
+        .map(|publisher| publisher.name);
+    let cover_url = record
+        .cover
+        .and_then(|cover| cover.large.or(cover.medium).or(cover.small));
+    let isbn_13 = record.identifiers.as_ref().and_then(|ids| {
+        ids.isbn_13
+            .as_ref()
+            .and_then(|values| values.last())
+            .cloned()
+            .or_else(|| {
+                ids.isbn_10
+                    .as_ref()
+                    .and_then(|values| values.last())
+                    .cloned()
+            })
+    });
+    let categories = record
+        .subjects
+        .unwrap_or_default()
+        .into_iter()
+        .map(|subject| subject.name)
+        .collect::<Vec<_>>();
+    let description = record.description.map(|description| match description {
+        OpenLibraryDescription::Text(text) => text,
+        OpenLibraryDescription::Object { value } => value,
+    });
+
+    MetadataLookupResponse {
+        source: "openlibrary".to_string(),
+        title: record.title.unwrap_or_default(),
+        authors,
+        description,
+        publisher,
+        published_date: record.publish_date,
+        cover_url,
+        isbn_13,
+        categories,
+    }
+}
+
+fn render_openlibrary_search_doc(doc: OpenLibrarySearchDoc) -> MetadataLookupResponse {
+    let cover_url = doc
+        .cover_i
+        .map(|cover_id| format!("https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"));
+    let description = doc.first_sentence.and_then(|mut values| values.pop());
+    MetadataLookupResponse {
+        source: "openlibrary".to_string(),
+        title: doc.title.unwrap_or_default(),
+        authors: doc.author_name.unwrap_or_default(),
+        description,
+        publisher: doc.publisher.and_then(|mut values| values.pop()),
+        published_date: doc.publish_date.and_then(|mut values| values.pop()),
+        cover_url,
+        isbn_13: doc.isbn.and_then(|mut values| values.pop()),
+        categories: doc.subject.unwrap_or_default(),
+    }
+}
+
+fn render_google_books_item(item: GoogleBooksItem) -> MetadataLookupResponse {
+    let volume = item.volume_info;
+    let identifiers = volume.industry_identifiers.as_ref();
+    let isbn_13 = identifiers
+        .and_then(|values| {
+            values
+                .iter()
+                .find(|identifier| identifier.kind == "ISBN_13")
+                .map(|identifier| identifier.identifier.clone())
+        })
+        .or_else(|| {
+            identifiers.and_then(|values| {
+                values
+                    .iter()
+                    .find(|identifier| identifier.kind == "ISBN_10")
+                    .map(|identifier| identifier.identifier.clone())
+            })
+        });
+    MetadataLookupResponse {
+        source: "googlebooks".to_string(),
+        title: volume.title.unwrap_or_default(),
+        authors: volume.authors.unwrap_or_default(),
+        description: volume.description,
+        publisher: volume.publisher,
+        published_date: volume.published_date,
+        cover_url: volume
+            .image_links
+            .and_then(|links| links.thumbnail.or(links.small_thumbnail)),
+        isbn_13,
+        categories: volume.categories.unwrap_or_default(),
+    }
+}
+
+fn extract_isbn(identifiers: &[crate::db::models::Identifier]) -> Option<String> {
+    identifiers.iter().find_map(|identifier| {
+        let id_type = identifier.id_type.trim().to_lowercase();
+        if !id_type.contains("isbn") {
+            return None;
+        }
+        normalize_isbn_candidate(&identifier.value)
+    })
+}
+
+fn normalize_isbn_candidate(value: &str) -> Option<String> {
+    let normalized = value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect::<String>();
+    if normalized.len() == 10 || normalized.len() == 13 {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn build_openlibrary_search_query(title: &str, authors: &[String]) -> String {
+    let mut query = format!("title={}", urlencoding::encode(title));
+    if let Some(author) = authors.iter().find(|author| !author.trim().is_empty()) {
+        query.push_str("&author=");
+        query.push_str(&urlencoding::encode(author));
+    }
+    query.push_str("&limit=1");
+    query
+}
+
+fn build_google_books_query(title: &str, authors: &[String]) -> String {
+    let mut query = format!("intitle:{}", title);
+    if let Some(author) = authors.iter().find(|author| !author.trim().is_empty()) {
+        query.push_str("+inauthor:");
+        query.push_str(author);
+    }
+    query
+}
+
+async fn send_book_email(
+    settings: &crate::db::queries::email_settings::EmailSettings,
+    book: &crate::db::models::Book,
+    to: &str,
+    format: &str,
+    bytes: &[u8],
+) -> Result<(), AppError> {
+    let message = build_book_email_message(settings, book, to, format, bytes)?;
+    let transport = build_smtp_transport(settings)?;
+    send_message_via_transport(&transport, message).await
+}
+
+pub fn build_book_email_message(
+    settings: &crate::db::queries::email_settings::EmailSettings,
+    book: &crate::db::models::Book,
+    to: &str,
+    format: &str,
+    bytes: &[u8],
+) -> Result<Message, AppError> {
+    let from: Mailbox = settings
+        .from_address
+        .parse()
+        .map_err(|_| AppError::BadRequest)?;
+    let to: Mailbox = to.parse().map_err(|_| AppError::BadRequest)?;
+    let attachment_name = format!("{}.{}", book.id, format.trim().to_lowercase());
+    let mime = mime_guess::from_path(&attachment_name).first_or_octet_stream();
+    let attachment = Attachment::new(attachment_name).body(
+        bytes.to_vec(),
+        ContentType::parse(mime.as_ref()).map_err(|_| AppError::Internal)?,
+    );
+
+    Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!("{} ({})", book.title, format.trim().to_uppercase()))
+        .multipart(
+            MultiPart::mixed()
+                .singlepart(SinglePart::plain(format!(
+                    "Attached is {} in {} format.",
+                    book.title,
+                    format.trim().to_uppercase()
+                )))
+                .singlepart(attachment),
+        )
+        .map_err(|_| AppError::Internal)
+}
+
+fn build_smtp_transport(
+    settings: &crate::db::queries::email_settings::EmailSettings,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, AppError> {
+    let port = u16::try_from(settings.smtp_port).map_err(|_| AppError::ServiceUnavailable)?;
+    let mut builder = if settings.use_tls {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&settings.smtp_host)
+            .map_err(|_| AppError::ServiceUnavailable)?
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&settings.smtp_host)
+    };
+    builder = builder.port(port);
+
+    if !settings.smtp_user.trim().is_empty() {
+        builder = builder.credentials(Credentials::new(
+            settings.smtp_user.clone(),
+            settings.smtp_password.clone(),
+        ));
+    }
+
+    Ok(builder.build())
+}
+
+pub async fn send_message_via_transport<T>(transport: &T, message: Message) -> Result<(), AppError>
+where
+    T: AsyncTransport + Sync,
+    T::Error: std::fmt::Debug,
+{
+    transport
+        .send(message)
+        .await
+        .map_err(|_| AppError::ServiceUnavailable)?;
+    Ok(())
+}
+
+struct ComicArchive {
+    entries: Vec<ComicArchiveEntry>,
+}
+
+struct ComicArchiveEntry {
+    filename: String,
+    bytes: Vec<u8>,
+    content_type: &'static str,
+}
+
+async fn load_comic_archive(
+    state: &AppState,
+    book_id: &str,
+    library_id: Option<&str>,
+) -> Result<ComicArchive, AppError> {
+    let Some(book) = book_queries::get_book_by_id(&state.db, book_id, library_id, None)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    let format = book
+        .formats
+        .iter()
+        .find(|format| format.format.eq_ignore_ascii_case("CBZ"))
+        .or_else(|| {
+            book.formats
+                .iter()
+                .find(|format| format.format.eq_ignore_ascii_case("CBR"))
+        })
+        .cloned()
+        .ok_or(AppError::NoExtractableFormat)?;
+
+    let format_file = book_queries::find_format_file(&state.db, book_id, &format.format)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NoExtractableFormat)?;
+
+    let full_path = canonicalize_storage_file_path(state, &format_file.path)?;
+    let extension = FsPath::new(&format_file.path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let entries = if extension == "cbz" {
+        load_cbz_pages(&full_path)?
+    } else if extension == "cbr" {
+        load_cbr_pages(&full_path)?
+    } else if format.format.eq_ignore_ascii_case("CBZ") {
+        load_cbz_pages(&full_path)?
+    } else if format.format.eq_ignore_ascii_case("CBR") {
+        load_cbr_pages(&full_path)?
+    } else {
+        return Err(AppError::NoExtractableFormat);
+    };
+
+    Ok(ComicArchive { entries })
+}
+
+fn load_cbz_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
+    let file = std::fs::File::open(path).map_err(|_| AppError::NotFound)?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| AppError::Internal)?;
+    let mut entries = Vec::new();
+
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).map_err(|_| AppError::Internal)?;
+        if file.is_dir() {
+            continue;
+        }
+
+        let name = file.name().to_string();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|_| AppError::Internal)?;
+        if let Some(content_type) = detect_image_content_type(&name, &bytes) {
+            entries.push(ComicArchiveEntry {
+                filename: name,
+                bytes,
+                content_type,
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| left.filename.cmp(&right.filename));
+    Ok(entries)
+}
+
+fn load_cbr_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
+    let archive = unrar::Archive::new(path)
+        .as_first_part()
+        .open_for_processing();
+    let mut archive = archive.map_err(|_| AppError::NotFound)?;
+    let mut entries = Vec::new();
+
+    loop {
+        let Some(next) = archive.read_header().map_err(|_| AppError::Internal)? else {
+            break;
+        };
+        let filename = next.entry().filename.to_string_lossy().to_string();
+        let (bytes, next_archive) = next.read().map_err(|_| AppError::Internal)?;
+        archive = next_archive;
+        if let Some(content_type) = detect_image_content_type(&filename, &bytes) {
+            entries.push(ComicArchiveEntry {
+                filename,
+                bytes,
+                content_type,
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| left.filename.cmp(&right.filename));
+    Ok(entries)
+}
+
+fn detect_image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
+    let extension = FsPath::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) || extension == "png" {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+        || matches!(extension.as_str(), "jpg" | "jpeg" | "jfif")
+    {
+        return Some("image/jpeg");
+    }
+
+    None
 }
 
 async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(), AppError> {
@@ -707,7 +1810,7 @@ async fn parse_upload_multipart(
                 if field_bytes.len() as u64 > max_bytes {
                     return Err(AppError::PayloadTooLarge);
                 }
-                file_name = Some(field_file_name);
+                file_name = Some(sanitize_upload_file_name(&field_file_name));
                 bytes = Some(field_bytes.to_vec());
             }
             "metadata" => {
@@ -774,6 +1877,33 @@ fn validate_extension_matches(file_name: &str, detected: UploadFormat) -> Result
     Ok(())
 }
 
+fn validated_download_format_extension(format: &str) -> Result<String, AppError> {
+    let normalized = format.trim().to_ascii_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "epub" | "pdf" | "mobi" | "azw3" | "cbz" | "txt"
+    ) {
+        Ok(normalized)
+    } else {
+        Err(AppError::BadRequest)
+    }
+}
+
+fn sanitize_upload_file_name(file_name: &str) -> String {
+    let without_nulls = file_name.replace('\0', "");
+    let final_component = without_nulls
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("upload.bin");
+    let stripped = final_component.replace("..", "");
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() {
+        "upload.bin".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
     let tags = match raw_tags {
         Some(SingleOrMany::One(tag)) => vec![tag],
@@ -790,6 +1920,10 @@ fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
 
 fn trim_owned(value: String) -> String {
     value.trim().to_string()
+}
+
+fn list_extractable_chapters(full_path: &FsPath, format: &str) -> Vec<ingest_text::Chapter> {
+    ingest_text::list_chapters(full_path, format).unwrap_or_default()
 }
 
 fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::db::models::Book) {

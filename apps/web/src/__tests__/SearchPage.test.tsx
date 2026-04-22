@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { PaginatedResponse, SearchResultItem, SearchStatusResponse } from "@calibre/shared";
+import type { PaginatedResponse, SearchResultItem, SearchStatusResponse } from "@autolibre/shared";
 import { SearchPage } from "../features/search/SearchPage";
 import { apiClient } from "../lib/api-client";
 
@@ -18,6 +18,8 @@ function makeBook(id: string, title: string, score?: number): SearchResultItem {
     series_index: null,
     cover_url: null,
     has_cover: false,
+    is_read: false,
+    is_archived: false,
     language: "en",
     rating: 8,
     last_modified: "2026-04-19T00:00:00Z",

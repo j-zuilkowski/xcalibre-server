@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Book, ClassifyResult, LlmHealth, User } from "@calibre/shared";
+import type { Book, ClassifyResult, LlmHealth, User } from "@autolibre/shared";
 import { BookDetailPage } from "../features/library/BookDetailPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
@@ -27,6 +27,8 @@ function makeBook(): Book {
     formats: [{ id: "format-1", format: "epub", size_bytes: 1024 }],
     cover_url: null,
     has_cover: false,
+    is_read: false,
+    is_archived: false,
     identifiers: [{ id: "id-1", id_type: "isbn", value: "9780441172719" }],
     created_at: "2026-04-18T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
@@ -79,6 +81,7 @@ function makeUser(): User {
     },
     is_active: true,
     force_pw_reset: false,
+    default_library_id: "default",
     created_at: "2026-04-19T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
   };

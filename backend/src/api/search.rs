@@ -1,6 +1,9 @@
-use crate::{db::queries::books as book_queries, search::SearchQuery, AppError, AppState};
+use crate::{
+    db::queries::books as book_queries, middleware::auth::AuthenticatedUser, search::SearchQuery,
+    AppError, AppState,
+};
 use axum::{
-    extract::{Query, State},
+    extract::{Extension, Query, State},
     middleware,
     routing::get,
     Json, Router,
@@ -74,6 +77,7 @@ struct SearchStatusResponse {
 
 async fn search_books(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<SearchQueryParams>,
 ) -> Result<Json<PaginatedResponse<SearchResultItem>>, AppError> {
     let q = query.q.unwrap_or_default();
@@ -104,9 +108,14 @@ async fn search_books(
         .map(|hit| hit.book_id.clone())
         .collect::<Vec<_>>();
 
-    let summaries = book_queries::list_book_summaries_by_ids(&state.db, &ordered_ids)
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let summaries = book_queries::list_book_summaries_by_ids(
+        &state.db,
+        &ordered_ids,
+        Some(auth_user.user.default_library_id.as_str()),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
 
     let mut summary_by_id = HashMap::new();
     for summary in summaries {
@@ -152,6 +161,7 @@ async fn search_suggestions(
 
 async fn search_semantic(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<SemanticSearchQueryParams>,
 ) -> Result<Json<PaginatedResponse<SearchResultItem>>, AppError> {
     let q = query.q.unwrap_or_default();
@@ -177,9 +187,14 @@ async fn search_semantic(
         .map(|hit| hit.book_id.clone())
         .collect::<Vec<_>>();
 
-    let summaries = book_queries::list_book_summaries_by_ids(&state.db, &ordered_ids)
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let summaries = book_queries::list_book_summaries_by_ids(
+        &state.db,
+        &ordered_ids,
+        Some(auth_user.user.default_library_id.as_str()),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
 
     let mut summary_by_id = HashMap::new();
     for summary in summaries {

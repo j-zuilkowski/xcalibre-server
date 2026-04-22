@@ -166,6 +166,8 @@ impl TestContext {
             formats: Vec::new(),
             cover_url: None,
             has_cover: false,
+            is_read: false,
+            is_archived: false,
             identifiers: Vec::new(),
             created_at: now.clone(),
             last_modified: now.clone(),
@@ -265,6 +267,7 @@ impl TestContext {
             },
             is_active: true,
             force_pw_reset: false,
+            default_library_id: "default".to_string(),
             created_at: now.clone(),
             last_modified: now,
         }

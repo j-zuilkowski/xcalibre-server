@@ -6,8 +6,11 @@ import { AdminLayout } from "./features/admin/AdminLayout";
 import { DashboardPage } from "./features/admin/DashboardPage";
 import { ImportPage } from "./features/admin/ImportPage";
 import { AdminJobsPage } from "./features/admin/AdminJobsPage";
+import { KoboDevicesPage } from "./features/admin/KoboDevicesPage";
+import { LibrariesPage } from "./features/admin/LibrariesPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
+import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { ShelvesPage } from "./features/library/ShelvesPage";
 import { SearchPage } from "./features/search/SearchPage";
@@ -36,6 +39,12 @@ const libraryRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "library",
   component: LibraryPage,
+});
+
+const downloadHistoryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "downloads",
+  component: DownloadHistoryPage,
 });
 
 const searchRoute = createRoute({
@@ -101,6 +110,18 @@ const adminJobsRoute = createRoute({
   component: AdminJobsPage,
 });
 
+const adminKoboDevicesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "kobo-devices",
+  component: KoboDevicesPage,
+});
+
+const adminLibrariesRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "libraries",
+  component: LibrariesPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "login",
@@ -117,6 +138,7 @@ export const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
     indexRoute,
     libraryRoute,
+    downloadHistoryRoute,
     searchRoute,
     shelvesRoute,
     bookRoute,
@@ -127,6 +149,8 @@ export const routeTree = rootRoute.addChildren([
       adminUsersRoute,
       adminImportRoute,
       adminJobsRoute,
+      adminLibrariesRoute,
+      adminKoboDevicesRoute,
     ]),
   ]),
   loginRoute,

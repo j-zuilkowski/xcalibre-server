@@ -160,7 +160,7 @@ async fn process_classify_job(state: AppState, job: llm_queries::SemanticIndexJo
         return;
     };
 
-    let book = match book_queries::get_book_by_id(&state.db, &book_id).await {
+    let book = match book_queries::get_book_by_id(&state.db, &book_id, None, None).await {
         Ok(Some(book)) => book,
         Ok(None) => {
             let _ = llm_queries::mark_job_failed(&state.db, &job.id, "book_not_found").await;

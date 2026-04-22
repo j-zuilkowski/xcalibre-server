@@ -17,6 +17,8 @@ pub struct BookSummary {
     pub series_index: Option<f64>,
     pub cover_url: Option<String>,
     pub has_cover: bool,
+    pub is_read: bool,
+    pub is_archived: bool,
     pub language: Option<String>,
     pub rating: Option<i64>,
     pub document_type: String,
@@ -34,6 +36,7 @@ pub struct BookListPage {
 #[derive(Clone, Debug, Default)]
 pub struct ListBooksParams {
     pub q: Option<String>,
+    pub library_id: Option<String>,
     pub author_id: Option<String>,
     pub series_id: Option<String>,
     pub tags: Vec<String>,
@@ -44,6 +47,9 @@ pub struct ListBooksParams {
     pub page: i64,
     pub page_size: i64,
     pub since: Option<String>,
+    pub user_id: Option<String>,
+    pub show_archived: Option<bool>,
+    pub only_read: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -77,6 +83,7 @@ pub struct IdentifierInput {
 
 #[derive(Clone, Debug, Default)]
 pub struct UploadBookInput {
+    pub library_id: String,
     pub title: String,
     pub sort_title: String,
     pub description: Option<String>,
@@ -105,6 +112,35 @@ pub struct PatchBookInput {
     pub series_index: Option<Option<f64>>,
     pub authors: Option<Vec<String>>,
     pub identifiers: Option<Vec<IdentifierInput>>,
+}
+
+#[derive(Clone, Debug)]
+pub enum BulkTagMode {
+    Append,
+    Overwrite,
+    Remove,
+}
+
+#[derive(Clone, Debug)]
+pub struct BulkTagUpdateInput {
+    pub mode: BulkTagMode,
+    pub values: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BulkUpdateBooksInput {
+    pub book_ids: Vec<String>,
+    pub tags: Option<BulkTagUpdateInput>,
+    pub series: Option<String>,
+    pub rating: Option<i64>,
+    pub language: Option<String>,
+    pub publisher: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct BulkUpdateBooksResult {
+    pub updated: i64,
+    pub errors: Vec<String>,
 }
 
 pub async fn role_permissions_for_user(
@@ -136,12 +172,13 @@ pub async fn role_permissions_for_user(
         can_download: row.get::<i64, _>("can_download") != 0,
     }))
 }
-
 pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Result<BookListPage> {
     let page_size = clamp_page_size(params.page_size);
     let page = if params.page < 1 { 1 } else { params.page };
     let offset = (page - 1) * page_size;
     let fts_query = normalize_fts_query(params.q.as_deref());
+    let user_id = params.user_id.as_deref();
+    let has_user_state = user_id.is_some();
 
     let mut total_query =
         QueryBuilder::<Sqlite>::new("SELECT COUNT(DISTINCT b.id) AS total FROM books b");
@@ -149,6 +186,10 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
         total_query.push(
             " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
         );
+    }
+    if let Some(user_id) = user_id {
+        total_query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        total_query.push_bind(user_id);
     }
     apply_list_filters(&mut total_query, params, fts_query.as_deref());
     let total: i64 = total_query
@@ -169,6 +210,17 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             b.series_index AS series_index,
             b.has_cover AS has_cover,
             b.cover_path AS cover_path,
+            "#,
+    );
+    if has_user_state {
+        data_query.push(
+            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
+        );
+    } else {
+        data_query.push("0 AS is_read, 0 AS is_archived, ");
+    }
+    data_query.push(
+        r#"
             b.language AS language,
             b.rating AS rating,
             b.document_type AS document_type,
@@ -182,6 +234,10 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
         data_query.push(
             " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
         );
+    }
+    if let Some(user_id) = user_id {
+        data_query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        data_query.push_bind(user_id);
     }
     data_query.push(" LEFT JOIN series s ON s.id = b.series_id");
     apply_list_filters(&mut data_query, params, fts_query.as_deref());
@@ -220,6 +276,8 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             series_index: row.get("series_index"),
             cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
             has_cover,
+            is_read: row.get::<i64, _>("is_read") != 0,
+            is_archived: row.get::<i64, _>("is_archived") != 0,
             language: row.get("language"),
             rating: row.get("rating"),
             document_type: row.get("document_type"),
@@ -238,6 +296,8 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
 pub async fn list_book_summaries_by_ids(
     db: &SqlitePool,
     book_ids: &[String],
+    library_id: Option<&str>,
+    user_id: Option<&str>,
 ) -> anyhow::Result<Vec<BookSummary>> {
     if book_ids.is_empty() {
         return Ok(Vec::new());
@@ -252,6 +312,17 @@ pub async fn list_book_summaries_by_ids(
             b.series_index AS series_index,
             b.has_cover AS has_cover,
             b.cover_path AS cover_path,
+            "#,
+    );
+    if user_id.is_some() {
+        query.push(
+            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
+        );
+    } else {
+        query.push("0 AS is_read, 0 AS is_archived, ");
+    }
+    query.push(
+        r#"
             b.language AS language,
             b.rating AS rating,
             b.document_type AS document_type,
@@ -259,10 +330,19 @@ pub async fn list_book_summaries_by_ids(
             s.id AS series_id,
             s.name AS series_name
         FROM books b
-        LEFT JOIN series s ON s.id = b.series_id
-        WHERE b.id IN (
         "#,
     );
+    if let Some(user_id) = user_id {
+        query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        query.push_bind(user_id);
+    }
+    query.push(" LEFT JOIN series s ON s.id = b.series_id WHERE ");
+    if let Some(library_id) = library_id {
+        query.push("b.library_id = ");
+        query.push_bind(library_id);
+        query.push(" AND ");
+    }
+    query.push("b.id IN (");
     {
         let mut separated = query.separated(", ");
         for id in book_ids {
@@ -299,6 +379,8 @@ pub async fn list_book_summaries_by_ids(
                 series_index: row.get("series_index"),
                 cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
                 has_cover,
+                is_read: row.get::<i64, _>("is_read") != 0,
+                is_archived: row.get::<i64, _>("is_archived") != 0,
                 language: row.get("language"),
                 rating: row.get("rating"),
                 document_type: row.get("document_type"),
@@ -321,8 +403,13 @@ pub async fn list_book_summaries_by_ids(
     Ok(ordered)
 }
 
-pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Option<Book>> {
-    let row = sqlx::query(
+pub async fn get_book_by_id(
+    db: &SqlitePool,
+    book_id: &str,
+    library_id: Option<&str>,
+    user_id: Option<&str>,
+) -> anyhow::Result<Option<Book>> {
+    let mut query = QueryBuilder::<Sqlite>::new(
         r#"
         SELECT
             b.id AS id,
@@ -336,19 +423,37 @@ pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Op
             b.series_index AS series_index,
             b.has_cover AS has_cover,
             b.cover_path AS cover_path,
+            "#,
+    );
+    if user_id.is_some() {
+        query.push(
+            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
+        );
+    } else {
+        query.push("0 AS is_read, 0 AS is_archived, ");
+    }
+    query.push(
+        r#"
             b.created_at AS created_at,
             b.last_modified AS last_modified,
             b.indexed_at AS indexed_at,
             s.id AS series_id,
             s.name AS series_name
         FROM books b
-        LEFT JOIN series s ON s.id = b.series_id
-        WHERE b.id = ?
         "#,
-    )
-    .bind(book_id)
-    .fetch_optional(db)
-    .await?;
+    );
+    if let Some(user_id) = user_id {
+        query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        query.push_bind(user_id);
+    }
+    query.push(" LEFT JOIN series s ON s.id = b.series_id WHERE b.id = ");
+    query.push_bind(book_id);
+    if let Some(library_id) = library_id {
+        query.push(" AND b.library_id = ");
+        query.push_bind(library_id);
+    }
+
+    let row = query.build().fetch_optional(db).await?;
 
     let Some(row) = row else {
         return Ok(None);
@@ -378,13 +483,14 @@ pub async fn get_book_by_id(db: &SqlitePool, book_id: &str) -> anyhow::Result<Op
         formats: load_book_formats(db, book_id).await?,
         cover_url: to_cover_url(book_id, has_cover, cover_path.as_deref()),
         has_cover,
-        identifiers: load_book_identifiers(db, book_id).await?,
+        is_read: row.get::<i64, _>("is_read") != 0,
+        is_archived: row.get::<i64, _>("is_archived") != 0,
+        identifiers: get_book_identifiers(db, book_id).await?,
         created_at: row.get("created_at"),
         last_modified: row.get("last_modified"),
         indexed_at: row.get("indexed_at"),
     }))
 }
-
 pub async fn has_duplicate_isbn(
     db: &SqlitePool,
     identifiers: &[IdentifierInput],
@@ -425,98 +531,18 @@ pub async fn has_duplicate_isbn(
 }
 
 pub async fn insert_uploaded_book(db: &SqlitePool, input: UploadBookInput) -> anyhow::Result<Book> {
-    let now = Utc::now().to_rfc3339();
-    let book_id = Uuid::new_v4().to_string();
-    let mut tx = db.begin().await?;
-
-    sqlx::query(
-        r#"
-        INSERT INTO books (
-            id, title, sort_title, description, pubdate, language, rating, series_id, series_index,
-            document_type, has_cover, cover_path, flags, indexed_at, created_at, last_modified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?, ?)
-        "#,
-    )
-    .bind(&book_id)
-    .bind(input.title.trim())
-    .bind(input.sort_title.trim())
-    .bind(optional_trimmed(input.description))
-    .bind(optional_trimmed(input.pubdate))
-    .bind(optional_trimmed(input.language))
-    .bind(input.rating)
-    .bind(optional_trimmed(input.series_id))
-    .bind(input.series_index)
-    .bind(input.document_type.trim().to_lowercase())
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    let authors = normalize_author_names(input.author_names);
-    for (display_order, author_name) in authors.into_iter().enumerate() {
-        let author_id = get_or_create_author(&mut tx, &author_name, &now).await?;
-        sqlx::query(
-            "INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, ?)",
-        )
-        .bind(&book_id)
-        .bind(author_id)
-        .bind(display_order as i64)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    sqlx::query(
-        r#"
-        INSERT INTO formats (id, book_id, format, path, size_bytes, created_at, last_modified)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        "#,
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&book_id)
-    .bind(input.format.trim().to_uppercase())
-    .bind(input.format_path.trim())
-    .bind(input.format_size_bytes)
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    let mut seen_id_types = BTreeSet::new();
-    for id in input.identifiers {
-        let id_type = id.id_type.trim().to_lowercase();
-        let value = id.value.trim().to_string();
-        if id_type.is_empty() || value.is_empty() || !seen_id_types.insert(id_type.clone()) {
-            continue;
-        }
-        sqlx::query(
-            r#"
-            INSERT INTO identifiers (id, book_id, id_type, value, last_modified)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(Uuid::new_v4().to_string())
-        .bind(&book_id)
-        .bind(id_type)
-        .bind(value)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    tx.commit().await?;
-
-    get_book_by_id(db, &book_id)
-        .await?
-        .context("uploaded book missing after commit")
+    crate::db::queries::book_insert::insert_uploaded_book_impl(db, input).await
 }
 
 pub async fn patch_book_with_audit(
     db: &SqlitePool,
     book_id: &str,
     actor_user_id: &str,
+    library_id: Option<&str>,
+    user_id: Option<&str>,
     patch: PatchBookInput,
 ) -> anyhow::Result<Option<Book>> {
-    let existing = get_book_by_id(db, book_id).await?;
+    let existing = get_book_by_id(db, book_id, library_id, user_id).await?;
     let Some(existing) = existing else {
         return Ok(None);
     };
@@ -765,23 +791,142 @@ pub async fn patch_book_with_audit(
     }
 
     tx.commit().await?;
-    get_book_by_id(db, book_id).await
+    get_book_by_id(db, book_id, library_id, user_id).await
+}
+
+pub async fn bulk_update_books(
+    db: &SqlitePool,
+    input: BulkUpdateBooksInput,
+) -> anyhow::Result<BulkUpdateBooksResult> {
+    let book_ids = dedupe_non_empty(input.book_ids);
+    if book_ids.is_empty() {
+        return Ok(BulkUpdateBooksResult::default());
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = db.begin().await?;
+    let mut updated = 0_i64;
+    let mut errors = Vec::new();
+
+    for book_id in book_ids {
+        let exists = sqlx::query("SELECT id FROM books WHERE id = ?")
+            .bind(&book_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if exists.is_none() {
+            errors.push(format!("{book_id}: not found"));
+            continue;
+        }
+
+        let mut changed = false;
+
+        if let Some(rating) = input.rating {
+            if !(0..=10).contains(&rating) {
+                errors.push(format!("{book_id}: invalid rating"));
+                continue;
+            }
+
+            sqlx::query("UPDATE books SET rating = ?, last_modified = ? WHERE id = ?")
+                .bind(rating)
+                .bind(&now)
+                .bind(&book_id)
+                .execute(&mut *tx)
+                .await?;
+            changed = true;
+        }
+
+        if let Some(language) = input.language.as_ref() {
+            let next_language = non_empty_option(language.clone());
+            sqlx::query("UPDATE books SET language = ?, last_modified = ? WHERE id = ?")
+                .bind(next_language)
+                .bind(&now)
+                .bind(&book_id)
+                .execute(&mut *tx)
+                .await?;
+            changed = true;
+        }
+
+        if let Some(series) = input.series.as_ref() {
+            let next_series = non_empty_option(series.clone());
+            let next_series_id = match next_series {
+                Some(ref series_name) => {
+                    Some(get_or_create_series(&mut tx, series_name, &now).await?)
+                }
+                None => None,
+            };
+            sqlx::query("UPDATE books SET series_id = ?, last_modified = ? WHERE id = ?")
+                .bind(next_series_id)
+                .bind(&now)
+                .bind(&book_id)
+                .execute(&mut *tx)
+                .await?;
+            changed = true;
+        }
+
+        if let Some(publisher) = input.publisher.as_ref() {
+            update_book_publisher(&mut tx, &book_id, publisher, &now).await?;
+            changed = true;
+        }
+
+        if let Some(tags) = input.tags.as_ref() {
+            apply_bulk_tags(&mut tx, &book_id, tags, &now).await?;
+            changed = true;
+        }
+
+        if changed {
+            updated += 1;
+        }
+    }
+
+    tx.commit().await?;
+
+    Ok(BulkUpdateBooksResult { updated, errors })
 }
 
 pub async fn delete_book_and_collect_paths(
     db: &SqlitePool,
     book_id: &str,
     actor_user_id: &str,
+    library_id: Option<&str>,
 ) -> anyhow::Result<Option<Vec<String>>> {
-    let rows = sqlx::query("SELECT path FROM formats WHERE book_id = ?")
+    let rows = if let Some(library_id) = library_id {
+        sqlx::query(
+            r#"
+            SELECT f.path
+            FROM formats f
+            INNER JOIN books b ON b.id = f.book_id
+            WHERE f.book_id = ? AND b.library_id = ?
+            "#,
+        )
         .bind(book_id)
+        .bind(library_id)
         .fetch_all(db)
-        .await?;
-    if rows.is_empty() {
-        let exists = sqlx::query("SELECT id FROM books WHERE id = ?")
+        .await?
+    } else {
+        sqlx::query("SELECT path FROM formats WHERE book_id = ?")
             .bind(book_id)
+            .fetch_all(db)
+            .await?
+    };
+    if rows.is_empty() {
+        let exists = if let Some(library_id) = library_id {
+            sqlx::query(
+                r#"
+                SELECT b.id
+                FROM books b
+                WHERE b.id = ? AND b.library_id = ?
+                "#,
+            )
+            .bind(book_id)
+            .bind(library_id)
             .fetch_optional(db)
-            .await?;
+            .await?
+        } else {
+            sqlx::query("SELECT id FROM books WHERE id = ?")
+                .bind(book_id)
+                .fetch_optional(db)
+                .await?
+        };
         if exists.is_none() {
             return Ok(None);
         }
@@ -963,7 +1108,10 @@ async fn load_book_formats(db: &SqlitePool, book_id: &str) -> anyhow::Result<Vec
         .collect())
 }
 
-async fn load_book_identifiers(db: &SqlitePool, book_id: &str) -> anyhow::Result<Vec<Identifier>> {
+pub async fn get_book_identifiers(
+    db: &SqlitePool,
+    book_id: &str,
+) -> anyhow::Result<Vec<Identifier>> {
     let rows = sqlx::query(
         r#"
         SELECT id, id_type, value
@@ -1077,6 +1225,30 @@ fn apply_list_filters(
         qb.push("b.last_modified > ");
         qb.push_bind(since);
     }
+
+    if params.user_id.is_some() {
+        if !params.show_archived.unwrap_or(false) {
+            and_where(qb);
+            qb.push("COALESCE(bus.is_archived, 0) = 0");
+        }
+
+        if let Some(only_read) = params.only_read {
+            and_where(qb);
+            qb.push("COALESCE(bus.is_read, 0) = ");
+            qb.push_bind(i64::from(only_read));
+        }
+    }
+
+    if let Some(library_id) = params
+        .library_id
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        and_where(qb);
+        qb.push("b.library_id = ");
+        qb.push_bind(library_id);
+    }
 }
 
 fn clamp_page_size(page_size: i64) -> i64 {
@@ -1117,7 +1289,7 @@ fn to_cover_url(book_id: &str, has_cover: bool, cover_path: Option<&str>) -> Opt
     }
 }
 
-fn optional_trimmed(value: Option<String>) -> Option<String> {
+pub(crate) fn optional_trimmed(value: Option<String>) -> Option<String> {
     value.and_then(non_empty_option)
 }
 
@@ -1142,7 +1314,7 @@ fn dedupe_non_empty(values: Vec<String>) -> Vec<String> {
     result
 }
 
-fn normalize_author_names(author_names: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_author_names(author_names: Vec<String>) -> Vec<String> {
     let normalized = author_names
         .into_iter()
         .flat_map(|name| split_authors(&name))
@@ -1195,7 +1367,7 @@ fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
     }
 }
 
-async fn get_or_create_author(
+pub(crate) async fn get_or_create_author(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     author_name: &str,
     now: &str,
@@ -1239,6 +1411,155 @@ fn normalize_isbn_value(value: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+async fn get_or_create_series(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    series_name: &str,
+    now: &str,
+) -> anyhow::Result<String> {
+    let existing = sqlx::query("SELECT id FROM series WHERE lower(name) = lower(?) LIMIT 1")
+        .bind(series_name)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(row) = existing {
+        return Ok(row.get("id"));
+    }
+
+    let series_id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO series (id, name, sort_name, last_modified) VALUES (?, ?, ?, ?)")
+        .bind(&series_id)
+        .bind(series_name)
+        .bind(series_name)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    Ok(series_id)
+}
+
+async fn get_or_create_tag(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    tag_name: &str,
+    now: &str,
+) -> anyhow::Result<String> {
+    let existing = sqlx::query("SELECT id FROM tags WHERE lower(name) = lower(?) LIMIT 1")
+        .bind(tag_name)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(row) = existing {
+        return Ok(row.get("id"));
+    }
+
+    let tag_id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO tags (id, name, source, last_modified) VALUES (?, ?, 'manual', ?)")
+        .bind(&tag_id)
+        .bind(tag_name)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    Ok(tag_id)
+}
+
+async fn update_book_publisher(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    book_id: &str,
+    publisher: &str,
+    now: &str,
+) -> anyhow::Result<()> {
+    let flags: Option<String> = sqlx::query_scalar("SELECT flags FROM books WHERE id = ?")
+        .bind(book_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let mut value = match flags {
+        Some(raw) => serde_json::from_str::<serde_json::Value>(&raw).unwrap_or_default(),
+        None => serde_json::Value::Null,
+    };
+    if !matches!(value, serde_json::Value::Object(_)) {
+        value = serde_json::Value::Object(serde_json::Map::new());
+    }
+
+    if let serde_json::Value::Object(ref mut object) = value {
+        let trimmed = publisher.trim();
+        if trimmed.is_empty() {
+            object.remove("publisher");
+        } else {
+            object.insert(
+                "publisher".to_string(),
+                serde_json::Value::String(trimmed.to_string()),
+            );
+        }
+    }
+
+    sqlx::query("UPDATE books SET flags = ?, last_modified = ? WHERE id = ?")
+        .bind(value.to_string())
+        .bind(now)
+        .bind(book_id)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok(())
+}
+
+async fn apply_bulk_tags(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    book_id: &str,
+    tags: &BulkTagUpdateInput,
+    now: &str,
+) -> anyhow::Result<()> {
+    let tag_names = dedupe_non_empty(tags.values.clone());
+    if tag_names.is_empty() {
+        if matches!(tags.mode, BulkTagMode::Overwrite) {
+            sqlx::query("DELETE FROM book_tags WHERE book_id = ?")
+                .bind(book_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        return Ok(());
+    }
+
+    match tags.mode {
+        BulkTagMode::Overwrite => {
+            sqlx::query("DELETE FROM book_tags WHERE book_id = ?")
+                .bind(book_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        BulkTagMode::Remove => {
+            for tag_name in tag_names {
+                if let Some(tag_id) =
+                    sqlx::query("SELECT id FROM tags WHERE lower(name) = lower(?) LIMIT 1")
+                        .bind(&tag_name)
+                        .fetch_optional(&mut **tx)
+                        .await?
+                        .map(|row| row.get::<String, _>("id"))
+                {
+                    sqlx::query("DELETE FROM book_tags WHERE book_id = ? AND tag_id = ?")
+                        .bind(book_id)
+                        .bind(tag_id)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
+            return Ok(());
+        }
+        BulkTagMode::Append => {}
+    }
+
+    for tag_name in tag_names {
+        let tag_id = get_or_create_tag(tx, &tag_name, now).await?;
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO book_tags (book_id, tag_id, confirmed)
+            VALUES (?, ?, 1)
+            "#,
+        )
+        .bind(book_id)
+        .bind(tag_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn looks_like_isbn(value: &str) -> bool {

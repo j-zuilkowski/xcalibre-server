@@ -4,24 +4,30 @@ import type {
   AdminUser,
   AdminUserCreateRequest,
   AdminUserUpdateRequest,
+  AuthProvidersResponse,
   BulkImportRequest,
   BulkImportResponse,
   Book,
   BookChapters,
+  MetadataLookupResponse,
   BookSummary,
   BookText,
   ClassifyResult,
   DeriveResult,
+  DownloadHistoryItem,
   ListBooksParams,
   LlmHealth,
   LoginRequest,
   LoginResponse,
   PaginatedResponse,
   ImportStatus,
+  KoboDevice,
+  Library,
   SearchQuery,
   SearchResultItem,
   SearchStatusResponse,
   SearchSuggestionsResponse,
+  Shelf,
   ReadingProgress,
   ReadingProgressPatch,
   SystemStats,
@@ -97,6 +103,34 @@ export class ApiClient {
     return this.requestJson<User>("/api/v1/auth/me");
   }
 
+  async getAuthProviders(): Promise<AuthProvidersResponse> {
+    return this.requestJson<AuthProvidersResponse>("/api/v1/auth/providers");
+  }
+
+  async listLibraries(): Promise<Library[]> {
+    return this.requestJson<Library[]>("/api/v1/libraries");
+  }
+
+  async createLibrary(request: { name: string; calibre_db_path: string }): Promise<Library> {
+    return this.requestJson<Library>("/api/v1/admin/libraries", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteLibrary(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/libraries/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async setDefaultLibrary(libraryId: string): Promise<User> {
+    return this.requestJson<User>("/api/v1/users/me/library", {
+      method: "PATCH",
+      body: JSON.stringify({ library_id: libraryId }),
+    });
+  }
+
   async getMe(): Promise<User> {
     return this.me();
   }
@@ -162,6 +196,31 @@ export class ApiClient {
     return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(id)}`);
   }
 
+  async setBookReadState(id: string, isRead: boolean): Promise<void> {
+    await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}/read`, {
+      method: "POST",
+      body: JSON.stringify({ is_read: isRead }),
+    });
+  }
+
+  async setBookArchivedState(id: string, isArchived: boolean): Promise<void> {
+    await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ is_archived: isArchived }),
+    });
+  }
+
+  async lookupBookMetadata(
+    id: string,
+    source: "openlibrary" | "googlebooks" = "openlibrary",
+  ): Promise<MetadataLookupResponse> {
+    const search = new URLSearchParams();
+    search.set("source", source);
+    return this.requestJson<MetadataLookupResponse>(
+      `/api/v1/books/${encodeURIComponent(id)}/metadata-lookup?${search.toString()}`,
+    );
+  }
+
   async uploadBook(file: File, metadata?: object): Promise<Book> {
     const form = new FormData();
     form.append("file", file);
@@ -223,6 +282,21 @@ export class ApiClient {
     }
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return this.requestJson<BookText>(`/api/v1/books/${encodeURIComponent(bookId)}/text${suffix}`);
+  }
+
+  async listDownloadHistory(params: {
+    page?: number;
+    page_size?: number;
+  } = {}): Promise<PaginatedResponse<DownloadHistoryItem>> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<PaginatedResponse<DownloadHistoryItem>>(`/api/v1/books/downloads${suffix}`);
   }
 
   async getLlmHealth(): Promise<LlmHealth> {
@@ -324,6 +398,16 @@ export class ApiClient {
     return this.requestJson<SystemStats>("/api/v1/admin/system");
   }
 
+  async listKoboDevices(): Promise<KoboDevice[]> {
+    return this.requestJson<KoboDevice[]>("/api/v1/admin/kobo-devices");
+  }
+
+  async revokeKoboDevice(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/kobo-devices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
   async startBulkImport(request: BulkImportRequest): Promise<BulkImportResponse> {
     if (request.source === "upload" && request.file) {
       const form = new FormData();
@@ -348,6 +432,54 @@ export class ApiClient {
 
   async getImportStatus(id: string): Promise<ImportStatus> {
     return this.requestJson<ImportStatus>(`/api/v1/admin/import/${encodeURIComponent(id)}`);
+  }
+
+  async listShelves(): Promise<Shelf[]> {
+    return this.requestJson<Shelf[]>("/api/v1/shelves");
+  }
+
+  async createShelf(request: { name: string; is_public: boolean }): Promise<Shelf> {
+    return this.requestJson<Shelf>("/api/v1/shelves", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteShelf(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/shelves/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async addBookToShelf(shelfId: string, bookId: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/shelves/${encodeURIComponent(shelfId)}/books`, {
+      method: "POST",
+      body: JSON.stringify({ book_id: bookId }),
+    });
+  }
+
+  async removeBookFromShelf(shelfId: string, bookId: string): Promise<void> {
+    await this.requestJson<void>(
+      `/api/v1/shelves/${encodeURIComponent(shelfId)}/books/${encodeURIComponent(bookId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async listShelfBooks(
+    shelfId: string,
+    params: { page?: number; page_size?: number } = {},
+  ): Promise<PaginatedResponse<BookSummary>> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<PaginatedResponse<BookSummary>>(
+      `/api/v1/shelves/${encodeURIComponent(shelfId)}/books${suffix}`,
+    );
   }
 
   coverUrl(bookId: string): string {

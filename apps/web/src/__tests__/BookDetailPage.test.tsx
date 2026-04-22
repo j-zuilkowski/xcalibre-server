@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { Book, User } from "@calibre/shared";
+import type { Book, User } from "@autolibre/shared";
 import { BookDetailPage } from "../features/library/BookDetailPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
 
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getLlmHealthMock = vi.spyOn(apiClient, "getLlmHealth");
+const listShelvesMock = vi.spyOn(apiClient, "listShelves");
 
 function makeBook(): Book {
   return {
@@ -31,6 +32,8 @@ function makeBook(): Book {
     ],
     cover_url: null,
     has_cover: false,
+    is_read: false,
+    is_archived: false,
     identifiers: [{ id: "id-1", id_type: "isbn", value: "9780441172719" }],
     created_at: "2026-04-18T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
@@ -63,6 +66,7 @@ function makeUser(role: Partial<User["role"]>): User {
     },
     is_active: true,
     force_pw_reset: false,
+    default_library_id: "default",
     created_at: "2026-04-19T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
   };
@@ -88,6 +92,7 @@ describe("BookDetailPage", () => {
   beforeEach(() => {
     getBookMock.mockReset();
     getLlmHealthMock.mockReset();
+    listShelvesMock.mockReset();
     window.history.replaceState({}, "", "/books/book-1");
     setUser(makeUser({ name: "admin", can_edit: true }));
     getLlmHealthMock.mockResolvedValue({
@@ -98,6 +103,7 @@ describe("BookDetailPage", () => {
         endpoint: "http://llm.local",
       },
     });
+    listShelvesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

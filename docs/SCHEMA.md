@@ -25,6 +25,8 @@ users ──────────── roles
   ├── reading_progress ── books ── book_authors ── authors
   └── shelves                │
         └── shelf_books      ├── book_tags ─── tags
+                             ├── book_user_state ─ users
+                             ├── download_history ─ users
                              ├── formats
                              ├── identifiers
                              ├── series
@@ -178,6 +180,44 @@ CREATE INDEX idx_books_series      ON books(series_id);
 CREATE INDEX idx_books_pubdate     ON books(pubdate);
 CREATE INDEX idx_books_language    ON books(language);
 CREATE INDEX idx_books_indexed_at  ON books(indexed_at);
+```
+
+---
+
+### `book_user_state`
+
+Per-user read/unread and archived state for books.
+
+```sql
+CREATE TABLE book_user_state (
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    book_id     TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    is_read     INTEGER NOT NULL DEFAULT 0,
+    is_archived INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (user_id, book_id)
+);
+
+CREATE INDEX idx_book_user_state_user ON book_user_state(user_id);
+```
+
+---
+
+### `download_history`
+
+Records successful file downloads for each user.
+
+```sql
+CREATE TABLE download_history (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    book_id       TEXT NOT NULL,
+    format        TEXT NOT NULL,
+    downloaded_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_download_history_user ON download_history(user_id);
+CREATE INDEX idx_download_history_book ON download_history(book_id);
 ```
 
 ---
@@ -463,7 +503,7 @@ CREATE INDEX idx_eval_hash    ON llm_eval_results(prompt_hash);
 
 ### `migration_log`
 
-One row per `calibre-migrate` run.
+One row per `autolibre-migrate` run.
 
 ```sql
 CREATE TABLE migration_log (

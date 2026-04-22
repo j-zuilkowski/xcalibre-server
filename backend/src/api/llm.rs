@@ -1,5 +1,5 @@
 use crate::{
-    api::books::load_book_or_not_found,
+    api::books::{accessible_library_id, load_book_or_not_found},
     db::queries::{books as book_queries, llm as llm_queries},
     llm::{
         classify::classify_book, derive::derive_book, quality::check_quality,
@@ -122,13 +122,20 @@ async fn llm_health(State(state): State<AppState>) -> Result<Json<LlmHealthRespo
 
 async fn classify(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<ClassifyResponse>, AppError> {
     let Some(chat_client) = state.chat_client.as_ref() else {
         return Err(AppError::ServiceUnavailable);
     };
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let authors = book
         .authors
         .iter()
@@ -163,13 +170,25 @@ async fn confirm_tags(
     Json(payload): Json<ConfirmTagsRequest>,
 ) -> Result<Json<crate::db::models::Book>, AppError> {
     ensure_can_edit(&state, &auth_user.user.id).await?;
-    load_book_or_not_found(&state.db, &book_id).await?;
+    load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
 
     llm_queries::confirm_tags(&state.db, &book_id, &payload.confirm, &payload.reject)
         .await
         .map_err(|_| AppError::Internal)?;
 
-    let updated = load_book_or_not_found(&state.db, &book_id).await?;
+    let updated = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     Ok(Json(updated))
 }
 
@@ -179,25 +198,44 @@ async fn confirm_all_tags(
     Path(book_id): Path<String>,
 ) -> Result<Json<crate::db::models::Book>, AppError> {
     ensure_can_edit(&state, &auth_user.user.id).await?;
-    load_book_or_not_found(&state.db, &book_id).await?;
+    load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
 
     llm_queries::confirm_all_pending_tags(&state.db, &book_id)
         .await
         .map_err(|_| AppError::Internal)?;
 
-    let updated = load_book_or_not_found(&state.db, &book_id).await?;
+    let updated = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     Ok(Json(updated))
 }
 
 async fn validate(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<ValidateResponse>, AppError> {
     let Some(chat_client) = state.chat_client.as_ref() else {
         return Err(AppError::ServiceUnavailable);
     };
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let authors = book
         .authors
         .iter()
@@ -225,13 +263,20 @@ async fn validate(
 
 async fn quality(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<QualityResponse>, AppError> {
     let Some(chat_client) = state.chat_client.as_ref() else {
         return Err(AppError::ServiceUnavailable);
     };
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let description = book.description.as_deref().unwrap_or_default();
     let result = check_quality(chat_client, &book.title, description).await;
 
@@ -245,13 +290,20 @@ async fn quality(
 
 async fn derive(
     State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
 ) -> Result<Json<DeriveResponse>, AppError> {
     let Some(chat_client) = state.chat_client.as_ref() else {
         return Err(AppError::ServiceUnavailable);
     };
 
-    let book = load_book_or_not_found(&state.db, &book_id).await?;
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
     let authors = book
         .authors
         .iter()

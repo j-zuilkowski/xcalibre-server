@@ -14,6 +14,7 @@ export type User = {
   role: Role;
   is_active: boolean;
   force_pw_reset: boolean;
+  default_library_id: string;
   created_at: string;
   last_modified: string;
 };
@@ -148,6 +149,26 @@ export type AdminJob = {
   error_text: string | null;
 };
 
+export type KoboDevice = {
+  id: string;
+  user_id: string;
+  username: string;
+  email: string;
+  device_id: string;
+  device_name: string;
+  last_sync_at: string | null;
+  created_at: string;
+};
+
+export type Library = {
+  id: string;
+  name: string;
+  calibre_db_path: string;
+  created_at: string;
+  updated_at: string;
+  book_count?: number;
+};
+
 export type Chapter = {
   index: number;
   title: string;
@@ -236,6 +257,8 @@ export type Book = {
   formats: FormatRef[];
   cover_url: string | null;
   has_cover: boolean;
+  is_read: boolean;
+  is_archived: boolean;
   identifiers: Identifier[];
   created_at: string;
   last_modified: string;
@@ -252,6 +275,8 @@ export type BookSummary = Pick<
   | "series_index"
   | "cover_url"
   | "has_cover"
+  | "is_read"
+  | "is_archived"
   | "language"
   | "rating"
   | "document_type"
@@ -280,6 +305,18 @@ export type SearchStatusResponse = {
   backend: string;
 };
 
+export type MetadataLookupResponse = {
+  source: "openlibrary" | "googlebooks";
+  title: string;
+  authors: string[];
+  description: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  cover_url: string | null;
+  isbn_13: string | null;
+  categories: string[];
+};
+
 export type ApiError = {
   message: string;
   status: number;
@@ -302,6 +339,11 @@ export type RefreshResponse = {
   refresh_token: string;
 };
 
+export type AuthProvidersResponse = {
+  google: boolean;
+  github: boolean;
+};
+
 export type RegisterRequest = {
   username: string;
   email: string;
@@ -320,8 +362,17 @@ export type ListBooksParams = {
   page?: number;
   page_size?: number;
   since?: string;
+  show_archived?: boolean;
+  only_read?: boolean;
 };
 
 export type SearchQuery = ListBooksParams & {
   semantic?: boolean;
+};
+
+export type DownloadHistoryItem = {
+  book_id: string;
+  title: string;
+  format: string;
+  downloaded_at: string;
 };

@@ -269,6 +269,8 @@ describe("ApiClient", () => {
           formats: [],
           cover_url: null,
           has_cover: false,
+          is_read: false,
+          is_archived: false,
           identifiers: [],
           created_at: "2026-04-18T00:00:00Z",
           last_modified: "2026-04-18T00:00:00Z",

@@ -1,6 +1,6 @@
 import { type ReactNode, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApiError, Book, FormatRef, TagSuggestion, ValidationResult } from "@calibre/shared";
+import type { ApiError, Book, FormatRef, TagSuggestion, ValidationResult } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import {
@@ -180,9 +180,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const queryClient = useQueryClient();
 
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const [shelfMenuOpen, setShelfMenuOpen] = useState(false);
+  const [metadataLookupOpen, setMetadataLookupOpen] = useState(false);
+  const [metadataSource, setMetadataSource] = useState<"openlibrary" | "googlebooks">("openlibrary");
   const [actionsOpen, setActionsOpen] = useState(false);
   const [aiTab, setAiTab] = useState<AiTab>("classify");
   const [pendingSuggestions, setPendingSuggestions] = useState<TagSuggestion[]>([]);
+  const [metadataResult, setMetadataResult] = useState<Awaited<ReturnType<typeof apiClient.lookupBookMetadata>> | null>(null);
   const [sectionsOpen, setSectionsOpen] = useState<Record<SectionKey, boolean>>({
     description: false,
     formats: false,
@@ -196,6 +200,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     queryKey: ["book", resolvedBookId],
     queryFn: () => apiClient.getBook(resolvedBookId as string),
     enabled: Boolean(resolvedBookId),
+  });
+
+  const shelvesQuery = useQuery({
+    queryKey: ["shelves"],
+    queryFn: () => apiClient.listShelves(),
+    enabled: Boolean(resolvedBookId),
+    staleTime: 60_000,
   });
 
   const llmHealthQuery = useQuery({
@@ -229,6 +240,69 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     onSuccess: (updatedBook) => {
       queryClient.setQueryData(["book", resolvedBookId], updatedBook);
       setPendingSuggestions([]);
+    },
+  });
+
+  const addToShelfMutation = useMutation({
+    mutationFn: (shelfId: string) => apiClient.addBookToShelf(shelfId, resolvedBookId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["shelves"] });
+      setShelfMenuOpen(false);
+    },
+  });
+
+  const readStateMutation = useMutation({
+    mutationFn: (isRead: boolean) => apiClient.setBookReadState(resolvedBookId as string, isRead),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+    },
+  });
+
+  const archiveStateMutation = useMutation({
+    mutationFn: (isArchived: boolean) =>
+      apiClient.setBookArchivedState(resolvedBookId as string, isArchived),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+    },
+  });
+
+  const lookupMetadataMutation = useMutation({
+    mutationFn: (source: "openlibrary" | "googlebooks") =>
+      apiClient.lookupBookMetadata(resolvedBookId as string, source),
+    onSuccess: (result) => {
+      setMetadataResult(result);
+      setMetadataLookupOpen(true);
+      setActionsOpen(false);
+    },
+  });
+
+  const applyMetadataMutation = useMutation({
+    mutationFn: async (
+      payload:
+        | { field: "title"; value: string }
+        | { field: "description"; value: string | null }
+        | { field: "pubdate"; value: string | null }
+        | { field: "authors"; value: string[] }
+        | { field: "isbn_13"; value: string },
+    ) => {
+      if (payload.field === "title") {
+        return apiClient.patchBook(resolvedBookId as string, { title: payload.value });
+      }
+      if (payload.field === "description") {
+        return apiClient.patchBook(resolvedBookId as string, { description: payload.value });
+      }
+      if (payload.field === "pubdate") {
+        return apiClient.patchBook(resolvedBookId as string, { pubdate: payload.value });
+      }
+      if (payload.field === "authors") {
+        return apiClient.patchBook(resolvedBookId as string, { authors: payload.value });
+      }
+      return apiClient.patchBook(resolvedBookId as string, {
+        identifiers: [{ id_type: "isbn13", value: payload.value }],
+      });
+    },
+    onSuccess: (updatedBook) => {
+      queryClient.setQueryData(["book", resolvedBookId], updatedBook);
     },
   });
 
@@ -303,8 +377,18 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                 </button>
                 {actionsOpen ? (
                   <div className="absolute right-0 z-20 mt-2 w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">
-                    <button type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100">
-                      Edit metadata
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMetadataLookupOpen(true);
+                        setActionsOpen(false);
+                        if (!metadataResult) {
+                          lookupMetadataMutation.mutate(metadataSource);
+                        }
+                      }}
+                      className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100"
+                    >
+                      Lookup metadata
                     </button>
                     <button type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100">
                       Replace cover
@@ -359,9 +443,29 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       : "cursor-not-allowed bg-zinc-300 text-zinc-500"
                   }`}
                   aria-disabled={!readFormat}
-                >
+                  >
                   Read
                 </a>
+
+                <button
+                  type="button"
+                  onClick={() => void readStateMutation.mutateAsync(!book.is_read)}
+                  className="inline-flex rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800"
+                >
+                  {book.is_read ? "Mark unread" : "Mark as read"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void archiveStateMutation.mutateAsync(!book.is_archived)}
+                  className={`inline-flex rounded-lg border px-4 py-2 text-sm font-semibold ${
+                    book.is_archived
+                      ? "border-amber-600 bg-amber-600 text-white"
+                      : "border-zinc-300 bg-white text-zinc-800"
+                  }`}
+                >
+                  {book.is_archived ? "Unarchive" : "Archive"}
+                </button>
 
                 <div className="relative">
                   <button
@@ -391,6 +495,41 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         </ul>
                       ) : (
                         <p className="px-2 py-1 text-sm text-zinc-500">No formats available.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShelfMenuOpen((open) => !open)}
+                    className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800"
+                  >
+                    Add to shelf ▾
+                  </button>
+
+                  {shelfMenuOpen ? (
+                    <div className="absolute left-0 z-20 mt-2 min-w-[240px] rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
+                      {shelvesQuery.isLoading ? (
+                        <p className="px-2 py-1 text-sm text-zinc-500">Loading shelves...</p>
+                      ) : shelvesQuery.data?.length ? (
+                        <ul className="space-y-1">
+                          {shelvesQuery.data.map((shelf) => (
+                            <li key={shelf.id}>
+                              <button
+                                type="button"
+                                onClick={() => addToShelfMutation.mutate(shelf.id)}
+                                className="flex w-full items-center justify-between rounded px-2 py-2 text-left text-sm hover:bg-zinc-100"
+                              >
+                                <span className="truncate">{shelf.name}</span>
+                                <span className="text-zinc-500">{shelf.book_count}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="px-2 py-1 text-sm text-zinc-500">No shelves yet.</p>
                       )}
                     </div>
                   ) : null}
@@ -744,6 +883,170 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             </CollapsibleSection>
           ) : null}
         </div>
+
+        {metadataLookupOpen ? (
+          <aside className="fixed right-4 top-20 z-30 w-[min(92vw,420px)] rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Metadata lookup</p>
+                <h2 className="mt-1 text-lg font-semibold text-zinc-900">External suggestions</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMetadataLookupOpen(false)}
+                className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-600"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <label className="block text-sm font-medium text-zinc-700">
+                Source
+                <select
+                  value={metadataSource}
+                  onChange={(event) => setMetadataSource(event.target.value as "openlibrary" | "googlebooks")}
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="openlibrary">Open Library</option>
+                  <option value="googlebooks">Google Books</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => lookupMetadataMutation.mutate(metadataSource)}
+                disabled={lookupMetadataMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
+              >
+                Lookup Metadata
+              </button>
+
+              {lookupMetadataMutation.isError ? (
+                <p className="text-sm text-red-700">Unable to load external metadata right now.</p>
+              ) : null}
+
+              {metadataResult ? (
+                <div className="space-y-4 border-t border-zinc-200 pt-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                      {metadataResult.source}
+                    </p>
+                    <p className="mt-1 text-xl font-semibold text-zinc-900">{metadataResult.title}</p>
+                    {metadataResult.description ? (
+                      <p className="mt-2 text-sm text-zinc-600">{metadataResult.description}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-700">
+                        <strong>Title</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void applyMetadataMutation.mutateAsync({
+                            field: "title",
+                            value: metadataResult.title,
+                          })
+                        }
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      >
+                        Apply
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-700">
+                        <strong>Authors</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void applyMetadataMutation.mutateAsync({
+                            field: "authors",
+                            value: metadataResult.authors,
+                          })
+                        }
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      >
+                        Apply
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-700">
+                        <strong>Description</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void applyMetadataMutation.mutateAsync({
+                            field: "description",
+                            value: metadataResult.description,
+                          })
+                        }
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      >
+                        Apply
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-zinc-700">
+                        <strong>Published date</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void applyMetadataMutation.mutateAsync({
+                            field: "pubdate",
+                            value: metadataResult.published_date,
+                          })
+                        }
+                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                      >
+                        Apply
+                      </button>
+                    </div>
+
+                    {metadataResult.isbn_13 ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-zinc-700">
+                          <strong>ISBN-13</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void applyMetadataMutation.mutateAsync({
+                              field: "isbn_13",
+                              value: metadataResult.isbn_13,
+                            })
+                          }
+                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {metadataResult.publisher ? (
+                    <p className="text-sm text-zinc-600">
+                      <strong>Publisher:</strong> {metadataResult.publisher}
+                    </p>
+                  ) : null}
+                  {metadataResult.categories.length > 0 ? (
+                    <p className="text-sm text-zinc-600">
+                      <strong>Categories:</strong> {metadataResult.categories.join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        ) : null}
       </div>
     </main>
   );

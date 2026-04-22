@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ListBooksParams } from "@calibre/shared";
+import type { ListBooksParams } from "@autolibre/shared";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "./BookCard";
@@ -14,6 +14,7 @@ type LibrarySearchState = {
   language?: string;
   format?: string;
   sort?: string;
+  show_archived: boolean;
   page: number;
   view: ViewMode;
 };
@@ -51,6 +52,7 @@ function parseSearch(search: string): LibrarySearchState {
     language: params.get("language") ?? undefined,
     format: params.get("format") ?? undefined,
     sort: params.get("sort") ?? "title",
+    show_archived: params.get("show_archived") === "true",
     page: parsePage(params.get("page")),
     view,
   };
@@ -76,6 +78,9 @@ function toSearch(state: LibrarySearchState): string {
   }
   if (state.sort) {
     params.set("sort", state.sort);
+  }
+  if (state.show_archived) {
+    params.set("show_archived", "true");
   }
   if (state.page > 1) {
     params.set("page", String(state.page));
@@ -113,6 +118,7 @@ export function LibraryPage() {
       sort: searchState.sort,
       page: searchState.page,
       page_size: PAGE_SIZE,
+      show_archived: searchState.show_archived ? true : undefined,
     }),
     [searchState],
   );
@@ -220,10 +226,27 @@ export function LibraryPage() {
                     ? "border-zinc-900 bg-zinc-900 text-zinc-50"
                     : "border-zinc-300 bg-white text-zinc-700"
                 }`}
-              >
-                List
-              </button>
+                >
+                  List
+                </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                updateSearchState({
+                  show_archived: !searchState.show_archived,
+                  page: 1,
+                })
+              }
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                searchState.show_archived
+                  ? "border-amber-600 bg-amber-600 text-white"
+                  : "border-zinc-300 bg-white text-zinc-700"
+              }`}
+            >
+              Show archived
+            </button>
           </div>
         </header>
 

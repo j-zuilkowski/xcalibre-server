@@ -14,6 +14,7 @@ pub struct User {
     pub role: RoleRef,
     pub is_active: bool,
     pub force_pw_reset: bool,
+    pub default_library_id: String,
     pub created_at: String,
     pub last_modified: String,
 }
@@ -53,6 +54,37 @@ pub struct Identifier {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct OauthAccount {
+    pub id: String,
+    pub user_id: String,
+    pub provider: String,
+    pub provider_user_id: String,
+    pub email: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct KoboDevice {
+    pub id: String,
+    pub user_id: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub sync_token: Option<String>,
+    pub last_sync_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct KoboReadingState {
+    pub id: String,
+    pub device_id: String,
+    pub book_id: String,
+    pub kobo_position: Option<String>,
+    pub percent_read: Option<f64>,
+    pub last_modified: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Book {
     pub id: String,
     pub title: String,
@@ -69,6 +101,8 @@ pub struct Book {
     pub formats: Vec<FormatRef>,
     pub cover_url: Option<String>,
     pub has_cover: bool,
+    pub is_read: bool,
+    pub is_archived: bool,
     pub identifiers: Vec<Identifier>,
     pub created_at: String,
     pub last_modified: String,

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { SearchBar } from "../features/search/SearchBar";
+import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
 
 type ThemeMode = "light" | "sepia" | "dark";
@@ -50,12 +52,35 @@ function isAdmin(roleName: string | undefined): boolean {
 
 export function AppShell() {
   const navigate = useNavigate();
+  const accessToken = useAuthStore((state) => state.access_token);
+  const refreshToken = useAuthStore((state) => state.refresh_token);
   const user = useAuthStore((state) => state.user);
   const clearAuth = useAuthStore((state) => state.clearAuth);
   const [theme, setTheme] = useState<ThemeMode>(() => readTheme());
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const initial = user?.username?.trim()[0]?.toUpperCase() ?? "A";
+
+  const librariesQuery = useQuery({
+    queryKey: ["libraries"],
+    queryFn: () => apiClient.listLibraries(),
+    enabled: Boolean(user),
+    staleTime: 60_000,
+  });
+
+  const switchLibraryMutation = useMutation({
+    mutationFn: (libraryId: string) => apiClient.setDefaultLibrary(libraryId),
+    onSuccess: (updatedUser) => {
+      if (accessToken && refreshToken) {
+        useAuthStore.getState().setAuth({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          user: updatedUser,
+        });
+      }
+      window.location.reload();
+    },
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -95,6 +120,7 @@ export function AppShell() {
         <nav className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">
           {[
             { to: "/library", label: "Library", icon: "L" },
+            { to: "/downloads", label: "Downloads", icon: "D" },
             { to: "/search", label: "Search", icon: "S" },
             { to: "/shelves", label: "Shelves", icon: "H" },
           ].map((item) => (
@@ -125,6 +151,25 @@ export function AppShell() {
             <SearchBar />
           </div>
 
+          {librariesQuery.data && librariesQuery.data.length > 1 ? (
+            <label className="hidden items-center gap-2 rounded-full border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-700 md:flex">
+              <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">Library</span>
+              <select
+                value={user?.default_library_id ?? "default"}
+                onChange={(event) => {
+                  void switchLibraryMutation.mutateAsync(event.target.value);
+                }}
+                className="bg-transparent text-sm outline-none"
+              >
+                {librariesQuery.data.map((library) => (
+                  <option key={library.id} value={library.id}>
+                    {library.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <div className="relative" ref={menuRef}>
             <button
               type="button"
@@ -137,13 +182,20 @@ export function AppShell() {
 
             {menuOpen ? (
               <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl">
-                <a
-                  href="/library"
+              <a
+                href="/library"
+                className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                Profile
+              </a>
+                <Link
+                  to="/downloads"
                   className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
                   onClick={() => setMenuOpen(false)}
                 >
-                  Profile
-                </a>
+                  Download history
+                </Link>
                 <button
                   type="button"
                   onClick={() => {

@@ -1,3 +1,12 @@
+pub mod api_tokens;
 pub mod auth;
+pub mod book_insert;
+pub mod book_user_state;
 pub mod books;
+pub mod download_history;
+pub mod email_settings;
+pub mod kobo;
+pub mod libraries;
 pub mod llm;
+pub mod oauth;
+pub mod shelves;

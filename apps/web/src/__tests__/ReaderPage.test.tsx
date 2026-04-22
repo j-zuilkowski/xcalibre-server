@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { Book, ReadingProgress, User } from "@calibre/shared";
+import type { Book, ReadingProgress, User } from "@autolibre/shared";
 import { ReaderPage } from "../features/reader/ReaderPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
@@ -62,6 +62,12 @@ vi.mock("pdfjs-dist", () => {
   };
 });
 
+vi.mock("../features/reader/ComicReader", () => {
+  return {
+    ComicReader: () => <div data-testid="comic-reader" />,
+  };
+});
+
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getReadingProgressMock = vi.spyOn(apiClient, "getReadingProgress");
 const patchReadingProgressMock = vi.spyOn(apiClient, "patchReadingProgress");
@@ -85,6 +91,8 @@ function makeBook(): Book {
     ],
     cover_url: null,
     has_cover: false,
+    is_read: false,
+    is_archived: false,
     identifiers: [],
     created_at: "2026-04-18T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
@@ -121,6 +129,7 @@ function makeUser(): User {
     },
     is_active: true,
     force_pw_reset: false,
+    default_library_id: "default",
     created_at: "2026-04-19T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
   };
@@ -191,6 +200,14 @@ describe("ReaderPage", () => {
 
     expect(screen.getByTestId("pdf-reader")).toBeTruthy();
     expect(screen.queryByTestId("epub-reader")).toBeNull();
+  });
+
+  test("test_comic_reader_renders_for_cbz_format", async () => {
+    await renderReaderAndFlush("/books/book-1/read/cbz");
+
+    expect(screen.getByTestId("comic-reader")).toBeTruthy();
+    expect(screen.queryByTestId("epub-reader")).toBeNull();
+    expect(screen.queryByTestId("pdf-reader")).toBeNull();
   });
 
   test("test_reader_saves_progress_on_advance", async () => {
