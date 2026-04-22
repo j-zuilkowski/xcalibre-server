@@ -9,4 +9,5 @@ pub mod kobo;
 pub mod libraries;
 pub mod llm;
 pub mod oauth;
+pub mod opds;
 pub mod shelves;

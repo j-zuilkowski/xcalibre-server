@@ -1,7 +1,10 @@
-use crate::{db::queries::books as book_queries, AppError, AppState};
+use crate::{
+    db::queries::{books as book_queries, opds as opds_queries},
+    AppError, AppState,
+};
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{header, HeaderValue},
     response::Response,
     routing::get,
@@ -17,6 +20,16 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/catalog", get(all_books))
         .route("/search", get(search))
         .route("/new", get(recently_added))
+        .route("/authors", get(authors_feed))
+        .route("/authors/:id", get(author_books_feed))
+        .route("/series", get(series_feed))
+        .route("/series/:id", get(series_books_feed))
+        .route("/publishers", get(publishers_feed))
+        .route("/publishers/:id", get(publisher_books_feed))
+        .route("/languages", get(languages_feed))
+        .route("/languages/:lang_code", get(language_books_feed))
+        .route("/ratings", get(ratings_feed))
+        .route("/ratings/:rating", get(rating_books_feed))
         .with_state(state)
 }
 
@@ -30,20 +43,376 @@ struct FeedQuery {
 async fn root_catalog() -> Result<Response, AppError> {
     let mut xml = String::new();
     push_feed_header(&mut xml, "Autolibre Catalog", "/opds", "navigation");
+    push_opensearch_stats(&mut xml, 8, 50);
     push_navigation_entry(
         &mut xml,
         "All Books",
         "/opds/catalog",
         "Browse the full library",
+        "navigation",
     );
     push_navigation_entry(
         &mut xml,
         "Recently Added",
         "/opds/new",
         "Books added in the last 30 days",
+        "navigation",
     );
-    push_navigation_entry(&mut xml, "Search", "/opds/search", "OpenSearch description");
+    push_navigation_entry(
+        &mut xml,
+        "Search",
+        "/opds/search",
+        "OpenSearch description",
+        "navigation",
+    );
+    push_navigation_entry(
+        &mut xml,
+        "Authors",
+        "/opds/authors",
+        "Browse authors",
+        "navigation",
+    );
+    push_navigation_entry(
+        &mut xml,
+        "Series",
+        "/opds/series",
+        "Browse series",
+        "navigation",
+    );
+    push_navigation_entry(
+        &mut xml,
+        "Publishers",
+        "/opds/publishers",
+        "Browse publishers",
+        "navigation",
+    );
+    push_navigation_entry(
+        &mut xml,
+        "Languages",
+        "/opds/languages",
+        "Browse languages",
+        "navigation",
+    );
+    push_navigation_entry(
+        &mut xml,
+        "Ratings",
+        "/opds/ratings",
+        "Browse ratings",
+        "navigation",
+    );
     push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn authors_feed(
+    State(state): State<AppState>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let total = opds_queries::count_opds_authors(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let authors = opds_queries::list_opds_authors(&state.db, page, page_size)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Authors", "/opds/authors", "navigation");
+    push_opensearch_stats(&mut xml, total, page_size);
+    push_pagination_links(&mut xml, "/opds/authors", page, page_size, total, &[]);
+
+    for (author_id, author_name, book_count) in authors {
+        let book_label = pluralize("book", book_count);
+        push_navigation_entry(
+            &mut xml,
+            &author_name,
+            &format!("/opds/authors/{}", urlencoding::encode(&author_id)),
+            &format!("{book_count} {book_label}"),
+            "acquisition",
+        );
+    }
+
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn author_books_feed(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let author_name = sqlx::query_scalar::<_, String>("SELECT name FROM authors WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let params = book_queries::ListBooksParams {
+        author_id: Some(id.clone()),
+        page,
+        page_size,
+        ..Default::default()
+    };
+    let title = format!("Books by {author_name}");
+    let xml = build_book_feed(
+        &state,
+        &title,
+        &format!("/opds/authors/{}", urlencoding::encode(&id)),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+async fn series_feed(
+    State(state): State<AppState>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let total = opds_queries::count_opds_series(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let series = opds_queries::list_opds_series(&state.db, page, page_size)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Series", "/opds/series", "navigation");
+    push_opensearch_stats(&mut xml, total, page_size);
+    push_pagination_links(&mut xml, "/opds/series", page, page_size, total, &[]);
+
+    for (series_id, series_name, book_count) in series {
+        push_navigation_entry(
+            &mut xml,
+            &series_name,
+            &format!("/opds/series/{}", urlencoding::encode(&series_id)),
+            &format!("{book_count} {}", pluralize("book", book_count)),
+            "acquisition",
+        );
+    }
+
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn series_books_feed(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let series_name = sqlx::query_scalar::<_, String>("SELECT name FROM series WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let params = book_queries::ListBooksParams {
+        series_id: Some(id.clone()),
+        page,
+        page_size,
+        ..Default::default()
+    };
+    let title = format!("Books in series {series_name}");
+    let xml = build_book_feed(
+        &state,
+        &title,
+        &format!("/opds/series/{}", urlencoding::encode(&id)),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+async fn publishers_feed(
+    State(state): State<AppState>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let total = opds_queries::count_opds_publishers(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let publishers = opds_queries::list_opds_publishers(&state.db, page, page_size)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Publishers", "/opds/publishers", "navigation");
+    push_opensearch_stats(&mut xml, total, page_size);
+    push_pagination_links(&mut xml, "/opds/publishers", page, page_size, total, &[]);
+
+    for (publisher_id, publisher_name, book_count) in publishers {
+        push_navigation_entry(
+            &mut xml,
+            &publisher_name,
+            &format!("/opds/publishers/{}", urlencoding::encode(&publisher_id)),
+            &format!("{book_count} {}", pluralize("book", book_count)),
+            "acquisition",
+        );
+    }
+
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn publisher_books_feed(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let params = book_queries::ListBooksParams {
+        publisher: Some(id.clone()),
+        page,
+        page_size,
+        ..Default::default()
+    };
+    let title = format!("Books by publisher {id}");
+    let xml = build_book_feed(
+        &state,
+        &title,
+        &format!("/opds/publishers/{}", urlencoding::encode(&id)),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+async fn languages_feed(
+    State(state): State<AppState>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let languages = opds_queries::list_opds_languages(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let total = languages.len() as i64;
+    let start = ((page - 1) * page_size).max(0) as usize;
+    let end = (start + page_size as usize).min(languages.len());
+    let page_items = if start >= languages.len() {
+        Vec::new()
+    } else {
+        languages[start..end].to_vec()
+    };
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Languages", "/opds/languages", "navigation");
+    push_opensearch_stats(&mut xml, total, page_size);
+    push_pagination_links(&mut xml, "/opds/languages", page, page_size, total, &[]);
+
+    for (language_code, book_count) in page_items {
+        push_navigation_entry(
+            &mut xml,
+            &language_code,
+            &format!("/opds/languages/{}", urlencoding::encode(&language_code)),
+            &format!("{book_count} {}", pluralize("book", book_count)),
+            "acquisition",
+        );
+    }
+
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn language_books_feed(
+    State(state): State<AppState>,
+    Path(lang_code): Path<String>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let params = book_queries::ListBooksParams {
+        language: Some(lang_code.clone()),
+        page,
+        page_size,
+        ..Default::default()
+    };
+    let title = format!("Books in {lang_code}");
+    let xml = build_book_feed(
+        &state,
+        &title,
+        &format!("/opds/languages/{}", urlencoding::encode(&lang_code)),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+async fn ratings_feed(
+    State(state): State<AppState>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let ratings = opds_queries::list_opds_ratings(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let total = ratings.len() as i64;
+    let start = ((page - 1) * page_size).max(0) as usize;
+    let end = (start + page_size as usize).min(ratings.len());
+    let page_items = if start >= ratings.len() {
+        Vec::new()
+    } else {
+        ratings[start..end].to_vec()
+    };
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Ratings", "/opds/ratings", "navigation");
+    push_opensearch_stats(&mut xml, total, page_size);
+    push_pagination_links(&mut xml, "/opds/ratings", page, page_size, total, &[]);
+
+    for (rating, book_count) in page_items {
+        push_navigation_entry(
+            &mut xml,
+            &format!("{}★", rating),
+            &format!("/opds/ratings/{rating}"),
+            &format!("{book_count} {}", pluralize("book", book_count)),
+            "acquisition",
+        );
+    }
+
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+async fn rating_books_feed(
+    State(state): State<AppState>,
+    Path(rating): Path<i64>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    if !(1..=5).contains(&rating) {
+        return Err(AppError::NotFound);
+    }
+
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 100);
+    let params = book_queries::ListBooksParams {
+        rating_bucket: Some(rating),
+        page,
+        page_size,
+        ..Default::default()
+    };
+    let title = format!("Books rated {}★", rating);
+    let xml = build_book_feed(
+        &state,
+        &title,
+        &format!("/opds/ratings/{rating}"),
+        params,
+        &[],
+    )
+    .await?;
     Ok(xml_response(xml))
 }
 
@@ -59,7 +428,11 @@ async fn all_books(
         page_size,
         ..Default::default()
     };
-    let xml = build_book_feed(&state, "All Books", "/opds/catalog", params).await?;
+    let mut extra_params = Vec::new();
+    if let Some(q) = params.q.clone() {
+        extra_params.push(("q", q));
+    }
+    let xml = build_book_feed(&state, "All Books", "/opds/catalog", params, &extra_params).await?;
     Ok(xml_response(xml))
 }
 
@@ -84,26 +457,30 @@ async fn search(
         page_size,
         ..Default::default()
     };
+    let extra_params = vec![("q", search_terms.to_string())];
     let xml = build_book_feed(
         &state,
         &format!("Search results for {search_terms}"),
         "/opds/search",
         params,
+        &extra_params,
     )
     .await?;
     Ok(xml_response(xml))
 }
 
 async fn recently_added(State(state): State<AppState>) -> Result<Response, AppError> {
+    let since = (Utc::now() - Duration::days(30)).to_rfc3339();
     let params = book_queries::ListBooksParams {
-        since: Some((Utc::now() - Duration::days(30)).to_rfc3339()),
+        since: Some(since.clone()),
         sort: Some("added".to_string()),
         order: Some("desc".to_string()),
         page: 1,
         page_size: 30,
         ..Default::default()
     };
-    let xml = build_book_feed(&state, "Recently Added", "/opds/new", params).await?;
+    let extra_params = vec![("since", since)];
+    let xml = build_book_feed(&state, "Recently Added", "/opds/new", params, &extra_params).await?;
     Ok(xml_response(xml))
 }
 
@@ -112,6 +489,7 @@ async fn build_book_feed(
     title: &str,
     self_path: &str,
     params: book_queries::ListBooksParams,
+    extra_query_params: &[(&str, String)],
 ) -> Result<String, AppError> {
     let page = book_queries::list_books(&state.db, &params)
         .await
@@ -119,14 +497,14 @@ async fn build_book_feed(
 
     let mut xml = String::new();
     push_feed_header(&mut xml, title, self_path, "acquisition");
+    push_opensearch_stats(&mut xml, page.total, page.page_size);
     push_pagination_links(
         &mut xml,
         self_path,
         page.page,
         page.page_size,
         page.total,
-        params.q.as_deref(),
-        params.since.as_deref(),
+        extra_query_params,
     );
 
     for summary in page.items {
@@ -174,7 +552,7 @@ fn push_feed_footer(xml: &mut String) {
     xml.push_str("</feed>\n");
 }
 
-fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &str) {
+fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &str, kind: &str) {
     let _ = write!(
         xml,
         r#"  <entry>
@@ -182,7 +560,7 @@ fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &st
     <id>{}</id>
     <updated>{}</updated>
     <summary>{}</summary>
-    <link rel="subsection" href="{}" type="application/atom+xml;profile=opds-catalog;kind=acquisition" />
+    <link rel="subsection" href="{}" type="application/atom+xml;profile=opds-catalog;kind={}" />
   </entry>
 "#,
         xml_escape(title),
@@ -190,6 +568,7 @@ fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &st
         Utc::now().to_rfc3339(),
         xml_escape(summary),
         xml_escape(href),
+        xml_escape(kind),
     );
 }
 
@@ -199,11 +578,10 @@ fn push_pagination_links(
     page: i64,
     page_size: i64,
     total: i64,
-    q: Option<&str>,
-    since: Option<&str>,
+    extra_query_params: &[(&str, String)],
 ) {
     if page > 1 {
-        let href = build_page_href(self_path, page - 1, page_size, q, since);
+        let href = build_page_href(self_path, page - 1, page_size, extra_query_params);
         let _ = write!(
             xml,
             r#"  <link rel="previous" href="{}" />"#,
@@ -213,7 +591,7 @@ fn push_pagination_links(
     }
 
     if page * page_size < total {
-        let href = build_page_href(self_path, page + 1, page_size, q, since);
+        let href = build_page_href(self_path, page + 1, page_size, extra_query_params);
         let _ = write!(xml, r#"  <link rel="next" href="{}" />"#, xml_escape(&href));
         xml.push('\n');
     }
@@ -223,19 +601,35 @@ fn build_page_href(
     self_path: &str,
     page: i64,
     page_size: i64,
-    q: Option<&str>,
-    since: Option<&str>,
+    extra_query_params: &[(&str, String)],
 ) -> String {
     let mut href = format!("{self_path}?page={page}&page_size={page_size}");
-    if let Some(q) = q {
-        href.push_str("&q=");
-        href.push_str(&urlencoding::encode(q));
-    }
-    if let Some(since) = since {
-        href.push_str("&since=");
-        href.push_str(&urlencoding::encode(since));
+    for (key, value) in extra_query_params {
+        href.push('&');
+        href.push_str(key);
+        href.push('=');
+        href.push_str(&urlencoding::encode(value));
     }
     href
+}
+
+fn push_opensearch_stats(xml: &mut String, total_results: i64, items_per_page: i64) {
+    let _ = writeln!(
+        xml,
+        "  <opensearch:totalResults>{total_results}</opensearch:totalResults>"
+    );
+    let _ = writeln!(
+        xml,
+        "  <opensearch:itemsPerPage>{items_per_page}</opensearch:itemsPerPage>"
+    );
+}
+
+fn pluralize(word: &str, count: i64) -> String {
+    if count == 1 {
+        word.to_string()
+    } else {
+        format!("{word}s")
+    }
 }
 
 fn push_book_entry(xml: &mut String, book: &crate::db::models::Book) {

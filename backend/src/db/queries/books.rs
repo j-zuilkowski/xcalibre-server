@@ -41,7 +41,9 @@ pub struct ListBooksParams {
     pub series_id: Option<String>,
     pub tags: Vec<String>,
     pub language: Option<String>,
+    pub publisher: Option<String>,
     pub format: Option<String>,
+    pub rating_bucket: Option<i64>,
     pub sort: Option<String>,
     pub order: Option<String>,
     pub page: i64,
@@ -1213,6 +1215,28 @@ fn apply_list_filters(
         qb.push("EXISTS (SELECT 1 FROM formats f WHERE f.book_id = b.id AND upper(f.format) = ");
         qb.push_bind(format.to_uppercase());
         qb.push(")");
+    }
+
+    if let Some(publisher) = params
+        .publisher
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        and_where(qb);
+        qb.push("lower(trim(coalesce(json_extract(b.flags, '$.publisher'), ''))) = lower(trim(");
+        qb.push_bind(publisher);
+        qb.push("))");
+    }
+
+    if let Some(rating_bucket) = params.rating_bucket.filter(|value| (1..=5).contains(value)) {
+        and_where(qb);
+        let min_rating = (rating_bucket - 1) * 2 + 1;
+        let max_rating = rating_bucket * 2;
+        qb.push("b.rating BETWEEN ");
+        qb.push_bind(min_rating);
+        qb.push(" AND ");
+        qb.push_bind(max_rating);
     }
 
     if let Some(since) = params
