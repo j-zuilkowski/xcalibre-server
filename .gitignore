@@ -6,4 +6,4 @@
 /library.db
 /.DS_Store
 **/*.swp
-
+/apps/web/public/djvu.min.js

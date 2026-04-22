@@ -9,14 +9,16 @@ import { I18nextProvider } from "react-i18next";
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 
-void initializeI18n().then(() => {
-  root.render(
-    <React.StrictMode>
-      <I18nextProvider i18n={i18n}>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </I18nextProvider>
-    </React.StrictMode>,
-  );
-});
+void initializeI18n()
+  .catch(() => {})
+  .then(() => {
+    root.render(
+      <React.StrictMode>
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </I18nextProvider>
+      </React.StrictMode>,
+    );
+  });

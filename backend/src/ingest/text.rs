@@ -1,3 +1,4 @@
+use super::mobi_util;
 use anyhow::Context;
 use mobi::Mobi;
 use regex::Regex;
@@ -51,15 +52,15 @@ pub fn extract_text(path: &Path, format: &str, chapter: Option<u32>) -> anyhow::
 fn list_mobi_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
     let bytes = fs::read(path)?;
     let book = Mobi::new(&bytes)?;
-    let chapters = mobi_chapter_fragments(&safe_mobi_content(&book));
+    let chapters = mobi_chapter_fragments(&mobi_util::safe_mobi_content(&book));
 
     Ok(chapters
         .into_iter()
         .enumerate()
         .map(|(index, fragment)| {
-            let text = strip_html_to_text(&fragment);
+            let text = mobi_util::strip_html_to_text(&fragment);
             let word_count = text.split_whitespace().count();
-            let title = extract_chapter_title(&fragment)
+            let title = mobi_util::extract_heading_title(&fragment)
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| format!("Chapter {}", index + 1));
             Chapter {
@@ -74,9 +75,9 @@ fn list_mobi_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
 fn extract_mobi_text(path: &Path, chapter: Option<u32>) -> anyhow::Result<String> {
     let bytes = fs::read(path)?;
     let book = Mobi::new(&bytes)?;
-    let chapter_text = mobi_chapter_fragments(&safe_mobi_content(&book))
+    let chapter_text = mobi_chapter_fragments(&mobi_util::safe_mobi_content(&book))
         .into_iter()
-        .map(|fragment| strip_html_to_text(&fragment))
+        .map(|fragment| mobi_util::strip_html_to_text(&fragment))
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
 
@@ -91,98 +92,14 @@ fn extract_mobi_text(path: &Path, chapter: Option<u32>) -> anyhow::Result<String
 }
 
 fn mobi_chapter_fragments(raw_html: &str) -> Vec<String> {
-    let mut fragments = split_on_mobi_pagebreak(raw_html);
+    let mut fragments = mobi_util::split_on_mobi_pagebreak(raw_html);
     if fragments.len() <= 1 {
-        fragments = split_on_heading_tags(raw_html);
+        fragments = mobi_util::split_on_heading_tags(raw_html);
     }
     if fragments.is_empty() && !raw_html.trim().is_empty() {
         fragments.push(raw_html.to_string());
     }
     fragments
-}
-
-fn safe_mobi_content(book: &Mobi) -> String {
-    let content = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        book.content_as_string_lossy()
-    }))
-    .unwrap_or_default();
-    if !content.trim().is_empty() {
-        return content;
-    }
-    book.description().unwrap_or_default()
-}
-
-fn split_on_mobi_pagebreak(raw_html: &str) -> Vec<String> {
-    let lower = raw_html.to_ascii_lowercase();
-    let marker = "<mbp:pagebreak";
-    let mut cursor = 0usize;
-    let mut chunks = Vec::new();
-
-    while cursor < raw_html.len() {
-        let Some(relative_index) = lower[cursor..].find(marker) else {
-            break;
-        };
-        let marker_start = cursor + relative_index;
-        let fragment = raw_html[cursor..marker_start].trim();
-        if !fragment.is_empty() {
-            chunks.push(fragment.to_string());
-        }
-
-        let marker_rest = &lower[marker_start..];
-        if let Some(relative_end) = marker_rest.find('>') {
-            cursor = marker_start + relative_end + 1;
-        } else {
-            cursor = raw_html.len();
-            break;
-        }
-    }
-
-    let tail = raw_html[cursor..].trim();
-    if !tail.is_empty() {
-        chunks.push(tail.to_string());
-    }
-
-    chunks
-}
-
-fn split_on_heading_tags(raw_html: &str) -> Vec<String> {
-    let lower = raw_html.to_ascii_lowercase();
-    let mut indices = Vec::new();
-    let mut cursor = 0usize;
-
-    while let Some(index) = find_next_heading_index(&lower, cursor) {
-        indices.push(index);
-        cursor = index.saturating_add(1);
-    }
-
-    if indices.is_empty() {
-        return Vec::new();
-    }
-
-    let mut chunks = Vec::new();
-    if indices[0] > 0 {
-        let prefix = raw_html[..indices[0]].trim();
-        if !prefix.is_empty() {
-            chunks.push(prefix.to_string());
-        }
-    }
-
-    for (position, start) in indices.iter().enumerate() {
-        let end = indices.get(position + 1).copied().unwrap_or(raw_html.len());
-        let segment = raw_html[*start..end].trim();
-        if !segment.is_empty() {
-            chunks.push(segment.to_string());
-        }
-    }
-
-    chunks
-}
-
-fn find_next_heading_index(lower: &str, cursor: usize) -> Option<usize> {
-    ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"]
-        .iter()
-        .filter_map(|marker| lower[cursor..].find(marker).map(|index| cursor + index))
-        .min()
 }
 
 fn list_epub_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
@@ -192,10 +109,10 @@ fn list_epub_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
     let mut chapters = Vec::new();
     for (index, spine_path) in spine_items.into_iter().enumerate() {
         let html = read_zip_text(&mut archive, &spine_path)?;
-        let text = strip_html_to_text(&html);
+        let text = strip_epub_html_to_text(&html);
         let word_count = text.split_whitespace().count();
         let title =
-            extract_chapter_title(&html).unwrap_or_else(|| format!("Chapter {}", index + 1));
+            extract_epub_chapter_title(&html).unwrap_or_else(|| format!("Chapter {}", index + 1));
         chapters.push(Chapter {
             index: index as u32,
             title,
@@ -215,13 +132,13 @@ fn extract_epub_text(path: &Path, chapter: Option<u32>) -> anyhow::Result<String
             return Ok(String::new());
         };
         let html = read_zip_text(&mut archive, spine_path)?;
-        return Ok(strip_html_to_text(&html));
+        return Ok(strip_epub_html_to_text(&html));
     }
 
     let mut parts = Vec::new();
     for spine_path in spine_items {
         if let Ok(html) = read_zip_text(&mut archive, &spine_path) {
-            let text = strip_html_to_text(&html);
+            let text = strip_epub_html_to_text(&html);
             if !text.is_empty() {
                 parts.push(text);
             }
@@ -383,25 +300,35 @@ fn path_to_zip_string(path: &Path) -> String {
     parts.join("/")
 }
 
-fn extract_chapter_title(html: &str) -> Option<String> {
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn strip_epub_html_to_text(html: &str) -> String {
+    let cleaned = script_style_regex().replace_all(html, " ");
+    let without_tags = html_tag_regex().replace_all(&cleaned, " ");
+    let decoded = decode_epub_html_entities(&without_tags);
+    normalize_whitespace(&decoded)
+}
+
+fn extract_epub_chapter_title(html: &str) -> Option<String> {
     if let Ok(doc) = Document::parse(html) {
         for tag in ["title", "h1", "h2"] {
             if let Some(text) = doc
                 .descendants()
                 .find(|node| node.is_element() && node.tag_name().name().eq_ignore_ascii_case(tag))
-                .and_then(node_text)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+                .and_then(epub_node_text)
+                .filter(|text| !text.is_empty())
             {
                 return Some(text);
             }
         }
     }
 
-    for regex in title_regexes() {
+    for regex in epub_title_regexes() {
         if let Some(capture) = regex.captures(html) {
             let raw = capture.get(1).map(|m| m.as_str()).unwrap_or_default();
-            let title = strip_html_to_text(raw);
+            let title = strip_epub_html_to_text(raw);
             if !title.is_empty() {
                 return Some(title);
             }
@@ -411,7 +338,7 @@ fn extract_chapter_title(html: &str) -> Option<String> {
     None
 }
 
-fn node_text(node: roxmltree::Node<'_, '_>) -> Option<String> {
+fn epub_node_text(node: roxmltree::Node<'_, '_>) -> Option<String> {
     let text = node
         .descendants()
         .filter_map(|child| child.text())
@@ -425,18 +352,7 @@ fn node_text(node: roxmltree::Node<'_, '_>) -> Option<String> {
     }
 }
 
-fn strip_html_to_text(html: &str) -> String {
-    let cleaned = script_style_regex().replace_all(html, " ");
-    let without_tags = html_tag_regex().replace_all(&cleaned, " ");
-    let decoded = decode_common_html_entities(&without_tags);
-    normalize_whitespace(&decoded)
-}
-
-fn normalize_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn decode_common_html_entities(input: &str) -> String {
+fn decode_epub_html_entities(input: &str) -> String {
     let mut output = input
         .replace("&nbsp;", " ")
         .replace("&amp;", "&")
@@ -541,7 +457,7 @@ fn unescape_pdf_text(input: &str) -> String {
         .replace(r"\\", r"\")
 }
 
-fn title_regexes() -> &'static [Regex; 3] {
+fn epub_title_regexes() -> &'static [Regex; 3] {
     static REGEXES: OnceLock<[Regex; 3]> = OnceLock::new();
     REGEXES.get_or_init(|| {
         [

@@ -58,6 +58,22 @@ export function AudioReader({ book, format, initialProgress, onProgressChange }:
     });
   }, [onProgressChange]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const audio = audioRef.current;
+      if (!audio || audio.paused || !Number.isFinite(audio.duration) || audio.duration <= 0) {
+        return;
+      }
+      const percentage = clampPercentage((audio.currentTime / audio.duration) * 100);
+      onProgressChange({
+        percentage,
+        cfi: null,
+        page: Math.floor(audio.currentTime),
+      });
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [onProgressChange]);
+
   return (
     <section className="grid h-full w-full place-items-center bg-zinc-950 p-4 text-zinc-100" data-testid="audio-reader">
       <div className="w-full max-w-xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-5 shadow-xl">

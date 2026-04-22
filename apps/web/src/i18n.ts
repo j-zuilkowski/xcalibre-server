@@ -71,7 +71,11 @@ export async function initializeI18n(): Promise<TFunction> {
     });
   }
 
-  await loadLanguageBundle("en");
+  try {
+    await loadLanguageBundle("en");
+  } catch {
+    // Fall back to parseMissingKeyHandler output if the English bundle is unavailable.
+  }
 
   const preferredLanguage = readStoredLanguage() ?? detectBrowserLanguage();
   if (preferredLanguage !== "en") {

@@ -37,9 +37,12 @@ function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Vendored from https://cdn.jsdelivr.net/npm/djvu.js@0.3.2/dist/djvu.min.js
+// To update: curl -fsSL <url> -o apps/web/public/djvu.min.js
 async function loadDjvuModule(): Promise<{ App?: DjvuAppCtor }> {
+  const modulePath = "/djvu.min.js";
   const fallback = (await import(
-    /* @vite-ignore */ "https://cdn.jsdelivr.net/npm/djvu.js@0.3.2/dist/djvu.min.js"
+    /* @vite-ignore */ modulePath
   )) as Record<string, unknown>;
   const root = (fallback.default ?? fallback) as Record<string, unknown>;
   const nested = (root.DjVu ?? root.djvu ?? root) as Record<string, unknown>;
@@ -103,8 +106,9 @@ export function DjvuReader({ bookId, format, initialProgressPage, onProgressChan
     try {
       await renderWithBestEffort(app, canvas, safePage);
       setError(null);
-    } catch {
+    } catch (err) {
       if (safePage > 1) {
+        console.warn(`[DjvuReader] page ${safePage} render failed, retrying page ${safePage - 1}`, err);
         await renderWithBestEffort(app, canvas, safePage - 1);
       } else {
         throw new Error("djvu page render failed");

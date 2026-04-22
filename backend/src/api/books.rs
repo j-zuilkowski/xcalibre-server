@@ -3,7 +3,7 @@ use crate::{
         book_user_state as book_state_queries, books as book_queries,
         download_history as download_history_queries, llm as llm_queries,
     },
-    ingest::text as ingest_text,
+    ingest::{mobi_util, text as ingest_text},
     llm::classify_type::{classify_document_type, DocumentType},
     middleware::auth::AuthenticatedUser,
     AppError, AppState,
@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 use std::{
+    borrow::Cow,
     io::{Cursor, Read, Seek, Write},
     path::{Component, Path as FsPath, PathBuf},
     sync::Arc,
@@ -1012,19 +1013,21 @@ async fn stream_format(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
     let file_extension = validated_download_format_extension(&format_file.format)?;
-    let guessed_mime = mime_guess::from_ext(&file_extension).first_or_octet_stream();
-    let content_type = match file_extension.as_str() {
-        "mp3" => "audio/mpeg",
-        "m4b" | "m4a" => "audio/mp4",
-        "ogg" | "opus" => "audio/ogg",
-        "flac" => "audio/flac",
-        _ => guessed_mime.essence_str(),
+    let content_type: Cow<'static, str> = match file_extension.as_str() {
+        "mp3" => Cow::Borrowed("audio/mpeg"),
+        "m4b" | "m4a" => Cow::Borrowed("audio/mp4"),
+        "ogg" | "opus" => Cow::Borrowed("audio/ogg"),
+        "flac" => Cow::Borrowed("audio/flac"),
+        _ => {
+            let guessed_mime = mime_guess::from_ext(&file_extension).first_or_octet_stream();
+            Cow::Owned(guessed_mime.essence_str().to_string())
+        }
     };
 
     let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
     let mut response = serve_file(request, full_path).await?;
     let content_type_header =
-        HeaderValue::from_str(content_type).map_err(|_| AppError::Internal)?;
+        HeaderValue::from_str(content_type.as_ref()).map_err(|_| AppError::Internal)?;
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, content_type_header);
@@ -1060,7 +1063,7 @@ async fn mobi_to_epub(
         .await
         .map_err(|_| AppError::Internal)?;
     let mobi_book = mobi::Mobi::new(&bytes).map_err(|_| AppError::Internal)?;
-    let epub_bytes = build_epub_from_mobi(&mobi_book)?;
+    let epub_bytes = build_epub_from_mobi(&mobi_book, &book_id)?;
 
     let source_title = mobi_book.title();
     let title_for_filename = if source_title.trim().is_empty() {
@@ -2051,7 +2054,7 @@ struct MobiChapterForEpub {
     text: String,
 }
 
-fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
+fn build_epub_from_mobi(book: &mobi::Mobi, book_id: &str) -> Result<Vec<u8>, AppError> {
     let title = {
         let raw = book.title();
         if raw.trim().is_empty() {
@@ -2064,7 +2067,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
         .author()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "Unknown Author".to_string());
-    let source_html = safe_mobi_content(book);
+    let source_html = mobi_util::safe_mobi_content(book);
     let chapters = mobi_chapters_for_epub(&source_html);
 
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
@@ -2105,8 +2108,9 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
         .map(|(index, _)| format!(r#"<itemref idref="chap{index}"/>"#))
         .collect::<Vec<_>>()
         .join("\n    ");
-    let escaped_title = xml_escape(&title);
-    let escaped_author = xml_escape(&author);
+    let escaped_title = mobi_util::xml_escape(&title);
+    let escaped_author = mobi_util::xml_escape(&author);
+    let escaped_book_id = mobi_util::xml_escape(book_id);
     let content_opf = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">
@@ -2114,7 +2118,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
     <dc:title>{escaped_title}</dc:title>
     <dc:creator>{escaped_author}</dc:creator>
     <dc:language>en</dc:language>
-    <dc:identifier id="bookid">urn:autolibre:{}</dc:identifier>
+    <dc:identifier id="bookid">urn:autolibre:{escaped_book_id}</dc:identifier>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -2124,7 +2128,6 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
     {spine_items}
   </spine>
 </package>"#,
-        sanitize_file_name_for_header(&title)
     );
     zip.start_file("OEBPS/content.opf", compressed_options)
         .map_err(|_| AppError::Internal)?;
@@ -2136,7 +2139,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
         .enumerate()
         .map(|(index, chapter)| {
             let play_order = index + 1;
-            let chapter_title = xml_escape(&chapter.title);
+            let chapter_title = mobi_util::xml_escape(&chapter.title);
             format!(
                 r#"<navPoint id="navPoint-{play_order}" playOrder="{play_order}">
       <navLabel><text>{chapter_title}</text></navLabel>
@@ -2150,14 +2153,13 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content="urn:autolibre:{}"/>
+    <meta name="dtb:uid" content="urn:autolibre:{escaped_book_id}"/>
   </head>
   <docTitle><text>{}</text></docTitle>
   <navMap>
     {nav_points}
   </navMap>
 </ncx>"#,
-        sanitize_file_name_for_header(&title),
         escaped_title
     );
     zip.start_file("OEBPS/toc.ncx", compressed_options)
@@ -2166,8 +2168,15 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
         .map_err(|_| AppError::Internal)?;
 
     for (index, chapter) in chapters.iter().enumerate() {
-        let chapter_title = xml_escape(&chapter.title);
-        let chapter_body = xml_escape(&chapter.text);
+        let chapter_title = mobi_util::xml_escape(&chapter.title);
+        let paragraphs = chapter
+            .text
+            .split("\n\n")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("<p>{}</p>", mobi_util::xml_escape(s)))
+            .collect::<Vec<_>>()
+            .join("\n    ");
         let chapter_xhtml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -2176,7 +2185,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
   </head>
   <body>
     <h1>{chapter_title}</h1>
-    <p>{chapter_body}</p>
+    {paragraphs}
   </body>
 </html>"#
         );
@@ -2194,9 +2203,9 @@ fn build_epub_from_mobi(book: &mobi::Mobi) -> Result<Vec<u8>, AppError> {
 }
 
 fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
-    let mut segments = split_on_mobi_pagebreaks(raw_html);
+    let mut segments = mobi_util::split_on_mobi_pagebreak(raw_html);
     if segments.len() <= 1 {
-        segments = split_on_heading_tags(raw_html);
+        segments = mobi_util::split_on_heading_tags(raw_html);
     }
     if segments.is_empty() {
         segments.push(raw_html.to_string());
@@ -2204,17 +2213,17 @@ fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
 
     let mut chapters = Vec::new();
     for (index, segment) in segments.into_iter().enumerate() {
-        let text = strip_html_fragment_to_text(&segment);
+        let text = mobi_util::strip_html_to_text(&segment);
         if text.is_empty() {
             continue;
         }
-        let title =
-            extract_heading_title(&segment).unwrap_or_else(|| format!("Chapter {}", index + 1));
+        let title = mobi_util::extract_heading_title(&segment)
+            .unwrap_or_else(|| format!("Chapter {}", index + 1));
         chapters.push(MobiChapterForEpub { title, text });
     }
 
     if chapters.is_empty() {
-        let text = strip_html_fragment_to_text(raw_html);
+        let text = mobi_util::strip_html_to_text(raw_html);
         if text.is_empty() {
             vec![MobiChapterForEpub {
                 title: "Chapter 1".to_string(),
@@ -2229,138 +2238,6 @@ fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
     } else {
         chapters
     }
-}
-
-fn split_on_mobi_pagebreaks(raw_html: &str) -> Vec<String> {
-    let lower = raw_html.to_ascii_lowercase();
-    let marker = "<mbp:pagebreak";
-    let mut cursor = 0usize;
-    let mut chunks = Vec::new();
-
-    while cursor < raw_html.len() {
-        let Some(relative_index) = lower[cursor..].find(marker) else {
-            break;
-        };
-        let marker_start = cursor + relative_index;
-        let candidate = raw_html[cursor..marker_start].trim();
-        if !candidate.is_empty() {
-            chunks.push(candidate.to_string());
-        }
-
-        let marker_rest = &lower[marker_start..];
-        if let Some(relative_end) = marker_rest.find('>') {
-            cursor = marker_start + relative_end + 1;
-        } else {
-            cursor = raw_html.len();
-            break;
-        }
-    }
-
-    let tail = raw_html[cursor..].trim();
-    if !tail.is_empty() {
-        chunks.push(tail.to_string());
-    }
-
-    chunks
-}
-
-fn split_on_heading_tags(raw_html: &str) -> Vec<String> {
-    let lower = raw_html.to_ascii_lowercase();
-    let mut indices = Vec::new();
-    let mut cursor = 0usize;
-
-    while let Some(index) = find_next_heading_index(&lower, cursor) {
-        indices.push(index);
-        cursor = index.saturating_add(1);
-    }
-
-    if indices.is_empty() {
-        return Vec::new();
-    }
-
-    let mut chunks = Vec::new();
-    if indices[0] > 0 {
-        let prefix = raw_html[..indices[0]].trim();
-        if !prefix.is_empty() {
-            chunks.push(prefix.to_string());
-        }
-    }
-
-    for (pos, start) in indices.iter().enumerate() {
-        let end = indices.get(pos + 1).copied().unwrap_or(raw_html.len());
-        let segment = raw_html[*start..end].trim();
-        if !segment.is_empty() {
-            chunks.push(segment.to_string());
-        }
-    }
-
-    chunks
-}
-
-fn find_next_heading_index(lower: &str, cursor: usize) -> Option<usize> {
-    ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"]
-        .iter()
-        .filter_map(|marker| lower[cursor..].find(marker).map(|index| cursor + index))
-        .min()
-}
-
-fn extract_heading_title(segment: &str) -> Option<String> {
-    let lower = segment.to_ascii_lowercase();
-    let heading_index = find_next_heading_index(&lower, 0)?;
-    let rest = &segment[heading_index..];
-    let open_end = rest.find('>')?;
-    let inner = &rest[open_end + 1..];
-    let close_start = inner.to_ascii_lowercase().find("</h")?;
-    let title = strip_html_fragment_to_text(&inner[..close_start]);
-    if title.is_empty() {
-        None
-    } else {
-        Some(title)
-    }
-}
-
-fn strip_html_fragment_to_text(fragment: &str) -> String {
-    let mut in_tag = false;
-    let mut output = String::with_capacity(fragment.len());
-
-    for ch in fragment.chars() {
-        if ch == '<' {
-            in_tag = true;
-            output.push(' ');
-            continue;
-        }
-        if ch == '>' {
-            in_tag = false;
-            output.push(' ');
-            continue;
-        }
-        if !in_tag {
-            output.push(ch);
-        }
-    }
-
-    let decoded = decode_basic_html_entities(&output);
-    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn decode_basic_html_entities(value: &str) -> String {
-    value
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&#39;", "'")
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 fn sanitize_file_name_for_header(value: &str) -> String {
@@ -2380,17 +2257,6 @@ fn sanitize_file_name_for_header(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn safe_mobi_content(book: &mobi::Mobi) -> String {
-    let content = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        book.content_as_string_lossy()
-    }))
-    .unwrap_or_default();
-    if !content.trim().is_empty() {
-        return content;
-    }
-    book.description().unwrap_or_default()
 }
 
 fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
