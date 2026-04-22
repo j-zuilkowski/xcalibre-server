@@ -13,7 +13,11 @@ import type {
   BookSummary,
   BookText,
   ClassifyResult,
+  CustomColumn,
+  CustomColumnType,
   DeriveResult,
+  BookCustomValue,
+  BookCustomValuePatch,
   DownloadHistoryItem,
   ListBooksParams,
   LlmHealth,
@@ -28,6 +32,7 @@ import type {
   SearchStatusResponse,
   SearchSuggestionsResponse,
   Shelf,
+  TagLookupItem,
   ReadingProgress,
   ReadingProgressPatch,
   SystemStats,
@@ -35,6 +40,7 @@ import type {
   RefreshResponse,
   RegisterRequest,
   User,
+  UserTagRestriction,
   ValidationResult,
 } from "./types";
 
@@ -240,6 +246,48 @@ export class ApiClient {
     });
   }
 
+  async mergeBook(id: string, duplicateId: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ duplicate_id: duplicateId }),
+    });
+  }
+
+  async listCustomColumns(): Promise<CustomColumn[]> {
+    return this.requestJson<CustomColumn[]>("/api/v1/books/custom-columns");
+  }
+
+  async createCustomColumn(payload: {
+    name: string;
+    label: string;
+    column_type: CustomColumnType;
+    is_multiple: boolean;
+  }): Promise<CustomColumn> {
+    return this.requestJson<CustomColumn>("/api/v1/books/custom-columns", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteCustomColumn(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/books/custom-columns/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getBookCustomValues(id: string): Promise<BookCustomValue[]> {
+    return this.requestJson<BookCustomValue[]>(
+      `/api/v1/books/${encodeURIComponent(id)}/custom-values`,
+    );
+  }
+
+  async patchBookCustomValues(id: string, values: BookCustomValuePatch[]): Promise<void> {
+    await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}/custom-values`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    });
+  }
+
   async deleteBook(id: string): Promise<void> {
     await this.requestJson<void>(`/api/v1/books/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -261,6 +309,16 @@ export class ApiClient {
     return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(bookId)}/tags/confirm-all`, {
       method: "POST",
     });
+  }
+
+  async searchTags(q: string, limit = 20): Promise<TagLookupItem[]> {
+    const search = new URLSearchParams();
+    if (q.trim()) {
+      search.set("q", q.trim());
+    }
+    search.set("limit", String(limit));
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<TagLookupItem[]>(`/api/v1/admin/tags${suffix}`);
   }
 
   async validateBook(bookId: string): Promise<ValidationResult> {
@@ -326,6 +384,34 @@ export class ApiClient {
 
   async listUsers(): Promise<AdminUser[]> {
     return this.requestJson<AdminUser[]>("/api/v1/admin/users");
+  }
+
+  async listUserTagRestrictions(userId: string): Promise<UserTagRestriction[]> {
+    return this.requestJson<UserTagRestriction[]>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/tag-restrictions`,
+    );
+  }
+
+  async setUserTagRestriction(
+    userId: string,
+    payload: { tag_id: string; mode: "allow" | "block" },
+  ): Promise<void> {
+    await this.requestJson<void>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/tag-restrictions`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  async deleteUserTagRestriction(userId: string, tagId: string): Promise<void> {
+    await this.requestJson<void>(
+      `/api/v1/admin/users/${encodeURIComponent(userId)}/tag-restrictions/${encodeURIComponent(tagId)}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async createUser(request: AdminUserCreateRequest): Promise<AdminUser> {

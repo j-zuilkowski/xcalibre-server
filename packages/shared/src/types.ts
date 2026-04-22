@@ -36,6 +36,18 @@ export type TagRef = {
   confirmed: boolean;
 };
 
+export type TagLookupItem = {
+  id: string;
+  name: string;
+};
+
+export type UserTagRestriction = {
+  user_id: string;
+  tag_id: string;
+  tag_name: string;
+  mode: "allow" | "block";
+};
+
 export type DocumentType =
   | "novel"
   | "textbook"
@@ -98,6 +110,28 @@ export type Identifier = {
   id: string;
   id_type: string;
   value: string;
+};
+
+export type CustomColumnType = "text" | "integer" | "float" | "bool" | "datetime";
+
+export type CustomColumn = {
+  id: string;
+  name: string;
+  label: string;
+  column_type: CustomColumnType;
+  is_multiple: boolean;
+};
+
+export type BookCustomValue = {
+  column_id: string;
+  label: string;
+  column_type: CustomColumnType;
+  value: string | number | boolean | null;
+};
+
+export type BookCustomValuePatch = {
+  column_id: string;
+  value: string | number | boolean | null;
 };
 
 export type ReadingProgress = {
