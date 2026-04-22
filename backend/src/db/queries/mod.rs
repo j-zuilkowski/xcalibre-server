@@ -11,5 +11,6 @@ pub mod llm;
 pub mod oauth;
 pub mod opds;
 pub mod shelves;
+pub mod scheduled_tasks;
 pub mod tags;
 pub mod user_tag_restrictions;

@@ -24,6 +24,10 @@ import type {
   LoginRequest,
   LoginResponse,
   PaginatedResponse,
+  ScheduledTask,
+  ScheduledTaskCreateRequest,
+  ScheduledTaskPatchRequest,
+  UpdateCheckResponse,
   ImportStatus,
   KoboDevice,
   Library,
@@ -384,6 +388,42 @@ export class ApiClient {
 
   async listUsers(): Promise<AdminUser[]> {
     return this.requestJson<AdminUser[]>("/api/v1/admin/users");
+  }
+
+  async listScheduledTasks(): Promise<ScheduledTask[]> {
+    return this.requestJson<ScheduledTask[]>("/api/v1/admin/scheduled-tasks");
+  }
+
+  async createScheduledTask(request: ScheduledTaskCreateRequest): Promise<ScheduledTask> {
+    return this.requestJson<ScheduledTask>("/api/v1/admin/scheduled-tasks", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async updateScheduledTask(id: string, request: ScheduledTaskPatchRequest): Promise<ScheduledTask> {
+    return this.requestJson<ScheduledTask>(`/api/v1/admin/scheduled-tasks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteScheduledTask(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/scheduled-tasks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getUpdateCheck(): Promise<UpdateCheckResponse | null> {
+    try {
+      return await this.requestJson<UpdateCheckResponse>("/api/v1/admin/update-check");
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError?.status === 503) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async listUserTagRestrictions(userId: string): Promise<UserTagRestriction[]> {

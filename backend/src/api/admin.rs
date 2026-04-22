@@ -2,9 +2,11 @@ use crate::{
     db::queries::{
         api_tokens as api_token_queries, auth as auth_queries, books as book_queries,
         email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
-        llm as llm_queries, tags as tag_queries, user_tag_restrictions as restriction_queries,
+        llm as llm_queries, scheduled_tasks as scheduled_task_queries, tags as tag_queries,
+        user_tag_restrictions as restriction_queries,
     },
     middleware::auth::AuthenticatedUser,
+    scheduler,
     AppError, AppState,
 };
 use axum::{
@@ -12,13 +14,20 @@ use axum::{
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
+use chrono::Utc;
+use reqwest::header::USER_AGENT;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::{
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
+use tokio::sync::RwLock;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -27,6 +36,15 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/jobs/:id", get(get_job).delete(delete_job))
+        .route(
+            "/api/v1/admin/scheduled-tasks",
+            get(list_scheduled_tasks).post(create_scheduled_task),
+        )
+        .route(
+            "/api/v1/admin/scheduled-tasks/:id",
+            patch(update_scheduled_task).delete(delete_scheduled_task),
+        )
+        .route("/api/v1/admin/update-check", get(update_check))
         .route(
             "/api/v1/admin/email-settings",
             get(get_email_settings).put(update_email_settings),
@@ -167,6 +185,48 @@ struct PaginatedResponse<T> {
     page: u32,
     page_size: u32,
 }
+
+#[derive(Debug, Deserialize)]
+struct CreateScheduledTaskRequest {
+    name: String,
+    task_type: String,
+    cron_expr: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpdateScheduledTaskRequest {
+    enabled: Option<bool>,
+    cron_expr: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct UpdateCheckResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_version: Option<String>,
+    update_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedUpdateCheck {
+    status: StatusCode,
+    response: UpdateCheckResponse,
+    fetched_at: Instant,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+static UPDATE_CHECK_CACHE: OnceLock<RwLock<Option<CachedUpdateCheck>>> = OnceLock::new();
 
 async fn search_tags(
     State(state): State<AppState>,
@@ -563,6 +623,252 @@ async fn delete_token(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_scheduled_tasks(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<scheduled_task_queries::ScheduledTask>>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let tasks = scheduled_task_queries::list_scheduled_tasks(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(tasks))
+}
+
+async fn create_scheduled_task(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<CreateScheduledTaskRequest>,
+) -> Result<(StatusCode, Json<scheduled_task_queries::ScheduledTask>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let task_type = normalize_scheduled_task_type(&payload.task_type).ok_or(AppError::BadRequest)?;
+    let cron_expr = payload.cron_expr.trim();
+    if cron_expr.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    let next_run_at =
+        scheduler::next_run_at_for_cron(cron_expr, Utc::now()).map_err(|_| AppError::BadRequest)?;
+
+    let task = scheduled_task_queries::create_scheduled_task(
+        &state.db,
+        name,
+        task_type,
+        cron_expr,
+        payload.enabled,
+        &next_run_at,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok((StatusCode::CREATED, Json(task)))
+}
+
+async fn update_scheduled_task(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(task_id): Path<String>,
+    Json(payload): Json<UpdateScheduledTaskRequest>,
+) -> Result<Json<scheduled_task_queries::ScheduledTask>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let Some(_) = scheduled_task_queries::get_scheduled_task(&state.db, &task_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    if payload.enabled.is_none() && payload.cron_expr.is_none() {
+        return Err(AppError::BadRequest);
+    }
+
+    let mut next_run_at = None;
+    if let Some(cron_expr) = payload.cron_expr.as_deref() {
+        let cron_expr = cron_expr.trim();
+        if cron_expr.is_empty() {
+            return Err(AppError::BadRequest);
+        }
+        next_run_at = Some(
+            scheduler::next_run_at_for_cron(cron_expr, Utc::now())
+                .map_err(|_| AppError::BadRequest)?,
+        );
+    }
+
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+
+    if let Some(enabled) = payload.enabled {
+        sqlx::query(
+            r#"
+            UPDATE scheduled_tasks
+            SET enabled = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(i64::from(enabled))
+        .bind(&task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    }
+
+    if let Some(cron_expr) = payload.cron_expr.as_deref() {
+        let next_run_at = next_run_at.as_deref().ok_or(AppError::BadRequest)?;
+        sqlx::query(
+            r#"
+            UPDATE scheduled_tasks
+            SET cron_expr = ?, next_run_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(cron_expr.trim())
+        .bind(next_run_at)
+        .bind(&task_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    }
+
+    tx.commit().await.map_err(|_| AppError::Internal)?;
+
+    let task = scheduled_task_queries::get_scheduled_task(&state.db, &task_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
+    Ok(Json(task))
+}
+
+async fn delete_scheduled_task(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(task_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let deleted = scheduled_task_queries::delete_scheduled_task(&state.db, &task_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !deleted {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn update_check(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<(StatusCode, Json<UpdateCheckResponse>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    if let Some(cached) = cached_update_check().read().await.clone() {
+        if cached.fetched_at.elapsed() < Duration::from_secs(60 * 60) {
+            return Ok((cached.status, Json(cached.response)));
+        }
+    }
+
+    let (status, response) = fetch_update_check().await;
+    let cached = CachedUpdateCheck {
+        status,
+        response: response.clone(),
+        fetched_at: Instant::now(),
+    };
+    *cached_update_check().write().await = Some(cached);
+
+    Ok((status, Json(response)))
+}
+
+fn cached_update_check() -> &'static RwLock<Option<CachedUpdateCheck>> {
+    UPDATE_CHECK_CACHE.get_or_init(|| RwLock::new(None))
+}
+
+pub async fn clear_update_check_cache() {
+    *cached_update_check().write().await = None;
+}
+
+async fn fetch_update_check() -> (StatusCode, UpdateCheckResponse) {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("autolibre")
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                unreachable_update_check_response(),
+            );
+        }
+    };
+
+    let url = std::env::var("AUTOLIBRE_RELEASES_URL").unwrap_or_else(|_| {
+        "https://api.github.com/repos/autolibre/autolibre/releases/latest".to_string()
+    });
+
+    let response = match client.get(url).header(USER_AGENT, "autolibre").send().await {
+        Ok(response) if response.status().is_success() => response,
+        _ => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                unreachable_update_check_response(),
+            );
+        }
+    };
+
+    let release = match response.json::<GitHubRelease>().await {
+        Ok(release) => release,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                unreachable_update_check_response(),
+            );
+        }
+    };
+
+    let latest_version = release.tag_name.trim().trim_start_matches('v').to_string();
+    let update_available = compare_versions(&current_version, &latest_version).unwrap_or(false);
+
+    (
+        StatusCode::OK,
+        UpdateCheckResponse {
+            current_version: Some(current_version),
+            latest_version: Some(latest_version),
+            update_available,
+            release_url: Some(release.html_url),
+            error: None,
+        },
+    )
+}
+
+fn unreachable_update_check_response() -> UpdateCheckResponse {
+    UpdateCheckResponse {
+        current_version: None,
+        latest_version: None,
+        update_available: false,
+        release_url: None,
+        error: Some("unreachable".to_string()),
+    }
+}
+
+fn compare_versions(current: &str, latest: &str) -> anyhow::Result<bool> {
+    let current = semver::Version::parse(current.trim().trim_start_matches('v'))?;
+    let latest = semver::Version::parse(latest.trim().trim_start_matches('v'))?;
+    Ok(latest > current)
+}
+
+fn normalize_scheduled_task_type(task_type: &str) -> Option<&'static str> {
+    match task_type.trim().to_lowercase().as_str() {
+        "classify_all" => Some("classify_all"),
+        "semantic_index_all" => Some("semantic_index_all"),
+        "backup" => Some("backup"),
+        _ => None,
+    }
 }
 
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {

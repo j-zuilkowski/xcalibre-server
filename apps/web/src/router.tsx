@@ -10,6 +10,7 @@ import { KoboDevicesPage } from "./features/admin/KoboDevicesPage";
 import { LibrariesPage } from "./features/admin/LibrariesPage";
 import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
+import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -111,6 +112,12 @@ const adminJobsRoute = createRoute({
   component: AdminJobsPage,
 });
 
+const adminScheduledTasksRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "scheduled-tasks",
+  component: ScheduledTasksPage,
+});
+
 const adminKoboDevicesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "kobo-devices",
@@ -156,6 +163,7 @@ export const routeTree = rootRoute.addChildren([
       adminUsersRoute,
       adminImportRoute,
       adminJobsRoute,
+      adminScheduledTasksRoute,
       adminLibrariesRoute,
       adminCustomColumnsRoute,
       adminKoboDevicesRoute,

@@ -7,6 +7,7 @@ pub mod ingest;
 pub mod llm;
 pub mod middleware;
 pub mod search;
+pub mod scheduler;
 pub mod state;
 pub mod storage;
 
@@ -42,6 +43,7 @@ pub async fn run() -> anyhow::Result<()> {
             state.clone(),
         ));
     }
+    tokio::spawn(crate::scheduler::run_scheduler(state.clone()));
     axum::serve(listener, app(state)).await?;
     Ok(())
 }

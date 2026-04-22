@@ -183,6 +183,39 @@ export type AdminJob = {
   error_text: string | null;
 };
 
+export type ScheduledTaskType = "classify_all" | "semantic_index_all" | "backup";
+
+export type ScheduledTask = {
+  id: string;
+  name: string;
+  task_type: ScheduledTaskType;
+  cron_expr: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at: string;
+};
+
+export type ScheduledTaskCreateRequest = {
+  name: string;
+  task_type: ScheduledTaskType;
+  cron_expr: string;
+  enabled: boolean;
+};
+
+export type ScheduledTaskPatchRequest = {
+  enabled?: boolean;
+  cron_expr?: string;
+};
+
+export type UpdateCheckResponse = {
+  current_version?: string;
+  latest_version?: string;
+  update_available: boolean;
+  release_url?: string;
+  error?: string;
+};
+
 export type KoboDevice = {
   id: string;
   user_id: string;

@@ -221,7 +221,7 @@ CREATE TABLE llm_jobs (
     started_at DATETIME NULL,
     completed_at DATETIME NULL,
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
-    CHECK (job_type IN ('classify', 'semantic_index', 'quality_check', 'validate_metadata', 'organize', 'derive')),
+    CHECK (job_type IN ('classify', 'semantic_index', 'quality_check', 'validate_metadata', 'organize', 'derive', 'backup')),
     CHECK (status IN ('pending', 'running', 'completed', 'failed'))
 );
 

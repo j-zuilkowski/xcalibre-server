@@ -118,6 +118,65 @@ pub async fn enqueue_organize_job(db: &SqlitePool) -> anyhow::Result<String> {
     Ok(id)
 }
 
+pub async fn enqueue_backup_job(db: &SqlitePool) -> anyhow::Result<String> {
+    if let Some(existing_id) = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT id
+        FROM llm_jobs
+        WHERE job_type = 'backup'
+          AND status IN ('pending', 'running')
+          AND book_id IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(db)
+    .await?
+    {
+        return Ok(existing_id);
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        INSERT INTO llm_jobs (
+            id, job_type, status, book_id, payload_json, result_json, error_text, created_at, started_at, completed_at
+        )
+        VALUES (?, 'backup', 'pending', NULL, NULL, NULL, NULL, ?, NULL, NULL)
+        "#,
+    )
+    .bind(&id)
+    .bind(now)
+    .execute(db)
+    .await?;
+
+    Ok(id)
+}
+
+pub async fn enqueue_semantic_index_jobs_for_all_books(
+    db: &SqlitePool,
+) -> anyhow::Result<usize> {
+    let book_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT id
+        FROM books
+        ORDER BY created_at ASC
+        "#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut enqueued = 0usize;
+    for book_id in book_ids {
+        if enqueue_semantic_index_job(db, &book_id).await? {
+            enqueued += 1;
+        }
+    }
+
+    Ok(enqueued)
+}
+
 pub async fn claim_next_pending_job(db: &SqlitePool) -> anyhow::Result<Option<SemanticIndexJob>> {
     let now = Utc::now().to_rfc3339();
     let row = sqlx::query(

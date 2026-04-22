@@ -194,7 +194,7 @@ CREATE INDEX idx_custom_values_book ON book_custom_values(book_id);
 
 CREATE TABLE llm_jobs (
     id TEXT PRIMARY KEY,
-    job_type TEXT NOT NULL CHECK(job_type IN ('classify', 'semantic_index', 'quality_check', 'validate_metadata', 'organize', 'derive')),
+    job_type TEXT NOT NULL CHECK(job_type IN ('classify', 'semantic_index', 'quality_check', 'validate_metadata', 'organize', 'derive', 'backup')),
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed')),
     book_id TEXT REFERENCES books(id) ON DELETE CASCADE,
     payload_json TEXT,

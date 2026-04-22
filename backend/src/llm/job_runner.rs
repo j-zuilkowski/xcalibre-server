@@ -86,6 +86,7 @@ async fn process_job(state: AppState, job: llm_queries::SemanticIndexJob) {
         "semantic_index" => process_semantic_job(state, job).await,
         "classify" => process_classify_job(state, job).await,
         "organize" => process_organize_job(state, job).await,
+        "backup" => process_backup_job(state, job).await,
         other => {
             tracing::warn!(job_id = %job.id, job_type = other, "unknown job type, skipping");
             let _ = llm_queries::mark_job_completed(&state.db, &job.id).await;
@@ -228,5 +229,11 @@ async fn process_organize_job(state: AppState, job: llm_queries::SemanticIndexJo
 
     if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
         tracing::error!(job_id = %job.id, error = %err, "failed to mark organize job completed");
+    }
+}
+
+async fn process_backup_job(state: AppState, job: llm_queries::SemanticIndexJob) {
+    if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
+        tracing::error!(job_id = %job.id, error = %err, "failed to mark backup job completed");
     }
 }
