@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import { AppShell } from "../../components/AppShell";
@@ -8,6 +9,7 @@ type GateState = "checking" | "ready" | "redirecting";
 
 export function ProtectedRoute() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const accessToken = useAuthStore((state) => state.access_token);
   const refreshToken = useAuthStore((state) => state.refresh_token);
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -77,7 +79,7 @@ export function ProtectedRoute() {
           fontFamily: "Inter, system-ui, sans-serif",
         }}
       >
-        <div>Checking session...</div>
+        <div>{t("auth.checking_session")}</div>
       </main>
     );
   }

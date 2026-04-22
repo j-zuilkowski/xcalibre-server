@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 
 type DownloadHistorySearchState = {
@@ -36,6 +37,7 @@ function toSearch(state: DownloadHistorySearchState): string {
 }
 
 export function DownloadHistoryPage() {
+  const { t } = useTranslation();
   const [searchState, setSearchState] = useState<DownloadHistorySearchState>(() =>
     parseSearch(window.location.search),
   );
@@ -68,10 +70,10 @@ export function DownloadHistoryPage() {
 
   const pageLabel = useMemo(() => {
     if (total === 0) {
-      return "No downloads yet";
+      return t("downloads.no_downloads_yet");
     }
-    return `Page ${searchState.page} of ${totalPages}`;
-  }, [searchState.page, total, totalPages]);
+    return t("common.page_of", { page: searchState.page, total: totalPages });
+  }, [searchState.page, t, total, totalPages]);
 
   function updatePage(page: number) {
     const nextState = { page: Math.max(1, page) };
@@ -88,28 +90,28 @@ export function DownloadHistoryPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Activity
+                {t("downloads.activity")}
               </p>
-              <h1 className="text-2xl font-semibold text-zinc-900">Download history</h1>
+              <h1 className="text-2xl font-semibold text-zinc-900">{t("downloads.page_title")}</h1>
             </div>
             <Link
               to="/library"
               className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700"
             >
-              Back to library
+              {t("downloads.back_to_library")}
             </Link>
           </div>
         </header>
 
         {historyQuery.isLoading ? (
           <div className="rounded-xl border border-zinc-200 bg-white p-6 text-zinc-500">
-            Loading download history...
+            {t("downloads.loading")}
           </div>
         ) : null}
 
         {historyQuery.isError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
-            Unable to load download history right now.
+            {t("downloads.unable_to_load")}
           </div>
         ) : null}
 
@@ -118,9 +120,9 @@ export function DownloadHistoryPage() {
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-zinc-50 text-zinc-600">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Title</th>
-                  <th className="px-4 py-3 font-semibold">Format</th>
-                  <th className="px-4 py-3 font-semibold">Downloaded</th>
+                  <th className="px-4 py-3 font-semibold">{t("downloads.title")}</th>
+                  <th className="px-4 py-3 font-semibold">{t("downloads.format")}</th>
+                  <th className="px-4 py-3 font-semibold">{t("downloads.downloaded")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -145,7 +147,7 @@ export function DownloadHistoryPage() {
                 ) : (
                   <tr>
                     <td colSpan={3} className="px-4 py-10 text-center text-zinc-500">
-                      No downloads recorded yet.
+                      {t("downloads.empty")}
                     </td>
                   </tr>
                 )}
@@ -164,7 +166,7 @@ export function DownloadHistoryPage() {
                 onClick={() => updatePage(searchState.page - 1)}
                 className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 disabled:opacity-50"
               >
-                Previous
+                {t("common.previous")}
               </button>
               <button
                 type="button"
@@ -172,7 +174,7 @@ export function DownloadHistoryPage() {
                 onClick={() => updatePage(searchState.page + 1)}
                 className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 disabled:opacity-50"
               >
-                Next
+                {t("common.next")}
               </button>
             </div>
           </div>

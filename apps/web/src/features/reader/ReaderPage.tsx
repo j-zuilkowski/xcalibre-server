@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { ReadingProgressPatch } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { ComicReader } from "./ComicReader";
@@ -32,6 +33,7 @@ function clampPercentage(value: number): number {
 }
 
 export function ReaderPage() {
+  const { t } = useTranslation();
   const params = useMemo(() => parseReaderParams(window.location.pathname), []);
   const pendingProgressRef = useRef<ReaderProgressUpdate | null>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -108,19 +110,19 @@ export function ReaderPage() {
   if (!params) {
     return (
       <main className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 text-zinc-200">
-        Invalid reader URL.
+        {t("reader.invalid_url")}
       </main>
     );
   }
 
   if (bookQuery.isLoading || progressQuery.isLoading) {
-    return <main className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 text-zinc-200">Loading reader...</main>;
+    return <main className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 text-zinc-200">{t("reader.loading_reader")}</main>;
   }
 
   if (bookQuery.isError || !bookQuery.data) {
     return (
       <main className="fixed inset-0 z-50 grid place-items-center bg-zinc-950 text-red-300">
-        Unable to load reader.
+        {t("reader.unable_to_load")}
       </main>
     );
   }
@@ -153,7 +155,7 @@ export function ReaderPage() {
           <ComicReader bookId={params.bookId} onProgressChange={handleProgressChange} />
         ) : (
           <div className="grid h-full place-items-center text-zinc-300">
-            Unsupported reader format: {params.format}
+            {t("reader.unsupported_format")}: {params.format}
           </div>
         )
       ) : null}

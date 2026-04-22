@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type {
   ApiError,
   Book,
@@ -61,9 +62,9 @@ function formatBytes(sizeBytes: number): string {
   return `${size.toFixed(decimals)} ${units[index]}`;
 }
 
-function getAuthorsLabel(book: Book): string {
+function getAuthorsLabel(book: Book, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (book.authors.length === 0) {
-    return "Unknown author";
+    return t("common.unknown_author");
   }
 
   return book.authors.map((author) => author.name).join(", ");
@@ -86,9 +87,9 @@ function getReadFormat(formats: FormatRef[]): string | null {
   return formats[0]?.format ?? null;
 }
 
-function getYearLabel(pubdate: string | null): string {
+function getYearLabel(pubdate: string | null, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!pubdate) {
-    return "Unknown";
+    return t("common.unknown");
   }
 
   const parsed = new Date(pubdate);
@@ -97,7 +98,7 @@ function getYearLabel(pubdate: string | null): string {
   }
 
   const fallback = pubdate.match(/\d{4}/);
-  return fallback?.[0] ?? "Unknown";
+  return fallback?.[0] ?? t("common.unknown");
 }
 
 function isAdminOrEditor(roleName: string | undefined, canEdit: boolean | undefined): boolean {
@@ -125,12 +126,12 @@ function pushLibraryTagFilter(tag: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function toLlmErrorMessage(error: unknown): string {
+function toLlmErrorMessage(error: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
   const apiError = error as ApiError;
   if (apiError?.status === 503) {
-    return "LLM unavailable";
+    return t("book.llm_unavailable");
   }
-  return "Unable to complete this request right now.";
+  return t("book.unable_to_complete_request");
 }
 
 function confidencePercent(value: number): string {
@@ -149,12 +150,12 @@ function severityStyles(severity: ValidationResult["severity"]): string {
   return "border-red-200 bg-red-50 text-red-700";
 }
 
-function formatCustomValue(value: BookCustomValue["value"]): string {
+function formatCustomValue(value: BookCustomValue["value"], t: (key: string) => string): string {
   if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
+    return value ? t("common.yes") : t("common.no");
   }
   if (value === null || value === undefined || value === "") {
-    return "—";
+    return t("common.none");
   }
   return String(value);
 }
@@ -220,10 +221,10 @@ function isSameCustomValue(
   return String(left ?? "") === String(right ?? "");
 }
 
-function Spinner({ className = "" }: { className?: string }) {
+function Spinner({ className = "", label = "Loading" }: { className?: string; label?: string }) {
   return (
     <span
-      aria-label="Loading"
+      aria-label={label}
       className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-zinc-300 border-t-teal-600 ${className}`}
     />
   );
@@ -256,6 +257,7 @@ function CollapsibleSection({
 }
 
 export function BookDetailPage({ bookId }: BookDetailPageProps) {
+  const { t } = useTranslation();
   const resolvedBookId = resolveBookId(bookId);
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
@@ -472,7 +474,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     return (
       <main className="min-h-screen bg-zinc-50 px-4 py-8 text-zinc-900 md:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
-          Invalid book id.
+          {t("book.invalid_book_id")}
         </div>
       </main>
     );
@@ -490,14 +492,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     return (
       <main className="min-h-screen bg-zinc-50 px-4 py-8 text-zinc-900 md:px-6 lg:px-8">
         <div className="mx-auto max-w-5xl rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
-          Unable to load this book right now.
+          {t("book.unable_to_load")}
         </div>
       </main>
     );
   }
 
   const readFormat = getReadFormat(book.formats);
-  const authorsLabel = getAuthorsLabel(book);
+  const authorsLabel = getAuthorsLabel(book, t);
   const rating = buildStars(book.rating);
   const confirmedTags = book.tags.filter((tag) => tag.confirmed);
   const showAiPanel = llmHealthQuery.data?.enabled === true;
@@ -521,14 +523,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
         <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm md:p-6">
           <div className="mb-4 flex items-center justify-between">
             <a href="/library" className="text-sm font-medium text-zinc-600 hover:text-zinc-900">
-              ← Back
+              ← {t("common.back")}
             </a>
 
             {canEditBook ? (
               <div className="relative">
                 <button
                   type="button"
-                  aria-label="More actions"
+                  aria-label={t("book.more_actions")}
                   onClick={() => setActionsOpen((open) => !open)}
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-700"
                 >
@@ -547,7 +549,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       }}
                       className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100"
                     >
-                      Lookup metadata
+                      {t("book.lookup_metadata")}
                     </button>
                     {isAdmin ? (
                       <button
@@ -560,17 +562,17 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         }}
                         className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100"
                       >
-                        Merge duplicate book
+                        {t("book.merge_duplicate_book")}
                       </button>
                     ) : null}
                     <button type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100">
-                      Replace cover
+                      {t("book.replace_cover")}
                     </button>
                     <button
                       type="button"
                       className="block w-full rounded px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                     >
-                      Delete book
+                      {t("book.delete_book")}
                     </button>
                   </div>
                 ) : null}
@@ -595,7 +597,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
               <h1 className="text-3xl font-semibold text-zinc-900">{book.title}</h1>
               <p className="text-zinc-700">{authorsLabel}</p>
               <p className="text-sm text-zinc-500">
-                {book.series ? `${book.series.name} · Book ${book.series_index ?? "?"}` : "Standalone"}
+                {book.series ? `${book.series.name} · ${t("book.book")} ${book.series_index ?? "?"}` : t("book.standalone")}
               </p>
 
               <p className="text-sm text-zinc-700">
@@ -617,7 +619,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   }`}
                   aria-disabled={!readFormat}
                   >
-                  Read
+                  {t("common.read")}
                 </a>
 
                 <button
@@ -625,7 +627,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   onClick={() => void readStateMutation.mutateAsync(!book.is_read)}
                   className="inline-flex rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800"
                 >
-                  {book.is_read ? "Mark unread" : "Mark as read"}
+                  {book.is_read ? t("book.mark_unread") : t("book.mark_as_read")}
                 </button>
 
                 <button
@@ -637,7 +639,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       : "border-zinc-300 bg-white text-zinc-800"
                   }`}
                 >
-                  {book.is_archived ? "Unarchive" : "Archive"}
+                  {book.is_archived ? t("book.unarchive") : t("book.archive")}
                 </button>
 
                 <div className="relative">
@@ -646,7 +648,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     onClick={() => setDownloadOpen((open) => !open)}
                     className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800"
                   >
-                    Download ▾
+                    {t("common.download")} ▾
                   </button>
 
                   {downloadOpen ? (
@@ -667,7 +669,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           ))}
                         </ul>
                       ) : (
-                        <p className="px-2 py-1 text-sm text-zinc-500">No formats available.</p>
+                        <p className="px-2 py-1 text-sm text-zinc-500">{t("book.no_formats_available")}</p>
                       )}
                     </div>
                   ) : null}
@@ -679,13 +681,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     onClick={() => setShelfMenuOpen((open) => !open)}
                     className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800"
                   >
-                    Add to shelf ▾
+                    {t("book.add_to_shelf")} ▾
                   </button>
 
                   {shelfMenuOpen ? (
                     <div className="absolute left-0 z-20 mt-2 min-w-[240px] rounded-lg border border-zinc-200 bg-white p-2 shadow-lg">
                       {shelvesQuery.isLoading ? (
-                        <p className="px-2 py-1 text-sm text-zinc-500">Loading shelves...</p>
+                        <p className="px-2 py-1 text-sm text-zinc-500">{t("book.loading_shelves")}</p>
                       ) : shelvesQuery.data?.length ? (
                         <ul className="space-y-1">
                           {shelvesQuery.data.map((shelf) => (
@@ -702,7 +704,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           ))}
                         </ul>
                       ) : (
-                        <p className="px-2 py-1 text-sm text-zinc-500">No shelves yet.</p>
+                        <p className="px-2 py-1 text-sm text-zinc-500">{t("book.no_shelves_yet")}</p>
                       )}
                     </div>
                   ) : null}
@@ -715,15 +717,15 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
         <section className="rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700">
           <div className="flex flex-wrap items-center gap-2">
             <span>
-              <strong>Language:</strong> {book.language ? book.language.toUpperCase() : "Unknown"}
+              <strong>{t("book.language")}:</strong> {book.language ? book.language.toUpperCase() : t("common.unknown")}
             </span>
             <span aria-hidden="true">·</span>
             <span>
-              <strong>Year:</strong> {getYearLabel(book.pubdate)}
+              <strong>{t("book.year")}:</strong> {getYearLabel(book.pubdate, t)}
             </span>
             <span aria-hidden="true">·</span>
             <span className="flex flex-wrap items-center gap-1">
-              <strong>Tags:</strong>
+              <strong>{t("book.tags")}:</strong>
               {confirmedTags.length > 0 ? (
                 confirmedTags.map((tag) => (
                   <button
@@ -736,22 +738,22 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   </button>
                 ))
               ) : (
-                <span>None</span>
+                <span>{t("common.none")}</span>
               )}
             </span>
             <span aria-hidden="true">·</span>
             <span>
-              <strong>Formats:</strong>{" "}
+              <strong>{t("book.formats")}:</strong>{" "}
               {book.formats.length > 0
                 ? book.formats.map((format) => format.format.toUpperCase()).join(" ")
-                : "None"}
+                : t("common.none")}
             </span>
           </div>
         </section>
 
         <div className="flex flex-col gap-3">
           <CollapsibleSection
-            label="Description"
+            label={t("book.description")}
             open={sectionsOpen.description}
             onToggle={() =>
               setSectionsOpen((previous) => ({
@@ -760,11 +762,11 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
               }))
             }
           >
-            {book.description?.trim() || "No description available."}
+            {book.description?.trim() || t("book.no_description_available")}
           </CollapsibleSection>
 
           <CollapsibleSection
-            label="Formats"
+            label={t("book.formats")}
             open={sectionsOpen.formats}
             onToggle={() =>
               setSectionsOpen((previous) => ({
@@ -785,18 +787,18 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       download
                       className="text-teal-700 hover:text-teal-800"
                     >
-                      Download
+                      {t("common.download")}
                     </a>
                   </li>
                 ))}
               </ul>
             ) : (
-              "No formats available."
+              t("book.no_formats_available")
             )}
           </CollapsibleSection>
 
           <CollapsibleSection
-            label="Identifiers"
+            label={t("book.identifiers")}
             open={sectionsOpen.identifiers}
             onToggle={() =>
               setSectionsOpen((previous) => ({
@@ -815,12 +817,12 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                 ))}
               </ul>
             ) : (
-              "No identifiers available."
+              t("book.no_identifiers_available")
             )}
           </CollapsibleSection>
 
           <CollapsibleSection
-            label="Series"
+            label={t("book.series")}
             open={sectionsOpen.series}
             onToggle={() =>
               setSectionsOpen((previous) => ({
@@ -832,15 +834,15 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             {book.series ? (
               <div>
                 <p className="font-medium text-zinc-900">{book.series.name}</p>
-                <p className="text-zinc-600">Book {book.series_index ?? "?"}</p>
+                <p className="text-zinc-600">{t("book.book")} {book.series_index ?? "?"}</p>
               </div>
             ) : (
-              "This book is not in a series."
+              t("book.not_in_series")
             )}
           </CollapsibleSection>
 
           <CollapsibleSection
-            label="Custom Fields"
+            label={t("book.custom_fields")}
             open={sectionsOpen.custom_fields}
             onToggle={() =>
               setSectionsOpen((previous) => ({
@@ -850,9 +852,9 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             }
           >
             {customValuesQuery.isLoading ? (
-              <p className="text-zinc-500">Loading custom fields...</p>
+              <p className="text-zinc-500">{t("book.loading_custom_fields")}</p>
             ) : customValues.length === 0 ? (
-              <p className="text-zinc-500">No custom fields configured.</p>
+              <p className="text-zinc-500">{t("book.no_custom_fields_configured")}</p>
             ) : (
               <div className="space-y-3">
                 {customValues.map((field) => {
@@ -875,7 +877,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                                 void commitCustomFieldValue(field, checked);
                               }}
                             />
-                            {Boolean(draftValue) ? "Yes" : "No"}
+                            {Boolean(draftValue) ? t("common.yes") : t("common.no")}
                           </label>
                         ) : (
                           <input
@@ -895,7 +897,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           />
                         )
                       ) : (
-                        <span className="text-zinc-700">{formatCustomValue(field.value)}</span>
+                        <span className="text-zinc-700">{formatCustomValue(field.value, t)}</span>
                       )}
                     </div>
                   );
@@ -906,7 +908,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
 
           {isAdmin ? (
             <CollapsibleSection
-              label="History"
+              label={t("book.history")}
               open={sectionsOpen.history}
               onToggle={() =>
                 setSectionsOpen((previous) => ({
@@ -915,13 +917,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                 }))
               }
             >
-              No history entries yet.
+              {t("book.no_history_entries_yet")}
             </CollapsibleSection>
           ) : null}
 
           {showAiPanel ? (
             <CollapsibleSection
-              label="AI"
+              label={t("book.ai")}
               open={sectionsOpen.ai}
               onToggle={() =>
                 setSectionsOpen((previous) => ({
@@ -945,7 +947,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                             : "border-zinc-300 bg-white text-zinc-700"
                         }`}
                       >
-                        {tab === "classify" ? "Classify" : tab === "validate" ? "Validate" : "Derive"}
+                        {tab === "classify" ? t("book.classify") : tab === "validate" ? t("book.validate") : t("book.derive")}
                       </button>
                     );
                   })}
@@ -959,12 +961,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       disabled={classifyMutation.isPending}
                       className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
                     >
-                      {classifyMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
-                      Classify
+                      {classifyMutation.isPending ? (
+                        <Spinner className="border-zinc-200 border-t-white" label={t("common.loading")} />
+                      ) : null}
+                      {t("book.classify")}
                     </button>
 
                     {classifyMutation.isError ? (
-                      <p className="text-sm text-red-700">{toLlmErrorMessage(classifyMutation.error)}</p>
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(classifyMutation.error, t)}</p>
                     ) : null}
 
                     {pendingSuggestions.length > 0 ? (
@@ -980,7 +984,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                               </span>
                               <button
                                 type="button"
-                                aria-label={`Confirm ${suggestion.name}`}
+                                aria-label={t("book.confirm_suggestion", { name: suggestion.name })}
                                 disabled={confirmTagMutation.isPending}
                                 onClick={() =>
                                   void confirmTagMutation.mutateAsync({
@@ -994,7 +998,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                               </button>
                               <button
                                 type="button"
-                                aria-label={`Reject ${suggestion.name}`}
+                                aria-label={t("book.reject_suggestion", { name: suggestion.name })}
                                 disabled={confirmTagMutation.isPending}
                                 onClick={() =>
                                   void confirmTagMutation.mutateAsync({
@@ -1016,12 +1020,12 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           disabled={confirmAllMutation.isPending || pendingSuggestions.length === 0}
                           className="inline-flex items-center gap-2 rounded-lg border border-teal-600 px-3 py-2 text-sm font-semibold text-teal-700 disabled:opacity-50"
                         >
-                          {confirmAllMutation.isPending ? <Spinner /> : null}
-                          Confirm All
+                          {confirmAllMutation.isPending ? <Spinner label={t("common.loading")} /> : null}
+                          {t("book.confirm_all")}
                         </button>
                       </div>
                     ) : classifyMutation.isSuccess ? (
-                      <p className="text-sm text-zinc-600">No pending suggestions.</p>
+                      <p className="text-sm text-zinc-600">{t("book.no_pending_suggestions")}</p>
                     ) : null}
                   </div>
                 ) : null}
@@ -1034,12 +1038,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       disabled={validateMutation.isPending}
                       className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
                     >
-                      {validateMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
-                      Validate
+                      {validateMutation.isPending ? (
+                        <Spinner className="border-zinc-200 border-t-white" label={t("common.loading")} />
+                      ) : null}
+                      {t("book.validate")}
                     </button>
 
                     {validateMutation.isError ? (
-                      <p className="text-sm text-red-700">{toLlmErrorMessage(validateMutation.error)}</p>
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(validateMutation.error, t)}</p>
                     ) : null}
 
                     {validateMutation.data ? (
@@ -1053,7 +1059,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         {validateMutation.data.issues.length === 0 ? (
                           <p className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
                             <span aria-hidden="true">✓</span>
-                            No issues found
+                          {t("book.no_issues_found")}
                           </p>
                         ) : (
                           <div className="space-y-2">
@@ -1065,7 +1071,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                                 <p className="text-sm font-semibold text-zinc-900">{issue.field}</p>
                                 <p className="mt-1 text-sm text-zinc-700">{issue.message}</p>
                                 {issue.suggestion ? (
-                                  <p className="mt-1 text-xs text-zinc-500">Suggestion: {issue.suggestion}</p>
+                                  <p className="mt-1 text-xs text-zinc-500">{t("book.suggestion")}: {issue.suggestion}</p>
                                 ) : null}
                               </article>
                             ))}
@@ -1084,12 +1090,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       disabled={deriveMutation.isPending}
                       className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
                     >
-                      {deriveMutation.isPending ? <Spinner className="border-zinc-200 border-t-white" /> : null}
-                      Generate
+                      {deriveMutation.isPending ? (
+                        <Spinner className="border-zinc-200 border-t-white" label={t("common.loading")} />
+                      ) : null}
+                      {t("book.derive")}
                     </button>
 
                     {deriveMutation.isError ? (
-                      <p className="text-sm text-red-700">{toLlmErrorMessage(deriveMutation.error)}</p>
+                      <p className="text-sm text-red-700">{toLlmErrorMessage(deriveMutation.error, t)}</p>
                     ) : null}
 
                     {deriveMutation.data ? (
@@ -1097,7 +1105,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         <p>{deriveMutation.data.summary}</p>
 
                         <div>
-                          <p className="font-semibold text-zinc-900">Related titles</p>
+                          <p className="font-semibold text-zinc-900">{t("book.related_titles")}</p>
                           <ul className="ml-5 list-disc">
                             {deriveMutation.data.related_titles.map((title) => (
                               <li key={title}>{title}</li>
@@ -1106,7 +1114,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         </div>
 
                         <div>
-                          <p className="font-semibold text-zinc-900">Discussion questions</p>
+                          <p className="font-semibold text-zinc-900">{t("book.discussion_questions")}</p>
                           <ol className="ml-5 list-decimal">
                             {deriveMutation.data.discussion_questions.map((question) => (
                               <li key={question}>{question}</li>
@@ -1127,33 +1135,33 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             <div className="w-full max-w-4xl rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Merge books</p>
-                  <h2 className="mt-1 text-lg font-semibold text-zinc-900">Merge duplicate into current book</h2>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">{t("book.merge_books")}</p>
+                  <h2 className="mt-1 text-lg font-semibold text-zinc-900">{t("book.merge_duplicate_into_current_book")}</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => setMergeModalOpen(false)}
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-700"
                 >
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
 
               <div className="mt-4 space-y-3">
                 <label className="block text-sm font-medium text-zinc-700">
-                  Search duplicate by title
+                  {t("book.search_duplicate_by_title")}
                   <input
                     value={mergeSearch}
                     onChange={(event) => setMergeSearch(event.target.value)}
-                    placeholder="Start typing title..."
+                    placeholder={t("book.start_typing_title")}
                     className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
                   />
                 </label>
 
                 {mergeSearch.trim().length < 2 ? (
-                  <p className="text-sm text-zinc-500">Type at least 2 characters.</p>
+                  <p className="text-sm text-zinc-500">{t("book.type_at_least_2_characters")}</p>
                 ) : mergeCandidatesQuery.isLoading ? (
-                  <p className="text-sm text-zinc-500">Searching...</p>
+                  <p className="text-sm text-zinc-500">{t("common.searching")}</p>
                 ) : mergeCandidatesQuery.data && mergeCandidatesQuery.data.length > 0 ? (
                   <div className="max-h-44 overflow-auto rounded-lg border border-zinc-200">
                     {mergeCandidatesQuery.data.map((candidate: BookSummary) => (
@@ -1173,38 +1181,38 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-zinc-500">No matching books found.</p>
+                  <p className="text-sm text-zinc-500">{t("book.no_matching_books_found")}</p>
                 )}
               </div>
 
               {selectedDuplicateBook ? (
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
                   <section className="rounded-xl border border-zinc-200 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Primary (keep)</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t("book.primary_keep")}</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-900">{book.title}</p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      Authors: {book.authors.map((author) => author.name).join(", ") || "Unknown"}
+                      {t("book.authors")}: {book.authors.map((author) => author.name).join(", ") || t("common.unknown")}
                     </p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      Formats: {book.formats.map((format) => format.format.toUpperCase()).join(", ") || "None"}
+                      {t("book.formats")}: {book.formats.map((format) => format.format.toUpperCase()).join(", ") || t("common.none")}
                     </p>
-                    <p className="mt-1 text-sm text-zinc-700">Identifiers: {book.identifiers.length}</p>
+                    <p className="mt-1 text-sm text-zinc-700">{t("book.identifiers")}: {book.identifiers.length}</p>
                   </section>
                   <section className="rounded-xl border border-zinc-200 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Duplicate (remove)</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t("book.duplicate_remove")}</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-900">{selectedDuplicateBook.title}</p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      Authors:{" "}
-                      {selectedDuplicateBook.authors.map((author) => author.name).join(", ") || "Unknown"}
+                      {t("book.authors")}:{" "}
+                      {selectedDuplicateBook.authors.map((author) => author.name).join(", ") || t("common.unknown")}
                     </p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      Formats:{" "}
+                      {t("book.formats")}:{" "}
                       {selectedDuplicateBook.formats
                         .map((format) => format.format.toUpperCase())
-                        .join(", ") || "None"}
+                        .join(", ") || t("common.none")}
                     </p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      Identifiers: {selectedDuplicateBook.identifiers.length}
+                      {t("book.identifiers")}: {selectedDuplicateBook.identifiers.length}
                     </p>
                   </section>
                 </div>
@@ -1216,7 +1224,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   onClick={() => setMergeModalOpen(false)}
                   className="rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-700"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button
                   type="button"
@@ -1228,7 +1236,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   }}
                   className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {mergeBookMutation.isPending ? "Merging..." : "Confirm merge"}
+                  {mergeBookMutation.isPending ? t("book.merging") : t("book.confirm_merge")}
                 </button>
               </div>
             </div>
@@ -1239,28 +1247,28 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
           <aside className="fixed right-4 top-20 z-30 w-[min(92vw,420px)] rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Metadata lookup</p>
-                <h2 className="mt-1 text-lg font-semibold text-zinc-900">External suggestions</h2>
+                <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">{t("book.metadata_lookup")}</p>
+                <h2 className="mt-1 text-lg font-semibold text-zinc-900">{t("book.external_suggestions")}</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setMetadataLookupOpen(false)}
                 className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-600"
               >
-                Close
+                {t("common.close")}
               </button>
             </div>
 
             <div className="mt-4 space-y-3">
               <label className="block text-sm font-medium text-zinc-700">
-                Source
+                {t("book.source")}
                 <select
                   value={metadataSource}
                   onChange={(event) => setMetadataSource(event.target.value as "openlibrary" | "googlebooks")}
                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
                 >
-                  <option value="openlibrary">Open Library</option>
-                  <option value="googlebooks">Google Books</option>
+                  <option value="openlibrary">{t("book.open_library")}</option>
+                  <option value="googlebooks">{t("book.google_books")}</option>
                 </select>
               </label>
 
@@ -1270,11 +1278,11 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                 disabled={lookupMetadataMutation.isPending}
                 className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
               >
-                Lookup Metadata
+                {t("book.lookup_metadata")}
               </button>
 
               {lookupMetadataMutation.isError ? (
-                <p className="text-sm text-red-700">Unable to load external metadata right now.</p>
+                <p className="text-sm text-red-700">{t("book.unable_to_load_external_metadata")}</p>
               ) : null}
 
               {metadataResult ? (
@@ -1292,7 +1300,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-zinc-700">
-                        <strong>Title</strong>
+                        <strong>{t("book.title")}</strong>
                       </span>
                       <button
                         type="button"
@@ -1304,13 +1312,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         }
                         className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
                       >
-                        Apply
+                        {t("book.apply")}
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-zinc-700">
-                        <strong>Authors</strong>
+                        <strong>{t("book.authors")}</strong>
                       </span>
                       <button
                         type="button"
@@ -1322,13 +1330,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         }
                         className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
                       >
-                        Apply
+                        {t("book.apply")}
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-zinc-700">
-                        <strong>Description</strong>
+                        <strong>{t("book.description")}</strong>
                       </span>
                       <button
                         type="button"
@@ -1340,13 +1348,13 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         }
                         className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
                       >
-                        Apply
+                        {t("book.apply")}
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-zinc-700">
-                        <strong>Published date</strong>
+                        <strong>{t("book.published_date")}</strong>
                       </span>
                       <button
                         type="button"
@@ -1358,14 +1366,14 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                         }
                         className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
                       >
-                        Apply
+                        {t("book.apply")}
                       </button>
                     </div>
 
                     {metadataResult.isbn_13 ? (
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-zinc-700">
-                          <strong>ISBN-13</strong>
+                          <strong>{t("book.isbn_13")}</strong>
                         </span>
                         <button
                           type="button"
@@ -1377,7 +1385,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           }
                           className="rounded-md border border-zinc-300 px-2 py-1 text-xs font-semibold"
                         >
-                          Apply
+                          {t("book.apply")}
                         </button>
                       </div>
                     ) : null}
@@ -1385,12 +1393,12 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
 
                   {metadataResult.publisher ? (
                     <p className="text-sm text-zinc-600">
-                      <strong>Publisher:</strong> {metadataResult.publisher}
+                      <strong>{t("book.publisher")}:</strong> {metadataResult.publisher}
                     </p>
                   ) : null}
                   {metadataResult.categories.length > 0 ? (
                     <p className="text-sm text-zinc-600">
-                      <strong>Categories:</strong> {metadataResult.categories.join(", ")}
+                      <strong>{t("book.categories")}:</strong> {metadataResult.categories.join(", ")}
                     </p>
                   ) : null}
                 </div>

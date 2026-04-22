@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
 
 type ImportMode = "upload" | "path";
 
 export function ImportPage() {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<ImportMode>("upload");
   const [pathValue, setPathValue] = useState("");
   const [dryRun, setDryRun] = useState(false);
@@ -56,8 +58,8 @@ export function ImportPage() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
       <header>
-        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">Import</p>
-        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Bulk import</h2>
+        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">{t("admin.import")}</p>
+        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">{t("admin.bulk_import")}</h2>
       </header>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
@@ -73,7 +75,7 @@ export function ImportPage() {
                   : "border-zinc-700 text-zinc-300"
               }`}
             >
-              {item === "upload" ? "Upload zip" : "Server path"}
+              {item === "upload" ? t("admin.upload_zip") : t("admin.server_path")}
             </button>
           ))}
         </div>
@@ -107,32 +109,32 @@ export function ImportPage() {
             <input
               value={pathValue}
               onChange={(event) => setPathValue(event.target.value)}
-              placeholder="/srv/calibre/import"
+              placeholder={t("admin.server_path_placeholder")}
               className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
             />
           )}
 
           <label className="flex items-center gap-2 text-sm text-zinc-300">
             <input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} />
-            Dry run
+            {t("admin.dry_run")}
           </label>
 
           <button
             type="submit"
             className="w-fit rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950"
           >
-            {startMutation.isPending ? "Starting..." : "Start import"}
+            {startMutation.isPending ? t("common.starting") : t("admin.start_import")}
           </button>
         </form>
       </section>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
-        <h3 className="text-lg font-semibold text-zinc-50">Progress log</h3>
+        <h3 className="text-lg font-semibold text-zinc-50">{t("admin.progress_log")}</h3>
         {status ? (
           <div className="mt-3 space-y-2 text-sm text-zinc-300">
-            <p>Job {status.id}</p>
-            <p>Started {formatDateTime(status.started_at)}</p>
-            <p>Completed {formatDateTime(status.completed_at)}</p>
+            <p>{t("admin.job")}: {status.id}</p>
+            <p>{t("common.started")}: {formatDateTime(status.started_at)}</p>
+            <p>{t("common.completed")}: {formatDateTime(status.completed_at)}</p>
             <ul className="space-y-1 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
               {logLines.map((line) => (
                 <li key={line}>{line}</li>
@@ -140,7 +142,7 @@ export function ImportPage() {
             </ul>
           </div>
         ) : (
-          <p className="mt-3 text-sm text-zinc-400">No import job started yet.</p>
+          <p className="mt-3 text-sm text-zinc-400">{t("admin.no_import_job_started_yet")}</p>
         )}
       </section>
     </div>

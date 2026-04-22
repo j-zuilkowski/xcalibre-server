@@ -1,24 +1,26 @@
+import { useTranslation } from "react-i18next";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 
 const NAV_ITEMS = [
-  { to: "/admin/dashboard", label: "Dashboard" },
-  { to: "/admin/users", label: "Users" },
-  { to: "/admin/import", label: "Import" },
-  { to: "/admin/jobs", label: "Jobs" },
-  { to: "/admin/libraries", label: "Libraries" },
-  { to: "/admin/custom-columns", label: "Custom Columns" },
-  { to: "/admin/kobo-devices", label: "Kobo Devices" },
+  { to: "/admin/dashboard", label: "dashboard" },
+  { to: "/admin/users", label: "users" },
+  { to: "/admin/import", label: "import" },
+  { to: "/admin/jobs", label: "jobs" },
+  { to: "/admin/libraries", label: "libraries" },
+  { to: "/admin/custom-columns", label: "custom_columns" },
+  { to: "/admin/kobo-devices", label: "kobo_devices" },
 ];
 
 export function AdminLayout() {
   const location = useLocation();
+  const { t } = useTranslation();
 
   return (
     <div className="fixed inset-0 z-50 flex bg-zinc-950 text-zinc-100">
       <aside className="flex w-64 flex-col border-r border-zinc-800 bg-zinc-950">
         <div className="border-b border-zinc-800 px-5 py-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">Admin Panel</p>
-          <h1 className="mt-2 text-xl font-semibold">calibre-web</h1>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-300">{t("nav.admin_panel")}</p>
+          <h1 className="mt-2 text-xl font-semibold">{t("app_name")}</h1>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-3 py-4">
@@ -32,7 +34,7 @@ export function AdminLayout() {
                   active ? "bg-teal-500 text-zinc-950" : "text-zinc-300 hover:bg-zinc-900"
                 }`}
               >
-                {item.label}
+                {t(`admin.${item.label}`)}
               </Link>
             );
           })}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { BookSummary } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
@@ -72,9 +73,9 @@ function saveRecentSearch(userId: string | null, query: string): void {
   localStorage.setItem(key, JSON.stringify(next));
 }
 
-function authorLabel(book: BookSummary): string {
+function authorLabel(book: BookSummary, t: (key: string) => string): string {
   if (book.authors.length === 0) {
-    return "Unknown author";
+    return t("common.unknown_author");
   }
 
   return book.authors.map((author) => author.name).join(", ");
@@ -100,7 +101,7 @@ function SearchMiniCard({ book }: { book: BookSummary }) {
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-zinc-900">{book.title}</p>
-        <p className="truncate text-xs text-zinc-500">{authorLabel(book)}</p>
+        <p className="truncate text-xs text-zinc-500">{authorLabel(book, t)}</p>
       </div>
     </a>
   );
@@ -109,6 +110,7 @@ function SearchMiniCard({ book }: { book: BookSummary }) {
 export function SearchBar() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
@@ -166,7 +168,7 @@ export function SearchBar() {
           }}
           onFocus={() => setOpen(true)}
           onBlur={handleBlur}
-          placeholder="Search title, author, tag"
+          placeholder={t("search.search_placeholder")}
           className={`w-full rounded-full border border-zinc-300 bg-white px-4 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition-all duration-200 focus:border-teal-500 ${
             open ? "ring-2 ring-teal-100" : ""
           }`}
@@ -178,7 +180,7 @@ export function SearchBar() {
           {recentSearches.length > 0 ? (
             <section className="mb-4">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Recent searches
+                {t("search.recent_searches")}
               </div>
               <div className="flex flex-wrap gap-2">
                 {recentSearches.map((item) => (
@@ -199,7 +201,7 @@ export function SearchBar() {
           {trimmedQuery.length > 0 ? (
             <section className="space-y-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Quick results
+                {t("search.quick_results")}
               </div>
               <div className="flex flex-wrap gap-2">
                 {suggestions.length > 0 ? (
@@ -215,7 +217,7 @@ export function SearchBar() {
                     </button>
                   ))
                 ) : (
-                  <p className="px-1 py-2 text-sm text-zinc-500">No suggestions.</p>
+                  <p className="px-1 py-2 text-sm text-zinc-500">{t("search.no_suggestions")}</p>
                 )}
               </div>
             </section>
@@ -228,13 +230,13 @@ export function SearchBar() {
               onClick={() => commitSearch(query)}
               className="rounded-full bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white"
             >
-              Search
+              {t("common.search")}
             </button>
             <a
               href={query.trim() ? `/search?q=${encodeURIComponent(query.trim())}` : "/search"}
               className="text-sm font-medium text-teal-700"
             >
-              See all results →
+              {t("search.see_all_results")} →
             </a>
           </div>
         </div>

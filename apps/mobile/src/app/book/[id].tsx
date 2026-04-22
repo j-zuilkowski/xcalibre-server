@@ -10,6 +10,7 @@ import {
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { Book } from "@autolibre/shared";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
@@ -73,6 +74,7 @@ function parseStoredProgress(value: string | null): number | null {
 export default function BookDetailScreen() {
   const router = useRouter();
   const client = useApi();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const bookId = Array.isArray(params.id) ? params.id[0] : params.id;
 
@@ -177,7 +179,7 @@ export default function BookDetailScreen() {
         [normalizedFormat]: localPath,
       }));
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : "Unable to download this format.");
+      setDownloadError(t("book.unable_to_download"));
     } finally {
       setDownloadingFormat(null);
     }
@@ -196,7 +198,7 @@ export default function BookDetailScreen() {
         return next;
       });
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : "Unable to remove this download.");
+      setDownloadError(t("book.unable_to_remove_download"));
     }
   };
 
@@ -204,15 +206,15 @@ export default function BookDetailScreen() {
 
   const authors = useMemo(() => {
     if (!book || book.authors.length === 0) {
-      return "Unknown author";
+      return t("common.unknown_author");
     }
     return book.authors.map((author) => author.name).join(", ");
-  }, [book]);
+  }, [book, t]);
 
   const documentType = useMemo(() => {
     const withDocumentType = book as (Book & { document_type?: string }) | undefined;
-    return (withDocumentType?.document_type ?? "unknown").toUpperCase();
-  }, [book]);
+    return (withDocumentType?.document_type ?? t("common.unknown")).toUpperCase();
+  }, [book, t]);
 
   const preferredReadFormat = downloadedFormats.EPUB ? "EPUB" : downloadedFormats.PDF ? "PDF" : null;
   const hasReadableDownload = Boolean(preferredReadFormat);
@@ -224,7 +226,7 @@ export default function BookDetailScreen() {
   if (!bookId) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Invalid book id.</Text>
+        <Text style={styles.errorText}>{t("book.invalid_book_id")}</Text>
       </View>
     );
   }
@@ -232,7 +234,7 @@ export default function BookDetailScreen() {
   if (bookQuery.isLoading) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.subtleText}>Loading book…</Text>
+        <Text style={styles.subtleText}>{t("book.loading_book")}</Text>
       </View>
     );
   }
@@ -240,7 +242,7 @@ export default function BookDetailScreen() {
   if (!book) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Unable to load this book.</Text>
+        <Text style={styles.errorText}>{t("book.unable_to_load")}</Text>
       </View>
     );
   }
@@ -258,7 +260,7 @@ export default function BookDetailScreen() {
             />
           ) : (
             <View style={styles.coverPlaceholder}>
-              <Text style={styles.coverPlaceholderText}>No Cover</Text>
+              <Text style={styles.coverPlaceholderText}>{t("book.no_cover")}</Text>
             </View>
           )}
         </View>
@@ -277,17 +279,17 @@ export default function BookDetailScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Metadata</Text>
+        <Text style={styles.sectionTitle}>{t("book.metadata")}</Text>
         <View style={styles.metadataRow}>
-          <Text style={styles.metadataLabel}>Language</Text>
-          <Text style={styles.metadataValue}>{book.language ?? "Unknown"}</Text>
+          <Text style={styles.metadataLabel}>{t("book.language")}</Text>
+          <Text style={styles.metadataValue}>{book.language ?? t("common.unknown")}</Text>
         </View>
         <View style={styles.metadataRow}>
-          <Text style={styles.metadataLabel}>Rating</Text>
+          <Text style={styles.metadataLabel}>{t("book.rating")}</Text>
           <Text style={styles.metadataValue}>{starRating(book.rating)}</Text>
         </View>
         <View style={styles.metadataRow}>
-          <Text style={styles.metadataLabel}>Document Type</Text>
+          <Text style={styles.metadataLabel}>{t("book.document_type")}</Text>
           <View style={styles.badgeMuted}>
             <Text style={styles.badgeMutedText}>{documentType}</Text>
           </View>
@@ -302,7 +304,7 @@ export default function BookDetailScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Formats</Text>
+        <Text style={styles.sectionTitle}>{t("book.formats")}</Text>
         {downloadError ? <Text style={styles.downloadError}>{downloadError}</Text> : null}
         {book.formats.map((format) => (
           <View key={format.id} style={styles.formatRow}>
@@ -313,7 +315,7 @@ export default function BookDetailScreen() {
             {downloadedFormats[format.format.toUpperCase()] ? (
               <View style={styles.downloadedActions}>
                 <View style={styles.downloadedBadge}>
-                  <Text style={styles.downloadedBadgeText}>Downloaded ✓</Text>
+                  <Text style={styles.downloadedBadgeText}>{t("book.downloaded")}</Text>
                 </View>
                 <Pressable
                   style={styles.deleteButton}
@@ -321,7 +323,7 @@ export default function BookDetailScreen() {
                     void removeDownload(book, format.format);
                   }}
                 >
-                  <Text style={styles.deleteButtonText}>Delete</Text>
+                  <Text style={styles.deleteButtonText}>{t("common.delete")}</Text>
                 </Pressable>
               </View>
             ) : (
@@ -335,10 +337,10 @@ export default function BookDetailScreen() {
                 {downloadingFormat === format.format.toUpperCase() ? (
                   <View style={styles.downloadButtonLoading}>
                     <ActivityIndicator color="#0f766e" size="small" />
-                    <Text style={styles.downloadButtonText}>Downloading…</Text>
+                    <Text style={styles.downloadButtonText}>{t("common.downloading")}</Text>
                   </View>
                 ) : (
-                  <Text style={styles.downloadButtonText}>Download</Text>
+                  <Text style={styles.downloadButtonText}>{t("common.download")}</Text>
                 )}
               </Pressable>
             )}
@@ -362,16 +364,16 @@ export default function BookDetailScreen() {
             });
           }}
         >
-          <Text style={styles.readButtonText}>Read</Text>
+          <Text style={styles.readButtonText}>{t("common.read")}</Text>
         </Pressable>
         {readProgressPercent ? (
-          <Text style={styles.readProgressText}>Progress: {readProgressPercent}</Text>
+          <Text style={styles.readProgressText}>{t("book.progress")}: {readProgressPercent}</Text>
         ) : null}
       </View>
 
       {llmHealthQuery.data?.enabled ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>AI</Text>
+          <Text style={styles.sectionTitle}>{t("book.ai")}</Text>
           <View style={styles.aiTabs}>
             {(["classify", "validate", "derive"] as const).map((tab) => (
               <Pressable
@@ -380,7 +382,7 @@ export default function BookDetailScreen() {
                 onPress={() => setAiTab(tab)}
               >
                 <Text style={[styles.aiTabText, aiTab === tab ? styles.aiTabTextActive : null]}>
-                  {tab === "classify" ? "Classify" : tab === "validate" ? "Validate" : "Derive"}
+                  {tab === "classify" ? t("book.classify") : tab === "validate" ? t("book.validate") : t("book.derive")}
                 </Text>
               </Pressable>
             ))}
@@ -388,14 +390,14 @@ export default function BookDetailScreen() {
 
           {aiTab === "classify" ? (
             <View style={styles.aiPanel}>
-              <Pressable
-                style={styles.aiActionButton}
-                onPress={() => {
-                  void classifyMutation.mutateAsync();
-                }}
-              >
-                <Text style={styles.aiActionText}>Run Classify</Text>
-              </Pressable>
+                <Pressable
+                  style={styles.aiActionButton}
+                  onPress={() => {
+                    void classifyMutation.mutateAsync();
+                  }}
+                >
+                <Text style={styles.aiActionText}>{t("book.run_classify")}</Text>
+                </Pressable>
               {classifyMutation.data?.suggestions.map((suggestion) => (
                 <Text key={suggestion.name} style={styles.aiResultText}>
                   {suggestion.name} ({Math.round(suggestion.confidence * 100)}%)
@@ -406,16 +408,16 @@ export default function BookDetailScreen() {
 
           {aiTab === "validate" ? (
             <View style={styles.aiPanel}>
-              <Pressable
-                style={styles.aiActionButton}
-                onPress={() => {
-                  void validateMutation.mutateAsync();
-                }}
-              >
-                <Text style={styles.aiActionText}>Run Validate</Text>
-              </Pressable>
+                <Pressable
+                  style={styles.aiActionButton}
+                  onPress={() => {
+                    void validateMutation.mutateAsync();
+                  }}
+                >
+                <Text style={styles.aiActionText}>{t("book.run_validate")}</Text>
+                </Pressable>
               {validateMutation.data ? (
-                <Text style={styles.aiResultText}>Severity: {validateMutation.data.severity}</Text>
+                <Text style={styles.aiResultText}>{t("book.severity")}: {validateMutation.data.severity}</Text>
               ) : null}
               {validateMutation.data?.issues.map((issue, index) => (
                 <Text key={`${issue.field}-${index}`} style={styles.aiResultText}>
@@ -427,14 +429,14 @@ export default function BookDetailScreen() {
 
           {aiTab === "derive" ? (
             <View style={styles.aiPanel}>
-              <Pressable
-                style={styles.aiActionButton}
-                onPress={() => {
-                  void deriveMutation.mutateAsync();
-                }}
-              >
-                <Text style={styles.aiActionText}>Run Derive</Text>
-              </Pressable>
+                <Pressable
+                  style={styles.aiActionButton}
+                  onPress={() => {
+                    void deriveMutation.mutateAsync();
+                  }}
+                >
+                <Text style={styles.aiActionText}>{t("book.run_derive")}</Text>
+                </Pressable>
               {deriveMutation.data ? (
                 <>
                   <Text style={styles.aiResultText}>{deriveMutation.data.summary}</Text>

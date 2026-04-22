@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 import type { ApiClient as CalibreClient } from "@autolibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
@@ -49,6 +50,7 @@ export function PdfReaderScreen({
   filePath,
   onBack,
 }: PdfReaderScreenProps) {
+  const { t } = useTranslation();
   const [overlayVisible, setOverlayVisible] = useState(true);
   const [initialPage, setInitialPage] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
@@ -129,7 +131,7 @@ export function PdfReaderScreen({
 
       {loadingProgress ? (
         <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>Loading reader…</Text>
+          <Text style={styles.loadingText}>{t("reader.loading_reader")}</Text>
         </View>
       ) : PdfRenderer ? (
         <PdfRenderer
@@ -148,7 +150,7 @@ export function PdfReaderScreen({
         />
       ) : (
         <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>PDF renderer not available.</Text>
+          <Text style={styles.loadingText}>{t("reader.pdf_renderer_unavailable")}</Text>
         </View>
       )}
 
@@ -157,7 +159,7 @@ export function PdfReaderScreen({
       {overlayVisible ? (
         <View style={styles.topOverlay}>
           <Pressable style={styles.backButton} onPress={onBack}>
-            <Text style={styles.backButtonText}>Back</Text>
+            <Text style={styles.backButtonText}>{t("common.back")}</Text>
           </Pressable>
           <Text style={styles.title} numberOfLines={1}>
             {title}

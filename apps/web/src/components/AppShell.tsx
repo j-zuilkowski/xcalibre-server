@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { SearchBar } from "../features/search/SearchBar";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
+import { changeLanguage, SUPPORTED_LANGUAGES } from "../i18n";
 
 type ThemeMode = "light" | "sepia" | "dark";
 
@@ -52,6 +54,7 @@ function isAdmin(roleName: string | undefined): boolean {
 
 export function AppShell() {
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
   const accessToken = useAuthStore((state) => state.access_token);
   const refreshToken = useAuthStore((state) => state.refresh_token);
   const user = useAuthStore((state) => state.user);
@@ -60,6 +63,7 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const initial = user?.username?.trim()[0]?.toUpperCase() ?? "A";
+  const currentLanguage = i18n.language.split("-")[0] || "en";
 
   const librariesQuery = useQuery({
     queryKey: ["libraries"],
@@ -108,6 +112,19 @@ export function AppShell() {
     void navigate({ to: "/login", replace: true });
   }
 
+  function translateLanguage(code: string): string {
+    if (code === "fr") {
+      return t("languages.french");
+    }
+    if (code === "de") {
+      return t("languages.german");
+    }
+    if (code === "es") {
+      return t("languages.spanish");
+    }
+    return t("languages.english");
+  }
+
   return (
     <div className={`min-h-screen ${theme === "dark" ? "bg-zinc-950 text-zinc-100" : "bg-zinc-50 text-zinc-900"}`}>
       <aside className="group fixed left-0 top-0 z-40 flex h-full w-12 flex-col border-r border-zinc-200 bg-white/95 shadow-sm transition-[width] duration-200 hover:w-48">
@@ -119,10 +136,10 @@ export function AppShell() {
 
         <nav className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">
           {[
-            { to: "/library", label: "Library", icon: "L" },
-            { to: "/downloads", label: "Downloads", icon: "D" },
-            { to: "/search", label: "Search", icon: "S" },
-            { to: "/shelves", label: "Shelves", icon: "H" },
+            { to: "/library", label: t("nav.library"), icon: "L" },
+            { to: "/downloads", label: t("nav.downloads"), icon: "D" },
+            { to: "/search", label: t("nav.search"), icon: "S" },
+            { to: "/shelves", label: t("nav.shelves"), icon: "H" },
           ].map((item) => (
             <Link
               key={item.to}
@@ -144,7 +161,7 @@ export function AppShell() {
       <header className="fixed left-12 right-0 top-0 z-30 h-16 border-b border-zinc-200 bg-white/95 backdrop-blur">
         <div className="flex h-full items-center gap-4 px-4">
           <Link to="/library" className="text-sm font-semibold tracking-wide text-zinc-900">
-            calibre-web
+            {t("app_name")}
           </Link>
 
           <div className="flex-1">
@@ -153,7 +170,7 @@ export function AppShell() {
 
           {librariesQuery.data && librariesQuery.data.length > 1 ? (
             <label className="hidden items-center gap-2 rounded-full border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-700 md:flex">
-              <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">Library</span>
+              <span className="text-xs uppercase tracking-[0.18em] text-zinc-500">{t("nav.library")}</span>
               <select
                 value={user?.default_library_id ?? "default"}
                 onChange={(event) => {
@@ -175,7 +192,7 @@ export function AppShell() {
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
               className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 bg-zinc-100 text-sm font-semibold text-zinc-800"
-              aria-label="User menu"
+              aria-label={t("common.user_menu")}
             >
               {initial}
             </button>
@@ -187,14 +204,14 @@ export function AppShell() {
                 className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
                 onClick={() => setMenuOpen(false)}
               >
-                Profile
+                {t("nav.profile")}
               </a>
                 <Link
                   to="/downloads"
                   className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
                   onClick={() => setMenuOpen(false)}
                 >
-                  Download history
+                  {t("downloads.page_title")}
                 </Link>
                 <button
                   type="button"
@@ -204,15 +221,33 @@ export function AppShell() {
                   }}
                   className="block w-full px-4 py-3 text-left text-sm text-zinc-700 hover:bg-zinc-100"
                 >
-                  Theme: {theme}
+                  {t("common.theme")}: {t(`theme_modes.${theme}`)}
                 </button>
+                <label className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100">
+                  <span className="block text-xs uppercase tracking-[0.18em] text-zinc-500">
+                    {t("language_selector.label")}
+                  </span>
+                  <select
+                    value={currentLanguage}
+                    onChange={(event) => {
+                      void changeLanguage(event.target.value);
+                    }}
+                    className="mt-1 w-full bg-transparent text-sm outline-none"
+                  >
+                    {SUPPORTED_LANGUAGES.map((language) => (
+                      <option key={language} value={language}>
+                        {translateLanguage(language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {isAdmin(user?.role.name) ? (
                   <Link
                     to="/admin/dashboard"
                     className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
                     onClick={() => setMenuOpen(false)}
                   >
-                    Admin Panel
+                    {t("nav.admin_panel")}
                   </Link>
                 ) : null}
                 <button
@@ -220,7 +255,7 @@ export function AppShell() {
                   onClick={signOut}
                   className="block w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50"
                 >
-                  Sign out
+                  {t("common.sign_out")}
                 </button>
               </div>
             ) : null}

@@ -3,12 +3,14 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import Constants from "expo-constants";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { useTranslation } from "react-i18next";
 import { clearTokens } from "../../lib/auth";
 import { getApiBaseUrl, useApi, setApiBaseUrl } from "../../lib/api";
 
 export default function ProfileTabScreen() {
   const router = useRouter();
   const client = useApi();
+  const { t } = useTranslation();
   const [serverUrl, setServerUrl] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -45,10 +47,10 @@ export default function ProfileTabScreen() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Profile</Text>
+      <Text style={styles.title}>{t("profile.page_title")}</Text>
 
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>Current user</Text>
+        <Text style={styles.cardLabel}>{t("profile.current_user")}</Text>
         {meQuery.data ? (
           <View style={styles.userBlock}>
             <Text testID="profile-username" style={styles.username}>
@@ -57,12 +59,12 @@ export default function ProfileTabScreen() {
             <Text style={styles.userMeta}>{meQuery.data.email}</Text>
           </View>
         ) : (
-          <Text style={styles.userMeta}>Loading user…</Text>
+          <Text style={styles.userMeta}>{t("profile.loading_user")}</Text>
         )}
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>Server URL</Text>
+        <Text style={styles.cardLabel}>{t("profile.server_url")}</Text>
         <TextInput
           testID="server-url-input"
           value={serverUrl}
@@ -81,12 +83,12 @@ export default function ProfileTabScreen() {
           }}
           disabled={saving}
         >
-          <Text style={styles.primaryButtonText}>{saving ? "Saving…" : "Save"}</Text>
+          <Text style={styles.primaryButtonText}>{saving ? t("common.saving") : t("common.save")}</Text>
         </Pressable>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>App version</Text>
+        <Text style={styles.cardLabel}>{t("profile.app_version")}</Text>
         <Text style={styles.versionText}>{version}</Text>
       </View>
 
@@ -99,7 +101,7 @@ export default function ProfileTabScreen() {
           });
         }}
       >
-        <Text style={styles.signOutText}>Sign Out</Text>
+        <Text style={styles.signOutText}>{t("common.sign_out")}</Text>
       </Pressable>
     </ScrollView>
   );

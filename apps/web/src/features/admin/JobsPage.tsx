@@ -1,9 +1,11 @@
+import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
 
 export function JobsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -34,8 +36,8 @@ export function JobsPage() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <header>
-        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">Jobs</p>
-        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">LLM job queue</h2>
+        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">{t("admin.jobs")}</p>
+        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">{t("admin.llm_job_queue")}</h2>
       </header>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
@@ -45,11 +47,11 @@ export function JobsPage() {
             onChange={(event) => setStatusFilter(event.target.value)}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
-            <option value="">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="running">Running</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
+            <option value="">{t("admin.all_statuses")}</option>
+            <option value="pending">{t("common.pending")}</option>
+            <option value="running">{t("common.running")}</option>
+            <option value="completed">{t("common.completed")}</option>
+            <option value="failed">{t("common.failed")}</option>
           </select>
 
           <select
@@ -57,7 +59,7 @@ export function JobsPage() {
             onChange={(event) => setTypeFilter(event.target.value)}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
-            <option value="">All job types</option>
+            <option value="">{t("admin.all_job_types")}</option>
             {jobTypes.map((type) => (
               <option key={type} value={type}>
                 {type}
@@ -71,18 +73,18 @@ export function JobsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Job</th>
-              <th className="px-4 py-3 font-medium">Book</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Created</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th className="px-4 py-3 font-medium">{t("admin.job")}</th>
+              <th className="px-4 py-3 font-medium">{t("book.book")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.status")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.created")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
             {jobs.map((job) => (
               <tr key={job.id} className="border-t border-zinc-800">
                 <td className="px-4 py-3 text-zinc-100">{job.job_type}</td>
-                <td className="px-4 py-3 text-zinc-300">{job.book_title ?? "Library job"}</td>
+                <td className="px-4 py-3 text-zinc-300">{job.book_title ?? t("admin.library_job")}</td>
                 <td className="px-4 py-3 text-zinc-300">{job.status}</td>
                 <td className="px-4 py-3 text-zinc-300">{formatDateTime(job.created_at)}</td>
                 <td className="px-4 py-3">
@@ -92,13 +94,13 @@ export function JobsPage() {
                       onClick={() => void cancelMutation.mutateAsync(job.id)}
                       className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300"
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   ) : (
-                    <span className="text-xs text-zinc-500">Not cancelable</span>
+                    <span className="text-xs text-zinc-500">{t("admin.not_cancelable")}</span>
                   )}
                   <p className="mt-2 text-xs text-zinc-500">
-                    Started {formatDateTime(job.started_at)} · Completed {formatDateTime(job.completed_at)}
+                    {t("admin.started", { value: formatDateTime(job.started_at) })} · {t("admin.completed", { value: formatDateTime(job.completed_at) })}
                   </p>
                   {job.error_text ? <p className="mt-1 text-xs text-red-300">{job.error_text}</p> : null}
                 </td>

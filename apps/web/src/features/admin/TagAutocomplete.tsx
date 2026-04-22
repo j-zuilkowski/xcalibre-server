@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { TagLookupItem } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 
@@ -16,6 +17,7 @@ export function TagAutocomplete({
   disabled = false,
   className = "",
 }: TagAutocompleteProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -62,7 +64,7 @@ export function TagAutocomplete({
       {open ? (
         <div className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-50 rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl">
           {trimmedQuery.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-zinc-500">Type to search tags.</p>
+            <p className="px-3 py-2 text-sm text-zinc-500">{t("admin.type_to_search_tags")}</p>
           ) : suggestions.length > 0 ? (
             <ul className="max-h-56 overflow-y-auto p-1">
               {suggestions.map((tag) => (
@@ -85,7 +87,7 @@ export function TagAutocomplete({
             </ul>
           ) : (
             <p className="px-3 py-2 text-sm text-zinc-500">
-              {tagsQuery.isFetching ? "Searching..." : "No tags found."}
+              {tagsQuery.isFetching ? t("common.searching") : t("admin.no_tags_found")}
             </p>
           )}
         </div>

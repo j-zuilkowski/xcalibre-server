@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
@@ -19,6 +20,7 @@ function clampPage(page: number, totalPages: number): number {
 }
 
 export function PdfReader({ book, format, initialProgress, onProgressChange }: ReaderComponentProps) {
+  const { t } = useTranslation();
   const streamUrl = useMemo(() => apiClient.streamUrl(book.id, format), [book.id, format]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -173,7 +175,7 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
 
       {engineUnavailable ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-zinc-400">
-          PDF rendering unavailable in this environment.
+          {t("reader.pdf_rendering_unavailable")}
         </div>
       ) : null}
 
@@ -189,15 +191,15 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
             ←
           </a>
           <div className="min-w-0 flex-1 truncate text-center text-sm text-zinc-300">
-            {book.title} · {book.authors.map((author) => author.name).join(", ") || "Unknown author"}
+            {book.title} · {book.authors.map((author) => author.name).join(", ") || t("common.unknown_author")}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" aria-label="Open settings" onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
+            <button type="button" aria-label={t("reader.open_settings")} onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
               ⚙
             </button>
             <button
               type="button"
-              aria-label="Open table of contents"
+              aria-label={t("reader.open_table_of_contents")}
               onClick={() => setTocOpen(true)}
               className="rounded border border-zinc-700 px-2 py-1 text-xs"
             >
@@ -219,10 +221,10 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right">
           <SheetHeader>
-            <SheetTitle>Reader settings</SheetTitle>
+            <SheetTitle>{t("reader.reader_settings")}</SheetTitle>
           </SheetHeader>
           <div className="space-y-4 p-5 text-sm">
-            <label className="block font-medium">Zoom: {zoom.toFixed(1)}x</label>
+            <label className="block font-medium">{t("reader.zoom", { value: zoom.toFixed(1) })}</label>
             <input
               type="range"
               min={0.8}
@@ -238,9 +240,9 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
       <Sheet open={tocOpen} onOpenChange={setTocOpen}>
         <SheetContent side="left">
           <SheetHeader>
-            <SheetTitle>Table of contents</SheetTitle>
+            <SheetTitle>{t("reader.table_of_contents")}</SheetTitle>
           </SheetHeader>
-          <div className="p-5 text-sm text-zinc-400">No table of contents available for this PDF.</div>
+          <div className="p-5 text-sm text-zinc-400">{t("reader.no_table_of_contents_pdf")}</div>
         </SheetContent>
       </Sheet>
     </div>

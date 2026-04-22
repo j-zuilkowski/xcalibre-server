@@ -1,10 +1,12 @@
 import { StyleSheet, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
 
 export default function SearchTabScreen() {
+  const { t } = useTranslation();
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Search</Text>
-      <Text style={styles.subtitle}>Semantic + keyword search is coming in a later stage.</Text>
+      <Text style={styles.title}>{t("search.page_title")}</Text>
+      <Text style={styles.subtitle}>{t("search.coming_later")}</Text>
     </View>
   );
 }

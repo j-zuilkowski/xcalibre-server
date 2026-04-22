@@ -3,6 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "noEmit": true,
+    "module": "esnext",
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "types": ["vitest/globals"],
     "paths": {

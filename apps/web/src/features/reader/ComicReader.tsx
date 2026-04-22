@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ComicReaderProps } from "./types";
 import { useAuthStore } from "../../lib/auth-store";
 
@@ -17,6 +18,7 @@ function authHeaders(token: string | null): HeadersInit {
 }
 
 export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
+  const { t } = useTranslation();
   const token = useAuthStore((state) => state.access_token);
   const [pages, setPages] = useState<ComicPageEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -49,7 +51,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
         setError(null);
       } catch {
         if (!cancelled) {
-          setError("Unable to load comic pages.");
+          setError(t("reader.unable_to_load_comic_pages"));
         }
       } finally {
         if (!cancelled) {
@@ -109,7 +111,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
         }
       } catch {
         if (!cancelled) {
-          setError("Unable to load comic page.");
+          setError(t("reader.unable_to_load_comic_page"));
         }
       } finally {
         if (!cancelled) {
@@ -175,7 +177,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
   if (loadingPages) {
     return (
       <div className="grid h-full place-items-center bg-zinc-950 text-zinc-200">
-        Loading comic...
+        {t("reader.loading_comic")}
       </div>
     );
   }
@@ -191,7 +193,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
   if (pages.length === 0) {
     return (
       <div className="grid h-full place-items-center bg-zinc-950 text-zinc-300">
-        No comic pages available.
+        {t("reader.no_comic_pages_available")}
       </div>
     );
   }
@@ -205,7 +207,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
           disabled={!canGoPrevious}
           className="rounded border border-zinc-700 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Previous
+          {t("common.previous")}
         </button>
         <div data-testid="comic-counter">{counterLabel}</div>
         <button
@@ -214,7 +216,7 @@ export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
           disabled={!canGoNext}
           className="rounded border border-zinc-700 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Next
+          {t("common.next")}
         </button>
       </header>
 

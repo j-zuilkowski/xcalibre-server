@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { beforeAll, vi } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -57,6 +57,12 @@ vi.mock("@react-native-community/netinfo", () => {
     refresh: vi.fn(async () => state),
     addEventListener: vi.fn(() => () => undefined),
     useNetInfo: vi.fn(() => state),
+  };
+});
+
+vi.mock("react-native-localize", () => {
+  return {
+    getLocales: () => [{ languageCode: "en", languageTag: "en-US" }],
   };
 });
 
@@ -216,4 +222,9 @@ vi.mock("expo-sqlite", () => {
     openDatabaseAsync: async () => createDatabase(),
     openDatabaseSync: () => createDatabase(),
   };
+});
+
+beforeAll(async () => {
+  const { initializeI18n } = await import("../i18n");
+  await initializeI18n();
 });

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import type { SQLiteDatabase } from "expo-sqlite";
+import { useTranslation } from "react-i18next";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
 import { getLocalPath } from "../../lib/downloads";
@@ -27,6 +28,7 @@ function normalizeFormat(format: string | undefined): ReaderFormat | null {
 export default function ReaderEntryScreen() {
   const router = useRouter();
   const client = useApi();
+  const { t } = useTranslation();
   const params = useLocalSearchParams<{ id?: string | string[]; format?: string | string[] }>();
   const bookId = Array.isArray(params.id) ? params.id[0] : params.id;
   const formatParam = Array.isArray(params.format) ? params.format[0] : params.format;
@@ -81,9 +83,9 @@ export default function ReaderEntryScreen() {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={styles.errorText}>Invalid reader request.</Text>
+        <Text style={styles.errorText}>{t("reader.invalid_request")}</Text>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Back</Text>
+          <Text style={styles.backButtonText}>{t("common.back")}</Text>
         </Pressable>
       </View>
     );
@@ -93,7 +95,7 @@ export default function ReaderEntryScreen() {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={styles.loadingText}>Opening reader…</Text>
+        <Text style={styles.loadingText}>{t("reader.opening_reader")}</Text>
       </View>
     );
   }
@@ -102,9 +104,9 @@ export default function ReaderEntryScreen() {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={styles.errorText}>Book not downloaded</Text>
+        <Text style={styles.errorText}>{t("reader.book_not_downloaded")}</Text>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>Back</Text>
+          <Text style={styles.backButtonText}>{t("common.back")}</Text>
         </Pressable>
       </View>
     );

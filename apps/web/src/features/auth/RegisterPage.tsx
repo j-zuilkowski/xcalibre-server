@@ -1,14 +1,15 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import type { ApiError } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 
-function getErrorMessage(error: unknown, fallback: string): string {
+function getErrorMessage(error: unknown, fallback: string, t: (key: string) => string): string {
   if (typeof error === "object" && error && "status" in error) {
     const apiError = error as ApiError;
     if (apiError.status === 409) {
-      return "An account already exists. Please sign in instead.";
+      return t("auth.account_exists");
     }
     return apiError.message || fallback;
   }
@@ -59,6 +60,7 @@ const inputStyle: CSSProperties = {
 export function RegisterPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,7 +78,7 @@ export function RegisterPage() {
       setAuth(response);
       await navigate({ to: "/" });
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to create the first account."));
+      setError(getErrorMessage(err, t("auth.unable_to_create_account"), t));
     } finally {
       setIsSubmitting(false);
     }
@@ -86,17 +88,19 @@ export function RegisterPage() {
     <main style={pageStyle}>
       <section style={cardStyle}>
         <p style={{ margin: 0, color: "#0f766e", fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          calibre-web
+          {t("app_name")}
         </p>
-        <h1 style={{ margin: "10px 0 8px", fontSize: "34px", lineHeight: 1.1 }}>Create admin</h1>
+        <h1 style={{ margin: "10px 0 8px", fontSize: "34px", lineHeight: 1.1 }}>
+          {t("auth.create_admin_title")}
+        </h1>
         <p style={{ margin: "0 0 24px", color: "#52525b", fontSize: "15px" }}>
-          Register the first account to initialize the library.
+          {t("auth.create_admin_subtitle")}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: "18px" }}>
           <div>
             <label htmlFor="register-username" style={labelStyle}>
-              Username
+              {t("auth.username")}
             </label>
             <input
               id="register-username"
@@ -109,7 +113,7 @@ export function RegisterPage() {
           </div>
           <div>
             <label htmlFor="register-email" style={labelStyle}>
-              Email
+              {t("auth.email")}
             </label>
             <input
               id="register-email"
@@ -123,7 +127,7 @@ export function RegisterPage() {
           </div>
           <div>
             <label htmlFor="register-password" style={labelStyle}>
-              Password
+              {t("auth.password")}
             </label>
             <input
               id="register-password"
@@ -156,14 +160,14 @@ export function RegisterPage() {
               cursor: isSubmitting ? "progress" : "pointer",
             }}
           >
-            {isSubmitting ? "Creating account..." : "Create account"}
+            {isSubmitting ? t("auth.creating_account") : t("auth.create_account")}
           </button>
         </form>
 
         <p style={{ margin: "20px 0 0", color: "#71717a", fontSize: "14px", textAlign: "center" }}>
-          Already have an account?{" "}
+          {t("auth.already_have_account")}{" "}
           <Link to="/login" style={{ color: "#0f766e", fontWeight: 600, textDecoration: "none" }}>
-            Sign in
+            {t("auth.sign_in")}
           </Link>
         </p>
       </section>

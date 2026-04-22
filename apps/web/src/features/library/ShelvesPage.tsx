@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { Shelf } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "./BookCard";
@@ -13,6 +14,7 @@ function ShelfBooksGrid({
   shelfId: string;
   onRemoveBook: (bookId: string) => void;
 }) {
+  const { t } = useTranslation();
   const booksQuery = useQuery({
     queryKey: ["shelf-books", shelfId],
     queryFn: () => apiClient.listShelfBooks(shelfId, { page: 1, page_size: SHELF_PAGE_SIZE }),
@@ -21,17 +23,17 @@ function ShelfBooksGrid({
   });
 
   if (booksQuery.isLoading) {
-    return <div className="rounded-xl border border-zinc-200 bg-white p-8 text-zinc-500">Loading shelf books...</div>;
+    return <div className="rounded-xl border border-zinc-200 bg-white p-8 text-zinc-500">{t("shelves.loading_books")}</div>;
   }
 
   if (booksQuery.isError) {
-    return <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">Unable to load shelf books.</div>;
+    return <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">{t("shelves.unable_to_load_books")}</div>;
   }
 
   const books = booksQuery.data?.items ?? [];
 
   if (books.length === 0) {
-    return <div className="rounded-xl border border-zinc-200 bg-white p-8 text-zinc-500">No books on this shelf yet.</div>;
+    return <div className="rounded-xl border border-zinc-200 bg-white p-8 text-zinc-500">{t("shelves.no_books_yet")}</div>;
   }
 
   return (
@@ -53,6 +55,7 @@ function ShelfBooksGrid({
 }
 
 export function ShelvesPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [selectedShelfId, setSelectedShelfId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -115,15 +118,15 @@ export function ShelvesPage() {
         <aside className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold">Shelves</h1>
-              <p className="text-sm text-zinc-500">Organize books into reading lists.</p>
+              <h1 className="text-2xl font-semibold">{t("shelves.page_title")}</h1>
+              <p className="text-sm text-zinc-500">{t("shelves.subtitle")}</p>
             </div>
             <button
               type="button"
               onClick={() => setShowCreateForm((open) => !open)}
               className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white"
             >
-              Create
+              {t("shelves.create")}
             </button>
           </div>
 
@@ -139,12 +142,12 @@ export function ShelvesPage() {
               }}
             >
               <label className="block text-sm">
-                <span className="mb-1 block font-medium text-zinc-700">Shelf name</span>
+                <span className="mb-1 block font-medium text-zinc-700">{t("shelves.shelf_name")}</span>
                 <input
                   value={shelfName}
                   onChange={(event) => setShelfName(event.target.value)}
                   className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  placeholder="Favorites"
+                  placeholder={t("shelves.favorites_placeholder")}
                 />
               </label>
 
@@ -154,7 +157,7 @@ export function ShelvesPage() {
                   checked={isPublic}
                   onChange={(event) => setIsPublic(event.target.checked)}
                 />
-                Public shelf
+                {t("shelves.public_shelf")}
               </label>
 
               <div className="flex items-center gap-2">
@@ -163,14 +166,14 @@ export function ShelvesPage() {
                   className="rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                   disabled={createShelfMutation.isPending}
                 >
-                  Save
+                  {t("common.save")}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowCreateForm(false)}
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-semibold text-zinc-700"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             </form>
@@ -178,9 +181,9 @@ export function ShelvesPage() {
 
           <div className="mt-4 space-y-2">
             {shelvesQuery.isLoading ? (
-              <p className="text-sm text-zinc-500">Loading shelves...</p>
+              <p className="text-sm text-zinc-500">{t("shelves.loading")}</p>
             ) : shelvesQuery.isError ? (
-              <p className="text-sm text-red-600">Unable to load shelves.</p>
+              <p className="text-sm text-red-600">{t("shelves.unable_to_load")}</p>
             ) : shelvesQuery.data?.length ? (
               shelvesQuery.data.map((shelf: Shelf) => {
                 const active = shelf.id === selectedShelfId;
@@ -198,7 +201,7 @@ export function ShelvesPage() {
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{shelf.name}</span>
                       <span className="block text-xs text-zinc-500">
-                        {shelf.is_public ? "Public" : "Private"}
+                        {shelf.is_public ? t("shelves.public") : t("shelves.private")}
                       </span>
                     </span>
                     <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
@@ -209,7 +212,7 @@ export function ShelvesPage() {
               })
             ) : (
               <div className="rounded-lg border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
-                No shelves yet.
+                {t("shelves.empty")}
               </div>
             )}
           </div>
@@ -222,7 +225,7 @@ export function ShelvesPage() {
                 <div>
                   <h2 className="text-2xl font-semibold">{selectedShelf.name}</h2>
                   <p className="text-sm text-zinc-500">
-                    {selectedShelf.is_public ? "Public shelf" : "Private shelf"} · {selectedShelf.book_count} books
+                    {selectedShelf.is_public ? t("shelves.public_shelf") : t("shelves.private_shelf")} · {selectedShelf.book_count} {t("shelves.books")}
                   </p>
                 </div>
               </div>
@@ -234,7 +237,7 @@ export function ShelvesPage() {
             </>
           ) : (
             <div className="grid min-h-[320px] place-items-center rounded-xl border border-dashed border-zinc-300 text-zinc-500">
-              Create a shelf or select one from the list.
+              {t("shelves.create_or_select")}
             </div>
           )}
         </section>

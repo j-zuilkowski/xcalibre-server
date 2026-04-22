@@ -8,22 +8,24 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useTranslation } from "react-i18next";
 import type { ApiError } from "@autolibre/shared";
 import { useApi, getApiBaseUrl, setApiBaseUrl } from "../lib/api";
 import { saveTokens } from "../lib/auth";
 
-function toErrorMessage(error: unknown): string {
+function toErrorMessage(error: unknown, t: (key: string) => string): string {
   const apiError = error as ApiError;
   if (apiError?.status === 401) {
-    return "Invalid email or password.";
+    return t("auth.invalid_credentials");
   }
 
-  return "Unable to sign in right now.";
+  return t("auth.unable_to_sign_in");
 }
 
 export default function LoginScreen() {
   const client = useApi();
   const router = useRouter();
+  const { t } = useTranslation();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -52,7 +54,7 @@ export default function LoginScreen() {
       await saveTokens(response.access_token, response.refresh_token);
       router.replace("/(tabs)/library");
     } catch (caught) {
-      setError(toErrorMessage(caught));
+      setError(toErrorMessage(caught, t));
     } finally {
       setLoading(false);
     }
@@ -61,7 +63,7 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.title}>Sign In</Text>
+        <Text style={styles.title}>{t("auth.sign_in_title")}</Text>
 
         <TextInput
           testID="login-base-url"
@@ -69,7 +71,7 @@ export default function LoginScreen() {
           onChangeText={setBaseUrl}
           onFocus={() => setFocusedField("baseUrl")}
           onBlur={() => setFocusedField(null)}
-          placeholder="Server URL"
+          placeholder={t("auth.server_url")}
           placeholderTextColor="#71717a"
           autoCapitalize="none"
           keyboardType="url"
@@ -85,7 +87,7 @@ export default function LoginScreen() {
           onChangeText={setEmail}
           onFocus={() => setFocusedField("email")}
           onBlur={() => setFocusedField(null)}
-          placeholder="Email"
+          placeholder={t("auth.email")}
           placeholderTextColor="#71717a"
           autoCapitalize="none"
           keyboardType="email-address"
@@ -98,7 +100,7 @@ export default function LoginScreen() {
           onChangeText={setPassword}
           onFocus={() => setFocusedField("password")}
           onBlur={() => setFocusedField(null)}
-          placeholder="Password"
+          placeholder={t("auth.password")}
           placeholderTextColor="#71717a"
           secureTextEntry
           style={[
@@ -122,7 +124,7 @@ export default function LoginScreen() {
           {loading ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.signInButtonText}>Sign In</Text>
+            <Text style={styles.signInButtonText}>{t("auth.sign_in")}</Text>
           )}
         </Pressable>
 

@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { BookSummary } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { CoverPlaceholder } from "./CoverPlaceholder";
@@ -10,9 +11,9 @@ type BookCardProps = {
   score?: number;
 };
 
-function authorLabel(book: BookSummary): string {
+function authorLabel(book: BookSummary, t: (key: string) => string): string {
   if (book.authors.length === 0) {
-    return "Unknown author";
+    return t("common.unknown_author");
   }
   return book.authors.map((author) => author.name).join(", ");
 }
@@ -41,6 +42,7 @@ export function BookCard({
   progressPercentage = 0,
   score,
 }: BookCardProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const safeProgress = Math.max(0, Math.min(100, progressPercentage));
   const scorePercentage =
@@ -80,18 +82,11 @@ export function BookCard({
 
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <div className="pointer-events-auto flex gap-2">
-            <a
-              href={readHref}
-              className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900"
-            >
-              Read
+            <a href={readHref} className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-semibold text-zinc-900">
+              {t("common.read")}
             </a>
-            <a
-              href={downloadHref}
-              className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100"
-              download
-            >
-              Download
+            <a href={downloadHref} className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-100" download>
+              {t("common.download")}
             </a>
           </div>
         </div>
@@ -99,7 +94,7 @@ export function BookCard({
         <div className="absolute right-2 top-2 z-10 flex gap-2">
           <button
             type="button"
-            aria-label={book.is_read ? "Mark unread" : "Mark as read"}
+            aria-label={book.is_read ? t("book.mark_unread") : t("book.mark_as_read")}
             aria-pressed={book.is_read}
             onClick={(event) => {
               event.preventDefault();
@@ -116,7 +111,7 @@ export function BookCard({
           </button>
           <button
             type="button"
-            aria-label={book.is_archived ? "Unarchive" : "Archive"}
+            aria-label={book.is_archived ? t("book.unarchive") : t("book.archive")}
             aria-pressed={book.is_archived}
             onClick={(event) => {
               event.preventDefault();
@@ -153,11 +148,11 @@ export function BookCard({
         </a>
         {scorePercentage !== null ? (
           <span className="inline-flex shrink-0 items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700">
-            Match {scorePercentage}%
+            {t("search.match", { score: scorePercentage })}
           </span>
         ) : null}
       </div>
-      <p className="truncate text-sm text-zinc-500">{authorLabel(book)}</p>
+      <p className="truncate text-sm text-zinc-500">{authorLabel(book, t)}</p>
     </article>
   );
 }

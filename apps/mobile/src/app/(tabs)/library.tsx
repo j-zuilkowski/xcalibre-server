@@ -10,6 +10,7 @@ import {
   type ListRenderItem,
 } from "react-native";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { BookSummary, PaginatedResponse } from "@autolibre/shared";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack } from "expo-router";
@@ -59,15 +60,17 @@ function LoadingSkeleton() {
 }
 
 function EmptyState() {
+  const { t } = useTranslation();
   return (
     <View style={styles.emptyState} testID="library-empty-state">
       <Ionicons name="library-outline" color="#0f766e" size={32} />
-      <Text style={styles.emptyStateTitle}>Your library is empty</Text>
+      <Text style={styles.emptyStateTitle}>{t("library.empty_title")}</Text>
     </View>
   );
 }
 
 export default function LibraryScreen() {
+  const { t } = useTranslation();
   const client = useApi();
   const queryClient = useQueryClient();
   const netInfo = useNetInfo();
@@ -197,7 +200,7 @@ export default function LibraryScreen() {
         ListFooterComponent={
           !isOffline && booksQuery.isFetchingNextPage ? (
             <Pressable style={styles.fetchingMore} disabled>
-              <Text style={styles.fetchingMoreText}>Loading more…</Text>
+              <Text style={styles.fetchingMoreText}>{t("library.loading_more")}</Text>
             </Pressable>
           ) : null
         }

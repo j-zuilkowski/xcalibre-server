@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { AdminJob } from "@autolibre/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
 
@@ -70,6 +71,7 @@ function statusBadge(job: AdminJob) {
 }
 
 export function AdminJobsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -111,8 +113,8 @@ export function AdminJobsPage() {
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-5">
       <header>
-        <h2 className="text-2xl font-semibold text-zinc-50">Jobs</h2>
-        <p className="text-sm text-zinc-400">Monitor and manage AI job execution.</p>
+        <h2 className="text-2xl font-semibold text-zinc-50">{t("admin.jobs")}</h2>
+        <p className="text-sm text-zinc-400">{t("admin.monitor_and_manage_ai_job_execution")}</p>
       </header>
 
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
@@ -125,11 +127,11 @@ export function AdminJobsPage() {
             }}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
-            <option value="">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="running">Running</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
+            <option value="">{t("admin.all_statuses")}</option>
+            <option value="pending">{t("common.pending")}</option>
+            <option value="running">{t("common.running")}</option>
+            <option value="completed">{t("common.completed")}</option>
+            <option value="failed">{t("common.failed")}</option>
           </select>
 
           <select
@@ -140,7 +142,7 @@ export function AdminJobsPage() {
             }}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
-            <option value="">All job types</option>
+            <option value="">{t("admin.all_job_types")}</option>
             {jobTypes.map((jobType) => (
               <option key={jobType} value={jobType}>
                 {jobType}
@@ -154,13 +156,13 @@ export function AdminJobsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Job ID</th>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Book</th>
-              <th className="px-4 py-3 font-medium">Created</th>
-              <th className="px-4 py-3 font-medium">Duration</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th className="px-4 py-3 font-medium">{t("admin.job_id")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.type")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.status")}</th>
+              <th className="px-4 py-3 font-medium">{t("book.book")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.created")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.duration")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -169,7 +171,7 @@ export function AdminJobsPage() {
                 <td className="px-4 py-3 font-mono text-zinc-200">{job.id.slice(0, 8)}</td>
                 <td className="px-4 py-3 text-zinc-200">{job.job_type}</td>
                 <td className="px-4 py-3">{statusBadge(job)}</td>
-                <td className="px-4 py-3 text-zinc-300">{job.book_title ?? "Library-wide"}</td>
+                <td className="px-4 py-3 text-zinc-300">{job.book_title ?? t("admin.library_wide")}</td>
                 <td className="px-4 py-3 text-zinc-300">{formatDateTime(job.created_at)}</td>
                 <td className="px-4 py-3 text-zinc-300">{formatDuration(job)}</td>
                 <td className="px-4 py-3">
@@ -180,10 +182,10 @@ export function AdminJobsPage() {
                       disabled={cancelMutation.isPending}
                       className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300 disabled:opacity-60"
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   ) : (
-                    <span className="text-xs text-zinc-500">—</span>
+                    <span className="text-xs text-zinc-500">{t("common.not_applicable")}</span>
                   )}
                 </td>
               </tr>
@@ -192,7 +194,7 @@ export function AdminJobsPage() {
             {!jobsQuery.isLoading && jobs.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-sm text-zinc-400">
-                  No jobs found.
+                  {t("admin.no_jobs_found")}
                 </td>
               </tr>
             ) : null}
@@ -207,10 +209,10 @@ export function AdminJobsPage() {
           disabled={page <= 1}
           className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Previous
+          {t("common.previous")}
         </button>
         <p className="text-sm text-zinc-400">
-          Page {page} of {totalPages}
+          {t("common.page_of", { page, total: totalPages })}
         </p>
         <button
           type="button"
@@ -218,7 +220,7 @@ export function AdminJobsPage() {
           disabled={page >= totalPages}
           className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Next
+          {t("common.next")}
         </button>
       </footer>
     </main>

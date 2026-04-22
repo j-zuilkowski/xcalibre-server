@@ -10,6 +10,7 @@ import { getAccessToken, setAuthExpiredHandler } from "../lib/auth";
 import { initializeApi } from "../lib/api";
 import { runMigrations } from "../lib/db";
 import { queryClient } from "../lib/query-client";
+import { initializeI18n } from "../i18n";
 
 export default function RootLayout() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function RootLayout() {
     void (async () => {
       await initializeApi();
       await runMigrations();
+      await initializeI18n();
       const accessToken = await getAccessToken();
 
       if (cancelled) {

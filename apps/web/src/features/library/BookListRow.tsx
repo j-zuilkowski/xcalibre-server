@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { BookSummary } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { CoverPlaceholder } from "./CoverPlaceholder";
@@ -7,14 +8,15 @@ type BookListRowProps = {
   formats?: string[];
 };
 
-function authorLabel(book: BookSummary): string {
+function authorLabel(book: BookSummary, t: (key: string) => string): string {
   if (book.authors.length === 0) {
-    return "Unknown author";
+    return t("common.unknown_author");
   }
   return book.authors.map((author) => author.name).join(", ");
 }
 
 export function BookListRow({ book, formats = [] }: BookListRowProps) {
+  const { t } = useTranslation();
   return (
     <article className="grid grid-cols-[56px_1fr_1fr_1fr] items-center gap-3 rounded-lg border border-zinc-200 bg-white p-2">
       <div className="w-12">
@@ -34,11 +36,11 @@ export function BookListRow({ book, formats = [] }: BookListRowProps) {
         <a href={`/books/${encodeURIComponent(book.id)}`} className="block truncate font-semibold text-zinc-900">
           {book.title}
         </a>
-        <p className="truncate text-sm text-zinc-500">{authorLabel(book)}</p>
+        <p className="truncate text-sm text-zinc-500">{authorLabel(book, t)}</p>
       </div>
 
       <p className="truncate text-sm text-zinc-600">
-        {book.series ? `${book.series.name}${book.series_index ? ` · ${book.series_index}` : ""}` : "No series"}
+        {book.series ? `${book.series.name}${book.series_index ? ` · ${book.series_index}` : ""}` : t("book.no_series")}
       </p>
 
       <div className="flex flex-wrap gap-1">
@@ -53,7 +55,7 @@ export function BookListRow({ book, formats = [] }: BookListRowProps) {
           ))
         ) : (
           <span className="rounded-full border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500">
-            Unknown format
+            {t("book.unknown_format")}
           </span>
         )}
       </div>

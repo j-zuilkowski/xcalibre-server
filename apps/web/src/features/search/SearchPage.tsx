@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ListBooksParams, SearchQuery } from "@autolibre/shared";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "../library/BookCard";
 
@@ -20,11 +21,11 @@ type SearchState = {
 const PAGE_SIZE = 24;
 
 const FILTER_CHIPS: Array<{ label: string; key: keyof ListBooksParams; value: string }> = [
-  { label: "Author", key: "author_id", value: "author-default" },
-  { label: "Series", key: "series_id", value: "series-default" },
-  { label: "Tag", key: "tag", value: "fiction" },
-  { label: "Language", key: "language", value: "en" },
-  { label: "Format", key: "format", value: "epub" },
+  { label: "author", key: "author_id", value: "author-default" },
+  { label: "series", key: "series_id", value: "series-default" },
+  { label: "tag", key: "tag", value: "fiction" },
+  { label: "language", key: "language", value: "en" },
+  { label: "format", key: "format", value: "epub" },
 ];
 
 function parsePage(value: string | null): number {
@@ -85,6 +86,7 @@ function toSearch(state: SearchState): string {
 }
 
 export function SearchPage() {
+  const { t } = useTranslation();
   const [searchState, setSearchState] = useState<SearchState>(() =>
     parseSearch(window.location.search),
   );
@@ -170,9 +172,9 @@ export function SearchPage() {
         <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold text-zinc-900">Search</h1>
+              <h1 className="text-2xl font-semibold text-zinc-900">{t("search.page_title")}</h1>
               <p className="text-sm text-zinc-500">
-                {hasQuery ? `Results for "${queryText}"` : "Enter a search to browse results."}
+                {hasQuery ? t("search.results_for", { query: queryText }) : t("search.enter_query")}
               </p>
             </div>
 
@@ -184,7 +186,7 @@ export function SearchPage() {
                   <button
                     key={tab}
                     type="button"
-                    title={disabled ? "Semantic search is unavailable right now." : undefined}
+                    title={disabled ? t("search.semantic_unavailable") : undefined}
                     disabled={disabled}
                     onClick={() => updateSearchState({ tab, page: 1 })}
                     className={`rounded-lg border px-3 py-2 text-sm ${
@@ -195,7 +197,7 @@ export function SearchPage() {
                           : "border-zinc-300 bg-white text-zinc-700"
                     }`}
                   >
-                    {tab === "library" ? "Library" : "Semantic"}
+                    {tab === "library" ? t("search.library_tab") : t("search.semantic_tab")}
                   </button>
                 );
               })}
@@ -216,14 +218,14 @@ export function SearchPage() {
                       : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400"
                   }`}
                 >
-                  {chip.label}
+                  {t(`library.${chip.label}`)}
                 </button>
               );
             })}
 
             <div className="ml-auto flex items-center gap-2">
               <label htmlFor="sort" className="text-sm text-zinc-500">
-                Sort
+                {t("library.sort")}
               </label>
               <select
                 id="sort"
@@ -231,10 +233,10 @@ export function SearchPage() {
                 onChange={(event) => updateSearchState({ sort: event.target.value, page: 1 })}
                 className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
               >
-                <option value="title">Title</option>
-                <option value="author">Author</option>
-                <option value="created_at">Date Added</option>
-                <option value="rating">Rating</option>
+                <option value="title">{t("library.title")}</option>
+                <option value="author">{t("library.author")}</option>
+                <option value="created_at">{t("library.date_added")}</option>
+                <option value="rating">{t("library.rating")}</option>
               </select>
             </div>
           </div>
@@ -250,23 +252,21 @@ export function SearchPage() {
 
         {!hasQuery ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-10 text-center">
-            <h2 className="text-2xl font-semibold text-zinc-900">Search your library</h2>
-            <p className="mt-2 text-zinc-500">
-              Use the search bar above or refine with filters once you enter a query.
-            </p>
+            <h2 className="text-2xl font-semibold text-zinc-900">{t("search.search_your_library")}</h2>
+            <p className="mt-2 text-zinc-500">{t("search.search_prompt")}</p>
           </section>
         ) : null}
 
         {hasQuery && booksQuery.isError ? (
           <section className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
-            Unable to search right now.
+            {t("search.unable_to_search")}
           </section>
         ) : null}
 
         {hasQuery && !booksQuery.isLoading && !booksQuery.isError && books.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-10 text-center">
-            <h2 className="text-2xl font-semibold text-zinc-900">No matching books</h2>
-            <p className="mt-2 text-zinc-500">Try a different query or clear the filters.</p>
+            <h2 className="text-2xl font-semibold text-zinc-900">{t("search.no_matching_books")}</h2>
+            <p className="mt-2 text-zinc-500">{t("search.try_different_query")}</p>
           </section>
         ) : null}
 
@@ -285,10 +285,10 @@ export function SearchPage() {
                 disabled={searchState.page <= 1}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Previous
+                {t("common.previous")}
               </button>
               <p className="text-sm text-zinc-600">
-                Page {searchState.page} of {totalPages}
+                {t("common.page_of", { page: searchState.page, total: totalPages })}
               </p>
               <button
                 type="button"
@@ -296,7 +296,7 @@ export function SearchPage() {
                 disabled={searchState.page >= totalPages}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Next
+                {t("common.next")}
               </button>
             </footer>
           </>

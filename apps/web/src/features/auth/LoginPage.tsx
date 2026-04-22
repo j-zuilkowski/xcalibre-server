@@ -1,15 +1,16 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { ApiError } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 
-function getErrorMessage(error: unknown, fallback: string): string {
+function getErrorMessage(error: unknown, fallback: string, t: (key: string) => string): string {
   if (typeof error === "object" && error && "status" in error) {
     const apiError = error as ApiError;
     if (apiError.status === 401) {
-      return "Invalid username or password.";
+      return t("auth.invalid_credentials");
     }
     return apiError.message || fallback;
   }
@@ -60,6 +61,7 @@ const inputStyle: CSSProperties = {
 export function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +83,7 @@ export function LoginPage() {
       setAuth(response);
       await navigate({ to: "/" });
     } catch (err) {
-      setError(getErrorMessage(err, "Unable to sign in."));
+      setError(getErrorMessage(err, t("auth.unable_to_sign_in"), t));
     } finally {
       setIsSubmitting(false);
     }
@@ -91,17 +93,17 @@ export function LoginPage() {
     <main style={pageStyle}>
       <section style={cardStyle}>
         <p style={{ margin: 0, color: "#0f766e", fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          calibre-web
+          {t("app_name")}
         </p>
-        <h1 style={{ margin: "10px 0 8px", fontSize: "34px", lineHeight: 1.1 }}>Sign in</h1>
+        <h1 style={{ margin: "10px 0 8px", fontSize: "34px", lineHeight: 1.1 }}>{t("auth.login_title")}</h1>
         <p style={{ margin: "0 0 24px", color: "#52525b", fontSize: "15px" }}>
-          Access your library and pick up where you left off.
+          {t("auth.login_subtitle")}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: "18px" }}>
           <div>
             <label htmlFor="login-username" style={labelStyle}>
-              Username
+              {t("auth.username")}
             </label>
             <input
               id="login-username"
@@ -114,7 +116,7 @@ export function LoginPage() {
           </div>
           <div>
             <label htmlFor="login-password" style={labelStyle}>
-              Password
+              {t("auth.password")}
             </label>
             <input
               id="login-password"
@@ -147,7 +149,7 @@ export function LoginPage() {
               cursor: isSubmitting ? "progress" : "pointer",
             }}
           >
-            {isSubmitting ? "Signing in..." : "Sign in"}
+            {isSubmitting ? t("auth.signing_in") : t("auth.sign_in")}
           </button>
         </form>
 
@@ -170,8 +172,8 @@ export function LoginPage() {
                     fontWeight: 600,
                     textDecoration: "none",
                   }}
-                >
-                  Sign in with Google
+                  >
+                  {t("auth.sign_in_with_google")}
                 </a>
               ) : null}
               {providersQuery.data?.github ? (
@@ -190,8 +192,8 @@ export function LoginPage() {
                     fontWeight: 600,
                     textDecoration: "none",
                   }}
-                >
-                  Sign in with GitHub
+                  >
+                  {t("auth.sign_in_with_github")}
                 </a>
               ) : null}
             </div>
@@ -199,9 +201,9 @@ export function LoginPage() {
         ) : null}
 
         <p style={{ margin: "20px 0 0", color: "#71717a", fontSize: "14px", textAlign: "center" }}>
-          Need the first admin account?{" "}
+          {t("auth.first_admin_prompt")}{" "}
           <Link to="/register" style={{ color: "#0f766e", fontWeight: 600, textDecoration: "none" }}>
-            Register here
+            {t("auth.register_here")}
           </Link>
         </p>
       </section>

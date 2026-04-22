@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../lib/auth-store";
 import { apiClient } from "../../lib/api-client";
+import { useTranslation } from "react-i18next";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
 import type { ReaderComponentProps } from "./types";
@@ -107,6 +108,7 @@ function clampProgress(value: number): number {
 
 export function EpubReader({ book, format, initialProgress, onProgressChange }: ReaderComponentProps) {
   const user = useAuthStore((state) => state.user);
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const renditionRef = useRef<EpubRendition | null>(null);
   const [engineUnavailable, setEngineUnavailable] = useState(false);
@@ -290,7 +292,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
 
       {engineUnavailable ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-zinc-400">
-          EPUB rendering unavailable in this environment.
+          {t("reader.epub_rendering_unavailable")}
         </div>
       ) : null}
 
@@ -306,15 +308,15 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
             ←
           </a>
           <div className="min-w-0 flex-1 truncate text-center text-sm text-zinc-300">
-            {book.title} · {book.authors.map((author) => author.name).join(", ") || "Unknown author"}
+            {book.title} · {book.authors.map((author) => author.name).join(", ") || t("common.unknown_author")}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" aria-label="Open settings" onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
+            <button type="button" aria-label={t("reader.open_settings")} onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
               ⚙
             </button>
             <button
               type="button"
-              aria-label="Open table of contents"
+              aria-label={t("reader.open_table_of_contents")}
               onClick={() => setTocOpen(true)}
               className="rounded border border-zinc-700 px-2 py-1 text-xs"
             >
@@ -336,12 +338,12 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right">
           <SheetHeader>
-            <SheetTitle>Reader settings</SheetTitle>
+            <SheetTitle>{t("reader.reader_settings")}</SheetTitle>
           </SheetHeader>
 
           <div className="space-y-6 p-5 text-sm">
             <div>
-              <p className="mb-2 font-medium">Font</p>
+              <p className="mb-2 font-medium">{t("reader.font")}</p>
               <label className="mr-4 inline-flex items-center gap-2">
                 <input
                   type="radio"
@@ -363,7 +365,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
             </div>
 
             <div>
-              <label className="mb-2 block font-medium">Font size: {settings.fontSize}px</label>
+              <label className="mb-2 block font-medium">{t("reader.font_size", { size: settings.fontSize })}</label>
               <input
                 type="range"
                 min={14}
@@ -376,7 +378,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
             </div>
 
             <div>
-              <label className="mb-2 block font-medium">Line height: {settings.lineHeight.toFixed(1)}</label>
+              <label className="mb-2 block font-medium">{t("reader.line_height", { value: settings.lineHeight.toFixed(1) })}</label>
               <input
                 type="range"
                 min={1.2}
@@ -390,7 +392,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
             </div>
 
             <div>
-              <label className="mb-2 block font-medium">Margin: {settings.margin}px</label>
+              <label className="mb-2 block font-medium">{t("reader.margin", { size: settings.margin })}</label>
               <input
                 type="range"
                 min={0}
@@ -403,7 +405,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
             </div>
 
             <div>
-              <p className="mb-2 font-medium">Theme</p>
+              <p className="mb-2 font-medium">{t("reader.theme")}</p>
               <div className="flex gap-2">
                 {(["light", "sepia", "dark"] as const).map((theme) => (
                   <button
@@ -416,7 +418,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
                         : "border-zinc-700 text-zinc-300"
                     }`}
                   >
-                    {theme}
+                    {t(`reader.${theme}`)}
                   </button>
                 ))}
               </div>
@@ -428,7 +430,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
       <Sheet open={tocOpen} onOpenChange={setTocOpen}>
         <SheetContent side="left">
           <SheetHeader>
-            <SheetTitle>Table of contents</SheetTitle>
+            <SheetTitle>{t("reader.table_of_contents")}</SheetTitle>
           </SheetHeader>
 
           <div className="p-5 text-sm">
@@ -452,7 +454,7 @@ export function EpubReader({ book, format, initialProgress, onProgressChange }: 
                 ))}
               </ul>
             ) : (
-              <p className="text-zinc-400">No table of contents available.</p>
+              <p className="text-zinc-400">{t("reader.no_table_of_contents")}</p>
             )}
           </div>
         </SheetContent>

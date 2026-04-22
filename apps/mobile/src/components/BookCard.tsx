@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
+import { useTranslation } from "react-i18next";
 import type { BookSummary } from "@autolibre/shared";
 import { useApi } from "../lib/api";
 
@@ -12,9 +13,10 @@ type BookCardProps = {
 export function BookCard({ book }: BookCardProps) {
   const router = useRouter();
   const client = useApi();
+  const { t } = useTranslation();
   const [imageFailed, setImageFailed] = useState(false);
 
-  const primaryAuthor = book.authors[0]?.name ?? "Unknown author";
+  const primaryAuthor = book.authors[0]?.name ?? t("common.unknown_author");
   const hasCover = book.has_cover && !imageFailed;
   const coverUri = book.cover_url ?? (book.has_cover ? client.coverUrl(book.id) : null);
 

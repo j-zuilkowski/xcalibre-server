@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { KoboDevice } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
@@ -9,6 +10,7 @@ function formatSyncUrl(): string {
 }
 
 export function KoboDevicesPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const devicesQuery = useQuery({
@@ -28,10 +30,10 @@ export function KoboDevicesPage() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <header>
-        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">Kobo</p>
-        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">Kobo devices</h2>
+        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">{t("admin.kobo")}</p>
+        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">{t("admin.kobo_devices")}</h2>
         <p className="mt-2 max-w-2xl text-sm text-zinc-400">
-          Registered devices sync through a Kobo token URL. Use this pattern when configuring a reader:
+          {t("admin.kobo_description")}
         </p>
         <code className="mt-3 inline-block rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-200">
           {formatSyncUrl()}
@@ -42,11 +44,11 @@ export function KoboDevicesPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Device</th>
-              <th className="px-4 py-3 font-medium">User</th>
-              <th className="px-4 py-3 font-medium">Last sync</th>
-              <th className="px-4 py-3 font-medium">Registered</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th className="px-4 py-3 font-medium">{t("admin.device")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.user")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.last_sync")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.registered")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -61,7 +63,7 @@ export function KoboDevicesPage() {
                   <div className="text-xs text-zinc-500">{device.email}</div>
                 </td>
                 <td className="px-4 py-3 text-zinc-300">
-                  {device.last_sync_at ? formatDateTime(device.last_sync_at) : "Never"}
+                  {device.last_sync_at ? formatDateTime(device.last_sync_at) : t("common.never")}
                 </td>
                 <td className="px-4 py-3 text-zinc-300">{formatDateTime(device.created_at)}</td>
                 <td className="px-4 py-3">
@@ -71,7 +73,7 @@ export function KoboDevicesPage() {
                     disabled={revokeMutation.isPending}
                     className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300 disabled:opacity-60"
                   >
-                    Revoke
+                    {t("common.revoke")}
                   </button>
                 </td>
               </tr>
@@ -80,7 +82,7 @@ export function KoboDevicesPage() {
             {!devicesQuery.isLoading && devices.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-sm text-zinc-400">
-                  No Kobo devices registered yet.
+                  {t("admin.no_kobo_devices_registered_yet")}
                 </td>
               </tr>
             ) : null}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ListBooksParams } from "@autolibre/shared";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "./BookCard";
 import { BookListRow } from "./BookListRow";
@@ -22,11 +23,11 @@ type LibrarySearchState = {
 const PAGE_SIZE = 24;
 
 const FILTER_CHIPS: Array<{ label: string; key: keyof ListBooksParams; value: string }> = [
-  { label: "Author", key: "author_id", value: "author-default" },
-  { label: "Series", key: "series_id", value: "series-default" },
-  { label: "Tag", key: "tag", value: "fiction" },
-  { label: "Language", key: "language", value: "en" },
-  { label: "Format", key: "format", value: "epub" },
+  { label: "author", key: "author_id", value: "author-default" },
+  { label: "series", key: "series_id", value: "series-default" },
+  { label: "tag", key: "tag", value: "fiction" },
+  { label: "language", key: "language", value: "en" },
+  { label: "format", key: "format", value: "epub" },
 ];
 
 function parsePage(value: string | null): number {
@@ -93,6 +94,7 @@ function toSearch(state: LibrarySearchState): string {
 }
 
 export function LibraryPage() {
+  const { t } = useTranslation();
   const [searchState, setSearchState] = useState<LibrarySearchState>(() =>
     parseSearch(window.location.search),
   );
@@ -180,7 +182,7 @@ export function LibraryPage() {
                       : "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400"
                   }`}
                 >
-                  {chip.label}
+                  {t(`library.${chip.label}`)}
                 </button>
               );
             })}
@@ -189,7 +191,7 @@ export function LibraryPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <label htmlFor="sort" className="text-sm text-zinc-500">
-                Sort
+                {t("library.sort")}
               </label>
               <select
                 id="sort"
@@ -199,10 +201,10 @@ export function LibraryPage() {
                 }
                 className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
               >
-                <option value="title">Title</option>
-                <option value="author">Author</option>
-                <option value="created_at">Date Added</option>
-                <option value="rating">Rating</option>
+                <option value="title">{t("library.title")}</option>
+                <option value="author">{t("library.author")}</option>
+                <option value="created_at">{t("library.date_added")}</option>
+                <option value="rating">{t("library.rating")}</option>
               </select>
             </div>
 
@@ -216,7 +218,7 @@ export function LibraryPage() {
                     : "border-zinc-300 bg-white text-zinc-700"
                 }`}
               >
-                Grid
+                {t("library.grid")}
               </button>
               <button
                 type="button"
@@ -227,7 +229,7 @@ export function LibraryPage() {
                     : "border-zinc-300 bg-white text-zinc-700"
                 }`}
                 >
-                  List
+                  {t("library.list")}
                 </button>
             </div>
 
@@ -245,7 +247,7 @@ export function LibraryPage() {
                   : "border-zinc-300 bg-white text-zinc-700"
               }`}
             >
-              Show archived
+              {t("library.show_archived")}
             </button>
           </div>
         </header>
@@ -260,19 +262,19 @@ export function LibraryPage() {
 
         {booksQuery.isError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
-            Unable to load your library right now.
+            {t("library.unable_to_load")}
           </div>
         ) : null}
 
         {!booksQuery.isLoading && !booksQuery.isError && books.length === 0 ? (
           <section className="rounded-xl border border-zinc-200 bg-white p-10 text-center">
-            <h1 className="text-2xl font-semibold text-zinc-900">No books in your library yet</h1>
-            <p className="mt-2 text-zinc-500">Import your library to start browsing covers.</p>
+            <h1 className="text-2xl font-semibold text-zinc-900">{t("library.empty_title")}</h1>
+            <p className="mt-2 text-zinc-500">{t("library.empty_subtitle")}</p>
             <a
               href="/admin/import"
               className="mt-5 inline-flex rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white"
             >
-              Import your library
+              {t("library.import_library")}
             </a>
           </section>
         ) : null}
@@ -300,10 +302,10 @@ export function LibraryPage() {
                 disabled={searchState.page <= 1}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Previous
+                {t("common.previous")}
               </button>
               <p className="text-sm text-zinc-600">
-                Page {searchState.page} of {totalPages}
+                {t("common.page_of", { page: searchState.page, total: totalPages })}
               </p>
               <button
                 type="button"
@@ -311,7 +313,7 @@ export function LibraryPage() {
                 disabled={searchState.page >= totalPages}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Next
+                {t("common.next")}
               </button>
             </footer>
           </>

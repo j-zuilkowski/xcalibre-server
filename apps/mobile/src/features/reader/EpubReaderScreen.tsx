@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import * as SecureStore from "expo-secure-store";
+import { useTranslation } from "react-i18next";
 import type { ApiClient as CalibreClient } from "@autolibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
@@ -98,6 +99,7 @@ export function EpubReaderScreen({
   filePath,
   onBack,
 }: EpubReaderScreenProps) {
+  const { t } = useTranslation();
   const [headerVisible, setHeaderVisible] = useState(true);
   const [headerOpacity] = useState(new Animated.Value(1));
   const [initialCfi, setInitialCfi] = useState<string | undefined>(undefined);
@@ -212,7 +214,7 @@ export function EpubReaderScreen({
 
       {loadingProgress ? (
         <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>Loading reader…</Text>
+          <Text style={styles.loadingText}>{t("reader.loading_reader")}</Text>
         </View>
       ) : EpubRenderer ? (
         <EpubRenderer
@@ -237,7 +239,7 @@ export function EpubReaderScreen({
         />
       ) : (
         <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>EPUB renderer not available.</Text>
+          <Text style={styles.loadingText}>{t("reader.epub_renderer_unavailable")}</Text>
         </View>
       )}
 
@@ -248,7 +250,7 @@ export function EpubReaderScreen({
         pointerEvents={headerVisible ? "auto" : "none"}
       >
         <Pressable style={styles.headerButton} onPress={onBack}>
-          <Text style={styles.headerButtonText}>Back</Text>
+          <Text style={styles.headerButtonText}>{t("common.back")}</Text>
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title}
@@ -258,7 +260,7 @@ export function EpubReaderScreen({
             <Text style={styles.headerActionText}>{fontFamily === "Inter" ? "Literata" : "Inter"}</Text>
           </Pressable>
           <Pressable style={styles.headerActionButton} onPress={toggleNight}>
-            <Text style={styles.headerActionText}>{nightMode ? "Day" : "Night"}</Text>
+            <Text style={styles.headerActionText}>{nightMode ? t("reader.day_mode") : t("reader.night_mode")}</Text>
           </Pressable>
         </View>
       </Animated.View>

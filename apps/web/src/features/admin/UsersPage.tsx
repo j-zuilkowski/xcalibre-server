@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { AdminUser, Role, TagLookupItem } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
@@ -32,6 +33,7 @@ function buildDraft(user: AdminUser): UserDraft {
 }
 
 export function UsersPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, UserDraft>>({});
   const [tagRestrictionUser, setTagRestrictionUser] = useState<AdminUser | null>(null);
@@ -112,12 +114,12 @@ export function UsersPage() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <header>
-        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">Users</p>
-        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">User management</h2>
+        <p className="text-sm uppercase tracking-[0.2em] text-teal-300">{t("admin.users")}</p>
+        <h2 className="mt-2 text-3xl font-semibold text-zinc-50">{t("admin.user_management")}</h2>
       </header>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
-        <h3 className="text-lg font-semibold text-zinc-50">Create user</h3>
+        <h3 className="text-lg font-semibold text-zinc-50">{t("admin.create_user")}</h3>
         <form
           className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5"
           onSubmit={(event) => {
@@ -128,19 +130,19 @@ export function UsersPage() {
           <input
             value={createForm.username}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, username: event.target.value }))}
-            placeholder="Username"
+            placeholder={t("auth.username")}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           />
           <input
             value={createForm.email}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, email: event.target.value }))}
-            placeholder="Email"
+            placeholder={t("auth.email")}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           />
           <input
             value={createForm.password}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, password: event.target.value }))}
-            placeholder="Password"
+            placeholder={t("auth.password")}
             type="password"
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           />
@@ -159,7 +161,7 @@ export function UsersPage() {
             type="submit"
             className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950"
           >
-            {createMutation.isPending ? "Creating..." : "Create"}
+            {createMutation.isPending ? t("common.creating") : t("common.create")}
           </button>
           <label className="flex items-center gap-2 text-sm text-zinc-300 md:col-span-2 xl:col-span-5">
             <input
@@ -167,7 +169,7 @@ export function UsersPage() {
               checked={createForm.is_active}
               onChange={(event) => setCreateForm((previous) => ({ ...previous, is_active: event.target.checked }))}
             />
-            Active
+            {t("common.active")}
           </label>
         </form>
       </section>
@@ -176,11 +178,11 @@ export function UsersPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Username</th>
-              <th className="px-4 py-3 font-medium">Role</th>
-              <th className="px-4 py-3 font-medium">Active</th>
-              <th className="px-4 py-3 font-medium">Last login</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th className="px-4 py-3 font-medium">{t("auth.username")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.role")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.active")}</th>
+              <th className="px-4 py-3 font-medium">{t("admin.last_login")}</th>
+              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -210,7 +212,7 @@ export function UsersPage() {
                         </option>
                       ))}
                     </select>
-                    <p className="mt-1 text-xs text-zinc-500">{role?.name ?? "Unknown role"}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{role?.name ?? t("common.unknown_role")}</p>
                   </td>
                   <td className="px-4 py-3">
                     <label className="flex items-center gap-2 text-zinc-300">
@@ -224,7 +226,7 @@ export function UsersPage() {
                           }))
                         }
                       />
-                      {draft.is_active ? "Yes" : "No"}
+                      {draft.is_active ? t("common.yes") : t("common.no")}
                     </label>
                     <label className="mt-2 flex items-center gap-2 text-xs text-zinc-400">
                       <input
@@ -237,7 +239,7 @@ export function UsersPage() {
                           }))
                         }
                       />
-                      Force reset
+                      {t("admin.force_reset")}
                     </label>
                   </td>
                   <td className="px-4 py-3 text-zinc-300">{formatDateTime(user.last_login_at)}</td>
@@ -257,28 +259,28 @@ export function UsersPage() {
                         }
                         className="rounded-lg border border-teal-500 px-3 py-2 text-xs text-teal-300"
                       >
-                        Save
+                        {t("common.save")}
                       </button>
                       <button
                         type="button"
                         onClick={() => void resetMutation.mutateAsync(user.id)}
                         className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
                       >
-                        Reset password
+                        {t("admin.reset_password")}
                       </button>
                       <button
                         type="button"
                         onClick={() => setTagRestrictionUser(user)}
                         className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
                       >
-                        Tag Restrictions
+                        {t("admin.tag_restrictions")}
                       </button>
                       <button
                         type="button"
                         onClick={() => void deleteMutation.mutateAsync(user.id)}
                         className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300"
                       >
-                        Delete
+                        {t("common.delete")}
                       </button>
                     </div>
                   </td>
@@ -306,6 +308,7 @@ function TagRestrictionsModal({
   user: AdminUser;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [selectedTag, setSelectedTag] = useState<TagLookupItem | null>(null);
   const [mode, setMode] = useState<"allow" | "block">("block");
@@ -341,39 +344,39 @@ function TagRestrictionsModal({
       <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-teal-300">Tag restrictions</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-teal-300">{t("admin.tag_restrictions")}</p>
             <h3 className="mt-1 text-xl font-semibold text-zinc-50">{user.username}</h3>
             <p className="text-sm text-zinc-400">{user.email}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
-          >
-            Close
-          </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              {t("common.close")}
+            </button>
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto]">
           <div className="space-y-2">
-            <label className="text-sm text-zinc-300">Tag</label>
-            <TagAutocomplete onSelect={setSelectedTag} placeholder="Search existing tags" />
+            <label className="text-sm text-zinc-300">{t("admin.tag")}</label>
+            <TagAutocomplete onSelect={setSelectedTag} placeholder={t("admin.search_existing_tags")} />
             {selectedTag ? (
               <p className="text-xs text-zinc-400">
-                Selected <span className="font-medium text-zinc-200">{selectedTag.name}</span>
+                {t("common.selected")} <span className="font-medium text-zinc-200">{selectedTag.name}</span>
               </p>
             ) : null}
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm text-zinc-300">Mode</label>
+            <label className="text-sm text-zinc-300">{t("admin.mode")}</label>
             <select
               value={mode}
               onChange={(event) => setMode(event.target.value as "allow" | "block")}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
             >
-              <option value="block">Block</option>
-              <option value="allow">Allow</option>
+              <option value="block">{t("admin.block")}</option>
+              <option value="allow">{t("admin.allow")}</option>
             </select>
             <button
               type="button"
@@ -386,14 +389,14 @@ function TagRestrictionsModal({
               }}
               className="w-full rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-60"
             >
-              Add
+              {t("common.add")}
             </button>
           </div>
         </div>
 
         <div className="mt-6">
           <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">
-            Current restrictions
+            {t("admin.current_restrictions")}
           </h4>
           <div className="mt-3 space-y-2">
             {restrictions.length > 0 ? (
@@ -404,21 +407,19 @@ function TagRestrictionsModal({
                 >
                   <div>
                     <p className="text-sm font-medium text-zinc-100">{restriction.tag_name}</p>
-                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">
-                      {restriction.mode}
-                    </p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{restriction.mode}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => void removeMutation.mutateAsync(restriction.tag_id)}
                     className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
                   >
-                    Remove
+                    {t("common.remove")}
                   </button>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-zinc-500">No restrictions yet.</p>
+              <p className="text-sm text-zinc-500">{t("admin.no_restrictions_yet")}</p>
             )}
           </div>
         </div>
