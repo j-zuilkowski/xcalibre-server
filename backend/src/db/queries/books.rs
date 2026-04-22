@@ -1,8 +1,8 @@
 use crate::db::models::{AuthorRef, Book, FormatRef, Identifier, SeriesRef, TagRef};
-use anyhow::Context;
+use anyhow::{bail, Context};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
@@ -69,6 +69,29 @@ pub struct FormatFileRecord {
     pub path: String,
     pub format: String,
     pub size_bytes: i64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CustomColumn {
+    pub id: String,
+    pub name: String,
+    pub label: String,
+    pub column_type: String,
+    pub is_multiple: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BookCustomValue {
+    pub column_id: String,
+    pub label: String,
+    pub column_type: String,
+    pub value: Option<Value>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BookCustomValueInput {
+    pub column_id: String,
+    pub value: Value,
 }
 
 impl RolePermissions {
@@ -885,6 +908,313 @@ pub async fn bulk_update_books(
     Ok(BulkUpdateBooksResult { updated, errors })
 }
 
+pub async fn merge_books(
+    db: &SqlitePool,
+    primary_id: &str,
+    duplicate_id: &str,
+) -> anyhow::Result<()> {
+    let primary_id = primary_id.trim();
+    let duplicate_id = duplicate_id.trim();
+    if primary_id.is_empty() || duplicate_id.is_empty() {
+        bail!("book id must not be empty");
+    }
+    if primary_id == duplicate_id {
+        bail!("cannot merge a book into itself");
+    }
+
+    let mut tx = db.begin().await?;
+
+    let primary_exists: Option<String> = sqlx::query_scalar("SELECT id FROM books WHERE id = ?")
+        .bind(primary_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if primary_exists.is_none() {
+        bail!("primary_not_found");
+    }
+
+    let duplicate_exists: Option<String> = sqlx::query_scalar("SELECT id FROM books WHERE id = ?")
+        .bind(duplicate_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if duplicate_exists.is_none() {
+        bail!("duplicate_not_found");
+    }
+
+    // Step 1: move non-conflicting formats to the primary book.
+    sqlx::query(
+        r#"
+        UPDATE formats
+        SET book_id = ?
+        WHERE book_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM formats f2
+              WHERE f2.book_id = ?
+                AND upper(f2.format) = upper(formats.format)
+          )
+        "#,
+    )
+    .bind(primary_id)
+    .bind(duplicate_id)
+    .bind(primary_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Step 2: merge identifiers (dedupe by (book_id, id_type)).
+    sqlx::query(
+        r#"
+        UPDATE identifiers
+        SET book_id = ?
+        WHERE book_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM identifiers i2
+              WHERE i2.book_id = ?
+                AND lower(i2.id_type) = lower(identifiers.id_type)
+          )
+        "#,
+    )
+    .bind(primary_id)
+    .bind(duplicate_id)
+    .bind(primary_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM identifiers WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 3: merge authors (dedupe by (book_id, author_id)).
+    let starting_order: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(display_order), -1) + 1 FROM book_authors WHERE book_id = ?",
+    )
+    .bind(primary_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let duplicate_author_rows = sqlx::query(
+        r#"
+        SELECT author_id
+        FROM book_authors
+        WHERE book_id = ?
+        ORDER BY display_order ASC, author_id ASC
+        "#,
+    )
+    .bind(duplicate_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (index, row) in duplicate_author_rows.into_iter().enumerate() {
+        let author_id: String = row.get("author_id");
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO book_authors (book_id, author_id, display_order)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(primary_id)
+        .bind(author_id)
+        .bind(starting_order + index as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("DELETE FROM book_authors WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 4: merge tags and preserve confirmed tags when either side confirmed.
+    sqlx::query(
+        r#"
+        INSERT INTO book_tags (book_id, tag_id, confirmed)
+        SELECT ?, tag_id, confirmed
+        FROM book_tags
+        WHERE book_id = ?
+        ON CONFLICT(book_id, tag_id) DO UPDATE SET
+            confirmed = MAX(book_tags.confirmed, excluded.confirmed)
+        "#,
+    )
+    .bind(primary_id)
+    .bind(duplicate_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM book_tags WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 5: reassign reading progress and keep the furthest percentage per user.
+    let duplicate_progress_rows = sqlx::query(
+        r#"
+        SELECT user_id, format_id, cfi, page, percentage, updated_at, last_modified
+        FROM reading_progress
+        WHERE book_id = ?
+        "#,
+    )
+    .bind(duplicate_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for row in duplicate_progress_rows {
+        let user_id: String = row.get("user_id");
+        let duplicate_format_id: String = row.get("format_id");
+        let duplicate_cfi: Option<String> = row.get("cfi");
+        let duplicate_page: Option<i64> = row.get("page");
+        let duplicate_percentage: f64 = row.get("percentage");
+        let duplicate_updated_at: String = row.get("updated_at");
+        let duplicate_last_modified: String = row.get("last_modified");
+
+        let mapped_format_id: String = sqlx::query_scalar(
+            r#"
+            SELECT COALESCE(
+                (
+                    SELECT pf.id
+                    FROM formats df
+                    JOIN formats pf
+                      ON pf.book_id = ?
+                     AND upper(pf.format) = upper(df.format)
+                    WHERE df.id = ?
+                    LIMIT 1
+                ),
+                ?
+            )
+            "#,
+        )
+        .bind(primary_id)
+        .bind(&duplicate_format_id)
+        .bind(&duplicate_format_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let existing_primary_row = sqlx::query(
+            r#"
+            SELECT percentage
+            FROM reading_progress
+            WHERE user_id = ? AND book_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(&user_id)
+        .bind(primary_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(existing_primary_row) = existing_primary_row {
+            let existing_percentage: f64 = existing_primary_row.get("percentage");
+            if duplicate_percentage >= existing_percentage {
+                sqlx::query(
+                    r#"
+                    UPDATE reading_progress
+                    SET
+                        format_id = ?,
+                        cfi = ?,
+                        page = ?,
+                        percentage = ?,
+                        updated_at = ?,
+                        last_modified = ?
+                    WHERE user_id = ? AND book_id = ?
+                    "#,
+                )
+                .bind(&mapped_format_id)
+                .bind(duplicate_cfi)
+                .bind(duplicate_page)
+                .bind(duplicate_percentage)
+                .bind(&duplicate_updated_at)
+                .bind(&duplicate_last_modified)
+                .bind(&user_id)
+                .bind(primary_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            continue;
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE reading_progress
+            SET
+                book_id = ?,
+                format_id = ?,
+                cfi = ?,
+                page = ?,
+                percentage = ?,
+                updated_at = ?,
+                last_modified = ?
+            WHERE user_id = ? AND book_id = ?
+            "#,
+        )
+        .bind(primary_id)
+        .bind(&mapped_format_id)
+        .bind(duplicate_cfi)
+        .bind(duplicate_page)
+        .bind(duplicate_percentage)
+        .bind(&duplicate_updated_at)
+        .bind(&duplicate_last_modified)
+        .bind(&user_id)
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("DELETE FROM reading_progress WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 6: reassign shelf links.
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO shelf_books (shelf_id, book_id, display_order, added_at)
+        SELECT shelf_id, ?, display_order, added_at
+        FROM shelf_books
+        WHERE book_id = ?
+        "#,
+    )
+    .bind(primary_id)
+    .bind(duplicate_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM shelf_books WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 7: reassign per-user book state.
+    sqlx::query(
+        r#"
+        INSERT INTO book_user_state (user_id, book_id, is_read, is_archived, updated_at)
+        SELECT user_id, ?, is_read, is_archived, updated_at
+        FROM book_user_state
+        WHERE book_id = ?
+        ON CONFLICT(user_id, book_id) DO UPDATE SET
+            is_read = MAX(book_user_state.is_read, excluded.is_read),
+            is_archived = MAX(book_user_state.is_archived, excluded.is_archived),
+            updated_at = CASE
+                WHEN excluded.updated_at >= book_user_state.updated_at THEN excluded.updated_at
+                ELSE book_user_state.updated_at
+            END
+        "#,
+    )
+    .bind(primary_id)
+    .bind(duplicate_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM book_user_state WHERE book_id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Step 8: delete duplicate book (remaining related rows cascade).
+    let deleted = sqlx::query("DELETE FROM books WHERE id = ?")
+        .bind(duplicate_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        bail!("duplicate_not_found");
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn delete_book_and_collect_paths(
     db: &SqlitePool,
     book_id: &str,
@@ -1134,6 +1464,215 @@ pub async fn get_book_identifiers(
             value: row.get("value"),
         })
         .collect())
+}
+
+pub async fn list_custom_columns(db: &SqlitePool) -> anyhow::Result<Vec<CustomColumn>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, name, label, column_type, is_multiple
+        FROM custom_columns
+        ORDER BY lower(label) ASC, id ASC
+        "#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| CustomColumn {
+            id: row.get("id"),
+            name: row.get("name"),
+            label: row.get("label"),
+            column_type: row.get("column_type"),
+            is_multiple: row.get::<i64, _>("is_multiple") != 0,
+        })
+        .collect())
+}
+
+pub async fn create_custom_column(
+    db: &SqlitePool,
+    name: &str,
+    label: &str,
+    column_type: &str,
+    is_multiple: bool,
+) -> anyhow::Result<CustomColumn> {
+    let now = Utc::now().to_rfc3339();
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO custom_columns (id, name, label, column_type, is_multiple, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(label)
+    .bind(column_type)
+    .bind(i64::from(is_multiple))
+    .bind(&now)
+    .execute(db)
+    .await?;
+
+    Ok(CustomColumn {
+        id,
+        name: name.to_string(),
+        label: label.to_string(),
+        column_type: column_type.to_string(),
+        is_multiple,
+    })
+}
+
+pub async fn delete_custom_column(db: &SqlitePool, column_id: &str) -> anyhow::Result<bool> {
+    let result = sqlx::query("DELETE FROM custom_columns WHERE id = ?")
+        .bind(column_id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn get_book_custom_values(
+    db: &SqlitePool,
+    book_id: &str,
+) -> anyhow::Result<Vec<BookCustomValue>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            cc.id AS column_id,
+            cc.label AS label,
+            cc.column_type AS column_type,
+            bcv.value_text AS value_text,
+            bcv.value_int AS value_int,
+            bcv.value_float AS value_float,
+            bcv.value_bool AS value_bool
+        FROM custom_columns cc
+        LEFT JOIN book_custom_values bcv
+            ON bcv.column_id = cc.id
+           AND bcv.book_id = ?
+        ORDER BY lower(cc.label) ASC, cc.id ASC
+        "#,
+    )
+    .bind(book_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let column_type: String = row.get("column_type");
+            BookCustomValue {
+                column_id: row.get("column_id"),
+                label: row.get("label"),
+                value: decode_custom_value(&column_type, &row),
+                column_type,
+            }
+        })
+        .collect())
+}
+
+pub async fn upsert_book_custom_values(
+    db: &SqlitePool,
+    book_id: &str,
+    values: &[BookCustomValueInput],
+) -> anyhow::Result<()> {
+    if values.is_empty() {
+        return Ok(());
+    }
+
+    let mut deduped_by_column: BTreeMap<String, Value> = BTreeMap::new();
+    for value in values {
+        let column_id = value.column_id.trim();
+        if column_id.is_empty() {
+            bail!("invalid_column_id");
+        }
+        deduped_by_column.insert(column_id.to_string(), value.value.clone());
+    }
+    if deduped_by_column.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = db.begin().await?;
+    let book_exists: Option<String> = sqlx::query_scalar("SELECT id FROM books WHERE id = ?")
+        .bind(book_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if book_exists.is_none() {
+        bail!("book_not_found");
+    }
+
+    let column_ids = deduped_by_column.keys().cloned().collect::<Vec<_>>();
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT id, column_type, is_multiple FROM custom_columns WHERE id IN (",
+    );
+    {
+        let mut separated = query.separated(", ");
+        for column_id in &column_ids {
+            separated.push_bind(column_id);
+        }
+    }
+    query.push(")");
+
+    let rows = query.build().fetch_all(&mut *tx).await?;
+    let definitions = rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("id"),
+                CustomColumnDefinition {
+                    column_type: row.get("column_type"),
+                    is_multiple: row.get::<i64, _>("is_multiple") != 0,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    if definitions.len() != deduped_by_column.len() {
+        bail!("column_not_found");
+    }
+
+    for (column_id, value) in deduped_by_column {
+        let definition = definitions
+            .get(&column_id)
+            .ok_or_else(|| anyhow::anyhow!("column_not_found"))?;
+        let parsed = parse_custom_value_input(
+            definition.column_type.as_str(),
+            definition.is_multiple,
+            &value,
+        )?;
+
+        if parsed.is_empty() {
+            sqlx::query("DELETE FROM book_custom_values WHERE book_id = ? AND column_id = ?")
+                .bind(book_id)
+                .bind(&column_id)
+                .execute(&mut *tx)
+                .await?;
+            continue;
+        }
+
+        sqlx::query(
+            r#"
+            INSERT INTO book_custom_values (
+                id, book_id, column_id, value_text, value_int, value_float, value_bool
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(book_id, column_id) DO UPDATE SET
+                value_text = excluded.value_text,
+                value_int = excluded.value_int,
+                value_float = excluded.value_float,
+                value_bool = excluded.value_bool
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(book_id)
+        .bind(&column_id)
+        .bind(parsed.value_text)
+        .bind(parsed.value_int)
+        .bind(parsed.value_float)
+        .bind(parsed.value_bool)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
 }
 
 fn apply_list_filters(
@@ -1607,6 +2146,171 @@ async fn apply_bulk_tags(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct CustomColumnDefinition {
+    column_type: String,
+    is_multiple: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ParsedCustomValue {
+    value_text: Option<String>,
+    value_int: Option<i64>,
+    value_float: Option<f64>,
+    value_bool: Option<i64>,
+}
+
+impl ParsedCustomValue {
+    fn is_empty(&self) -> bool {
+        self.value_text.is_none()
+            && self.value_int.is_none()
+            && self.value_float.is_none()
+            && self.value_bool.is_none()
+    }
+}
+
+fn decode_custom_value(column_type: &str, row: &SqliteRow) -> Option<Value> {
+    match normalize_custom_column_type(column_type) {
+        "integer" => row.get::<Option<i64>, _>("value_int").map(Value::from),
+        "float" => row.get::<Option<f64>, _>("value_float").map(Value::from),
+        "bool" => row.get::<Option<i64>, _>("value_bool").map(|value| Value::Bool(value != 0)),
+        _ => row.get::<Option<String>, _>("value_text").map(Value::String),
+    }
+}
+
+fn normalize_custom_column_type(column_type: &str) -> &'static str {
+    match column_type.trim().to_ascii_lowercase().as_str() {
+        "int" | "integer" => "integer",
+        "float" => "float",
+        "bool" | "boolean" => "bool",
+        "datetime" => "datetime",
+        "text" | "tags" => "text",
+        _ => "text",
+    }
+}
+
+fn parse_custom_value_input(
+    column_type: &str,
+    is_multiple: bool,
+    value: &Value,
+) -> anyhow::Result<ParsedCustomValue> {
+    if value.is_null() {
+        return Ok(ParsedCustomValue::default());
+    }
+
+    // For multi-valued columns we store values as JSON text in value_text.
+    if is_multiple {
+        return match value {
+            Value::Array(items) if items.is_empty() => Ok(ParsedCustomValue::default()),
+            Value::Array(_) => Ok(ParsedCustomValue {
+                value_text: Some(value.to_string()),
+                ..ParsedCustomValue::default()
+            }),
+            Value::String(text) if text.trim().is_empty() => Ok(ParsedCustomValue::default()),
+            Value::String(text) => Ok(ParsedCustomValue {
+                value_text: Some(text.trim().to_string()),
+                ..ParsedCustomValue::default()
+            }),
+            _ => bail!("invalid_custom_value_type"),
+        };
+    }
+
+    match normalize_custom_column_type(column_type) {
+        "integer" => {
+            if let Some(number) = value.as_i64() {
+                return Ok(ParsedCustomValue {
+                    value_int: Some(number),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            if let Some(text) = value.as_str() {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Ok(ParsedCustomValue::default());
+                }
+                let parsed = trimmed
+                    .parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("invalid_integer"))?;
+                return Ok(ParsedCustomValue {
+                    value_int: Some(parsed),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            bail!("invalid_integer");
+        }
+        "float" => {
+            if let Some(number) = value.as_f64() {
+                return Ok(ParsedCustomValue {
+                    value_float: Some(number),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            if let Some(text) = value.as_str() {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Ok(ParsedCustomValue::default());
+                }
+                let parsed = trimmed
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("invalid_float"))?;
+                return Ok(ParsedCustomValue {
+                    value_float: Some(parsed),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            bail!("invalid_float");
+        }
+        "bool" => {
+            if let Some(boolean) = value.as_bool() {
+                return Ok(ParsedCustomValue {
+                    value_bool: Some(i64::from(boolean)),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            if let Some(number) = value.as_i64() {
+                if number == 0 || number == 1 {
+                    return Ok(ParsedCustomValue {
+                        value_bool: Some(number),
+                        ..ParsedCustomValue::default()
+                    });
+                }
+            }
+            if let Some(text) = value.as_str() {
+                let normalized = text.trim().to_ascii_lowercase();
+                if normalized.is_empty() {
+                    return Ok(ParsedCustomValue::default());
+                }
+                let parsed = match normalized.as_str() {
+                    "1" | "true" | "yes" => Some(1_i64),
+                    "0" | "false" | "no" => Some(0_i64),
+                    _ => None,
+                };
+                if let Some(parsed) = parsed {
+                    return Ok(ParsedCustomValue {
+                        value_bool: Some(parsed),
+                        ..ParsedCustomValue::default()
+                    });
+                }
+            }
+            bail!("invalid_bool");
+        }
+        "datetime" | "text" => {
+            if let Some(text) = value.as_str() {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Ok(ParsedCustomValue::default());
+                }
+                return Ok(ParsedCustomValue {
+                    value_text: Some(trimmed.to_string()),
+                    ..ParsedCustomValue::default()
+                });
+            }
+            bail!("invalid_text");
+        }
+        _ => bail!("invalid_custom_value_type"),
+    }
 }
 
 fn looks_like_isbn(value: &str) -> bool {

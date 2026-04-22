@@ -9,6 +9,7 @@ import { useAuthStore } from "../lib/auth-store";
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getLlmHealthMock = vi.spyOn(apiClient, "getLlmHealth");
 const listShelvesMock = vi.spyOn(apiClient, "listShelves");
+const getBookCustomValuesMock = vi.spyOn(apiClient, "getBookCustomValues");
 
 function makeBook(): Book {
   return {
@@ -93,6 +94,7 @@ describe("BookDetailPage", () => {
     getBookMock.mockReset();
     getLlmHealthMock.mockReset();
     listShelvesMock.mockReset();
+    getBookCustomValuesMock.mockReset();
     window.history.replaceState({}, "", "/books/book-1");
     setUser(makeUser({ name: "admin", can_edit: true }));
     getLlmHealthMock.mockResolvedValue({
@@ -104,6 +106,7 @@ describe("BookDetailPage", () => {
       },
     });
     listShelvesMock.mockResolvedValue([]);
+    getBookCustomValuesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

@@ -10,6 +10,7 @@ const getBookMock = vi.spyOn(apiClient, "getBook");
 const getLlmHealthMock = vi.spyOn(apiClient, "getLlmHealth");
 const classifyBookMock = vi.spyOn(apiClient, "classifyBook");
 const confirmTagsMock = vi.spyOn(apiClient, "confirmTags");
+const getBookCustomValuesMock = vi.spyOn(apiClient, "getBookCustomValues");
 
 function makeBook(): Book {
   return {
@@ -109,12 +110,14 @@ describe("BookDetailLlm", () => {
     getLlmHealthMock.mockReset();
     classifyBookMock.mockReset();
     confirmTagsMock.mockReset();
+    getBookCustomValuesMock.mockReset();
 
     window.history.replaceState({}, "", "/books/book-1");
     setUser(makeUser());
 
     getBookMock.mockResolvedValue(makeBook());
     getLlmHealthMock.mockResolvedValue(makeLlmHealth(true));
+    getBookCustomValuesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {

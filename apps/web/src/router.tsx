@@ -8,6 +8,7 @@ import { ImportPage } from "./features/admin/ImportPage";
 import { AdminJobsPage } from "./features/admin/AdminJobsPage";
 import { KoboDevicesPage } from "./features/admin/KoboDevicesPage";
 import { LibrariesPage } from "./features/admin/LibrariesPage";
+import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
@@ -122,6 +123,12 @@ const adminLibrariesRoute = createRoute({
   component: LibrariesPage,
 });
 
+const adminCustomColumnsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "custom-columns",
+  component: CustomColumnsPage,
+});
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "login",
@@ -150,6 +157,7 @@ export const routeTree = rootRoute.addChildren([
       adminImportRoute,
       adminJobsRoute,
       adminLibrariesRoute,
+      adminCustomColumnsRoute,
       adminKoboDevicesRoute,
     ]),
   ]),

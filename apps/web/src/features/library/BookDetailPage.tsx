@@ -1,6 +1,16 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApiError, Book, FormatRef, TagSuggestion, ValidationResult } from "@autolibre/shared";
+import type {
+  ApiError,
+  Book,
+  BookCustomValue,
+  BookCustomValuePatch,
+  BookSummary,
+  CustomColumnType,
+  FormatRef,
+  TagSuggestion,
+  ValidationResult,
+} from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import {
@@ -14,7 +24,7 @@ type BookDetailPageProps = {
   bookId?: string;
 };
 
-type SectionKey = "description" | "formats" | "identifiers" | "series" | "history" | "ai";
+type SectionKey = "description" | "formats" | "identifiers" | "series" | "custom_fields" | "history" | "ai";
 type AiTab = "classify" | "validate" | "derive";
 
 const READ_FORMAT_PRIORITY = ["epub", "pdf", "azw3", "mobi"];
@@ -139,6 +149,77 @@ function severityStyles(severity: ValidationResult["severity"]): string {
   return "border-red-200 bg-red-50 text-red-700";
 }
 
+function formatCustomValue(value: BookCustomValue["value"]): string {
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  return String(value);
+}
+
+function customValueToDraft(value: BookCustomValue["value"], columnType: CustomColumnType): string | boolean {
+  if (columnType === "bool") {
+    return Boolean(value);
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function toCustomPatchValue(
+  columnType: CustomColumnType,
+  draftValue: string | boolean,
+): BookCustomValuePatch["value"] | undefined {
+  if (columnType === "bool") {
+    return Boolean(draftValue);
+  }
+
+  const text = String(draftValue).trim();
+  if (!text) {
+    return null;
+  }
+
+  if (columnType === "integer") {
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+    return parsed;
+  }
+
+  if (columnType === "float") {
+    const parsed = Number.parseFloat(text);
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+    return parsed;
+  }
+
+  return text;
+}
+
+function isSameCustomValue(
+  left: BookCustomValue["value"],
+  right: BookCustomValuePatch["value"],
+): boolean {
+  if (left === null && right === null) {
+    return true;
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left === right;
+  }
+  if (typeof left === "boolean" && typeof right === "boolean") {
+    return left === right;
+  }
+  if ((left === null || left === undefined) && (right === null || right === undefined)) {
+    return true;
+  }
+  return String(left ?? "") === String(right ?? "");
+}
+
 function Spinner({ className = "" }: { className?: string }) {
   return (
     <span
@@ -182,16 +263,21 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [shelfMenuOpen, setShelfMenuOpen] = useState(false);
   const [metadataLookupOpen, setMetadataLookupOpen] = useState(false);
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [selectedDuplicateId, setSelectedDuplicateId] = useState<string | null>(null);
   const [metadataSource, setMetadataSource] = useState<"openlibrary" | "googlebooks">("openlibrary");
   const [actionsOpen, setActionsOpen] = useState(false);
   const [aiTab, setAiTab] = useState<AiTab>("classify");
   const [pendingSuggestions, setPendingSuggestions] = useState<TagSuggestion[]>([]);
   const [metadataResult, setMetadataResult] = useState<Awaited<ReturnType<typeof apiClient.lookupBookMetadata>> | null>(null);
+  const [customFieldDrafts, setCustomFieldDrafts] = useState<Record<string, string | boolean>>({});
   const [sectionsOpen, setSectionsOpen] = useState<Record<SectionKey, boolean>>({
     description: false,
     formats: false,
     identifiers: false,
     series: false,
+    custom_fields: false,
     history: false,
     ai: false,
   });
@@ -200,6 +286,34 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     queryKey: ["book", resolvedBookId],
     queryFn: () => apiClient.getBook(resolvedBookId as string),
     enabled: Boolean(resolvedBookId),
+  });
+
+  const customValuesQuery = useQuery({
+    queryKey: ["book-custom-values", resolvedBookId],
+    queryFn: () => apiClient.getBookCustomValues(resolvedBookId as string),
+    enabled: Boolean(resolvedBookId),
+  });
+
+  const mergeCandidatesQuery = useQuery({
+    queryKey: ["merge-candidates", mergeSearch.trim()],
+    queryFn: async () => {
+      const response = await apiClient.listBooks({
+        q: mergeSearch.trim(),
+        page: 1,
+        page_size: 8,
+        sort: "title",
+        order: "asc",
+      });
+      return response.items.filter((item) => item.id !== resolvedBookId);
+    },
+    enabled: mergeModalOpen && mergeSearch.trim().length >= 2,
+    staleTime: 30_000,
+  });
+
+  const selectedDuplicateQuery = useQuery({
+    queryKey: ["merge-duplicate-book", selectedDuplicateId],
+    queryFn: () => apiClient.getBook(selectedDuplicateId as string),
+    enabled: mergeModalOpen && Boolean(selectedDuplicateId),
   });
 
   const shelvesQuery = useQuery({
@@ -314,7 +428,39 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
     mutationFn: () => apiClient.deriveBook(resolvedBookId as string),
   });
 
+  const patchCustomValuesMutation = useMutation({
+    mutationFn: (values: BookCustomValuePatch[]) =>
+      apiClient.patchBookCustomValues(resolvedBookId as string, values),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["book-custom-values", resolvedBookId] });
+    },
+  });
+
+  const mergeBookMutation = useMutation({
+    mutationFn: (duplicateId: string) => apiClient.mergeBook(resolvedBookId as string, duplicateId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["book", resolvedBookId] });
+      await queryClient.invalidateQueries({ queryKey: ["books"] });
+      setMergeModalOpen(false);
+      setSelectedDuplicateId(null);
+      setMergeSearch("");
+      window.location.assign(`/books/${encodeURIComponent(resolvedBookId as string)}`);
+    },
+  });
+
   const book = bookQuery.data;
+
+  useEffect(() => {
+    const values = customValuesQuery.data;
+    if (!values) {
+      return;
+    }
+    const nextDrafts: Record<string, string | boolean> = {};
+    for (const value of values) {
+      nextDrafts[value.column_id] = customValueToDraft(value.value, value.column_type);
+    }
+    setCustomFieldDrafts(nextDrafts);
+  }, [customValuesQuery.data]);
 
   const canEditBook = useMemo(
     () => isAdminOrEditor(user?.role.name, user?.role.can_edit),
@@ -355,6 +501,19 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const rating = buildStars(book.rating);
   const confirmedTags = book.tags.filter((tag) => tag.confirmed);
   const showAiPanel = llmHealthQuery.data?.enabled === true;
+  const customValues = customValuesQuery.data ?? [];
+  const selectedDuplicateBook = selectedDuplicateQuery.data;
+
+  const commitCustomFieldValue = async (field: BookCustomValue, draftValue: string | boolean) => {
+    const patchValue = toCustomPatchValue(field.column_type, draftValue);
+    if (patchValue === undefined) {
+      return;
+    }
+    if (isSameCustomValue(field.value, patchValue)) {
+      return;
+    }
+    await patchCustomValuesMutation.mutateAsync([{ column_id: field.column_id, value: patchValue }]);
+  };
 
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-6 text-zinc-900 md:px-6 lg:px-8">
@@ -390,6 +549,20 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     >
                       Lookup metadata
                     </button>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMergeModalOpen(true);
+                          setActionsOpen(false);
+                          setSelectedDuplicateId(null);
+                          setMergeSearch("");
+                        }}
+                        className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100"
+                      >
+                        Merge duplicate book
+                      </button>
+                    ) : null}
                     <button type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-zinc-100">
                       Replace cover
                     </button>
@@ -666,6 +839,71 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             )}
           </CollapsibleSection>
 
+          <CollapsibleSection
+            label="Custom Fields"
+            open={sectionsOpen.custom_fields}
+            onToggle={() =>
+              setSectionsOpen((previous) => ({
+                ...previous,
+                custom_fields: !previous.custom_fields,
+              }))
+            }
+          >
+            {customValuesQuery.isLoading ? (
+              <p className="text-zinc-500">Loading custom fields...</p>
+            ) : customValues.length === 0 ? (
+              <p className="text-zinc-500">No custom fields configured.</p>
+            ) : (
+              <div className="space-y-3">
+                {customValues.map((field) => {
+                  const draftValue = customFieldDrafts[field.column_id] ?? customValueToDraft(field.value, field.column_type);
+                  return (
+                    <div key={field.column_id} className="grid gap-2 md:grid-cols-[180px_1fr] md:items-center">
+                      <label className="font-medium text-zinc-900">{field.label}</label>
+                      {canEditBook ? (
+                        field.column_type === "bool" ? (
+                          <label className="inline-flex items-center gap-2 text-zinc-700">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(draftValue)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setCustomFieldDrafts((previous) => ({
+                                  ...previous,
+                                  [field.column_id]: checked,
+                                }));
+                                void commitCustomFieldValue(field, checked);
+                              }}
+                            />
+                            {Boolean(draftValue) ? "Yes" : "No"}
+                          </label>
+                        ) : (
+                          <input
+                            type={field.column_type === "integer" || field.column_type === "float" ? "number" : "text"}
+                            step={field.column_type === "float" ? "any" : undefined}
+                            value={String(draftValue)}
+                            onChange={(event) =>
+                              setCustomFieldDrafts((previous) => ({
+                                ...previous,
+                                [field.column_id]: event.target.value,
+                              }))
+                            }
+                            onBlur={(event) => {
+                              void commitCustomFieldValue(field, event.target.value);
+                            }}
+                            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800"
+                          />
+                        )
+                      ) : (
+                        <span className="text-zinc-700">{formatCustomValue(field.value)}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CollapsibleSection>
+
           {isAdmin ? (
             <CollapsibleSection
               label="History"
@@ -883,6 +1121,119 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
             </CollapsibleSection>
           ) : null}
         </div>
+
+        {mergeModalOpen ? (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-zinc-950/60 p-4">
+            <div className="w-full max-w-4xl rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Merge books</p>
+                  <h2 className="mt-1 text-lg font-semibold text-zinc-900">Merge duplicate into current book</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMergeModalOpen(false)}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-700"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <label className="block text-sm font-medium text-zinc-700">
+                  Search duplicate by title
+                  <input
+                    value={mergeSearch}
+                    onChange={(event) => setMergeSearch(event.target.value)}
+                    placeholder="Start typing title..."
+                    className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                  />
+                </label>
+
+                {mergeSearch.trim().length < 2 ? (
+                  <p className="text-sm text-zinc-500">Type at least 2 characters.</p>
+                ) : mergeCandidatesQuery.isLoading ? (
+                  <p className="text-sm text-zinc-500">Searching...</p>
+                ) : mergeCandidatesQuery.data && mergeCandidatesQuery.data.length > 0 ? (
+                  <div className="max-h-44 overflow-auto rounded-lg border border-zinc-200">
+                    {mergeCandidatesQuery.data.map((candidate: BookSummary) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        onClick={() => setSelectedDuplicateId(candidate.id)}
+                        className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-zinc-50 ${
+                          selectedDuplicateId === candidate.id ? "bg-teal-50" : ""
+                        }`}
+                      >
+                        <span>{candidate.title}</span>
+                        <span className="text-zinc-500">
+                          {candidate.authors.map((author) => author.name).join(", ")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-500">No matching books found.</p>
+                )}
+              </div>
+
+              {selectedDuplicateBook ? (
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <section className="rounded-xl border border-zinc-200 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Primary (keep)</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-900">{book.title}</p>
+                    <p className="mt-1 text-sm text-zinc-700">
+                      Authors: {book.authors.map((author) => author.name).join(", ") || "Unknown"}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-700">
+                      Formats: {book.formats.map((format) => format.format.toUpperCase()).join(", ") || "None"}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-700">Identifiers: {book.identifiers.length}</p>
+                  </section>
+                  <section className="rounded-xl border border-zinc-200 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Duplicate (remove)</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-900">{selectedDuplicateBook.title}</p>
+                    <p className="mt-1 text-sm text-zinc-700">
+                      Authors:{" "}
+                      {selectedDuplicateBook.authors.map((author) => author.name).join(", ") || "Unknown"}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-700">
+                      Formats:{" "}
+                      {selectedDuplicateBook.formats
+                        .map((format) => format.format.toUpperCase())
+                        .join(", ") || "None"}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-700">
+                      Identifiers: {selectedDuplicateBook.identifiers.length}
+                    </p>
+                  </section>
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMergeModalOpen(false)}
+                  className="rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedDuplicateBook || mergeBookMutation.isPending}
+                  onClick={() => {
+                    if (selectedDuplicateBook) {
+                      void mergeBookMutation.mutateAsync(selectedDuplicateBook.id);
+                    }
+                  }}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {mergeBookMutation.isPending ? "Merging..." : "Confirm merge"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {metadataLookupOpen ? (
           <aside className="fixed right-4 top-20 z-30 w-[min(92vw,420px)] rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl">

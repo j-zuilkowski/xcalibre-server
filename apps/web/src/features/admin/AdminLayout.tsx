@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: "/admin/import", label: "Import" },
   { to: "/admin/jobs", label: "Jobs" },
   { to: "/admin/libraries", label: "Libraries" },
+  { to: "/admin/custom-columns", label: "Custom Columns" },
   { to: "/admin/kobo-devices", label: "Kobo Devices" },
 ];
 

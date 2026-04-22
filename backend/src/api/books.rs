@@ -13,7 +13,7 @@ use axum::{
     extract::{Extension, Multipart, Path, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use lettre::{
@@ -22,6 +22,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 use std::{
     io::{Read, Seek},
@@ -42,7 +43,17 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/books",
             get(list_books).post(upload_book).patch(bulk_edit_books),
         )
+        .route(
+            "/api/v1/books/custom-columns",
+            get(list_custom_columns).post(create_custom_column),
+        )
+        .route(
+            "/api/v1/books/custom-columns/:id",
+            delete(delete_custom_column),
+        )
         .route("/api/v1/books/downloads", get(list_download_history))
+        .route("/api/v1/books/:id/custom-values", get(get_book_custom_values).patch(patch_book_custom_values))
+        .route("/api/v1/books/:id/merge", post(merge_book))
         .route(
             "/api/v1/books/:id",
             get(get_book).patch(patch_book).delete(delete_book),
@@ -121,6 +132,26 @@ struct PatchBookRequest {
     authors: Option<Vec<String>>,
     #[serde(default)]
     identifiers: Option<Vec<IdentifierPatch>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MergeBookRequest {
+    duplicate_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateCustomColumnRequest {
+    name: String,
+    label: String,
+    column_type: String,
+    #[serde(default)]
+    is_multiple: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomValuePatchRequest {
+    column_id: String,
+    value: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,6 +392,193 @@ async fn get_book(
     )
     .await?;
     Ok(Json(book))
+}
+
+async fn list_custom_columns(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<book_queries::CustomColumn>>, AppError> {
+    let columns = book_queries::list_custom_columns(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(columns))
+}
+
+async fn create_custom_column(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<CreateCustomColumnRequest>,
+) -> Result<(StatusCode, Json<book_queries::CustomColumn>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let name = payload.name.trim();
+    let label = payload.label.trim();
+    let Some(column_type) = normalize_custom_column_type(&payload.column_type) else {
+        return Err(AppError::BadRequest);
+    };
+    if name.is_empty() || label.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let created = book_queries::create_custom_column(
+        &state.db,
+        name,
+        label,
+        column_type,
+        payload.is_multiple,
+    )
+    .await
+    .map_err(|err| {
+        if err.to_string().to_lowercase().contains("unique") {
+            AppError::Conflict
+        } else {
+            AppError::Internal
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+async fn delete_custom_column(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(column_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    if column_id.trim().is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let deleted = book_queries::delete_custom_column(&state.db, &column_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !deleted {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_book_custom_values(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+) -> Result<Json<Vec<book_queries::BookCustomValue>>, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let values = book_queries::get_book_custom_values(&state.db, &book_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(values))
+}
+
+async fn patch_book_custom_values(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<Vec<CustomValuePatchRequest>>,
+) -> Result<StatusCode, AppError> {
+    ensure_can_edit(&state, &auth_user.user.id).await?;
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let mut values = Vec::with_capacity(payload.len());
+    for entry in payload {
+        let column_id = entry.column_id.trim().to_string();
+        if column_id.is_empty() {
+            return Err(AppError::BadRequest);
+        }
+        values.push(book_queries::BookCustomValueInput {
+            column_id,
+            value: entry.value,
+        });
+    }
+
+    let result = book_queries::upsert_book_custom_values(&state.db, &book_id, &values).await;
+    match result {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => {
+            let message = err.to_string().to_lowercase();
+            if message.contains("invalid_") {
+                Err(AppError::BadRequest)
+            } else if message.contains("column_not_found") {
+                Err(AppError::NotFound)
+            } else {
+                Err(AppError::Internal)
+            }
+        }
+    }
+}
+
+async fn merge_book(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(primary_id): Path<String>,
+    Json(payload): Json<MergeBookRequest>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let primary_id = primary_id.trim().to_string();
+    let duplicate_id = payload.duplicate_id.trim().to_string();
+    if primary_id.is_empty() || duplicate_id.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    if primary_id == duplicate_id {
+        return Err(AppError::BadRequest);
+    }
+
+    let primary_exists = book_queries::get_book_by_id(
+        &state.db,
+        &primary_id,
+        None,
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+    if primary_exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let duplicate_exists = book_queries::get_book_by_id(
+        &state.db,
+        &duplicate_id,
+        None,
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+    if duplicate_exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    book_queries::merge_books(&state.db, &primary_id, &duplicate_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    if let Some(merged_book) = book_queries::get_book_by_id(
+        &state.db,
+        &primary_id,
+        None,
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?
+    {
+        enqueue_semantic_index_if_enabled(&state, &merged_book.id).await;
+        queue_book_index(state.search.clone(), merged_book);
+    }
+    queue_book_removal(state.search.clone(), duplicate_id);
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn set_read(
@@ -1698,6 +1916,28 @@ fn detect_image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.can_edit {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.is_admin() {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
 async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -1707,6 +1947,17 @@ async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(
         return Err(AppError::Forbidden);
     }
     Ok(())
+}
+
+fn normalize_custom_column_type(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "text" => Some("text"),
+        "int" | "integer" => Some("integer"),
+        "float" => Some("float"),
+        "bool" | "boolean" => Some("bool"),
+        "datetime" => Some("datetime"),
+        _ => None,
+    }
 }
 
 fn preferred_extractable_format(book: &crate::db::models::Book) -> Option<&str> {
