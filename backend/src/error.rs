@@ -24,6 +24,8 @@ pub enum AppError {
     Unprocessable,
     #[error("no extractable format")]
     NoExtractableFormat,
+    #[error("not implemented")]
+    NotImplemented,
     #[error("service unavailable")]
     ServiceUnavailable,
     #[error("internal error")]
@@ -43,6 +45,7 @@ impl IntoResponse for AppError {
             AppError::NoExtractableFormat => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "no_extractable_format")
             }
+            AppError::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };

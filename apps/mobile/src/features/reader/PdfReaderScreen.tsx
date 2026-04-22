@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
-import type { ApiClient as CalibreClient } from "@calibre/shared";
+import type { ApiClient as CalibreClient } from "@autolibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
 

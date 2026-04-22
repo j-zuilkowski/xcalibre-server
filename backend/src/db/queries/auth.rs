@@ -38,19 +38,30 @@ pub async fn create_first_admin_user(
     email: &str,
     password_hash: &str,
 ) -> anyhow::Result<User> {
+    create_user(db, username, email, "admin", password_hash).await
+}
+
+pub async fn create_user(
+    db: &SqlitePool,
+    username: &str,
+    email: &str,
+    role_id: &str,
+    password_hash: &str,
+) -> anyhow::Result<User> {
     let now = Utc::now().to_rfc3339();
     let id = Uuid::new_v4().to_string();
 
     sqlx::query(
         r#"
         INSERT INTO users (id, username, email, password_hash, role_id, is_active, force_pw_reset, login_attempts, locked_until, created_at, last_modified)
-        VALUES (?, ?, ?, ?, 'admin', 1, 0, 0, NULL, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 1, 0, 0, NULL, ?, ?)
         "#,
     )
     .bind(&id)
     .bind(username)
     .bind(email)
     .bind(password_hash)
+    .bind(role_id)
     .bind(&now)
     .bind(&now)
     .execute(db)
@@ -58,11 +69,24 @@ pub async fn create_first_admin_user(
 
     find_user_by_id(db, &id)
         .await?
-        .context("created admin user not found")
+        .context("created user not found")
 }
 
 pub async fn find_user_by_id(db: &SqlitePool, user_id: &str) -> anyhow::Result<Option<User>> {
     let auth = find_user_auth_by_id(db, user_id).await?;
+    Ok(auth.map(|record| record.user))
+}
+
+pub async fn find_user_by_email(db: &SqlitePool, email: &str) -> anyhow::Result<Option<User>> {
+    let auth = find_user_auth_by_email(db, email).await?;
+    Ok(auth.map(|record| record.user))
+}
+
+pub async fn find_user_by_username(
+    db: &SqlitePool,
+    username: &str,
+) -> anyhow::Result<Option<User>> {
+    let auth = find_user_auth_by_username(db, username).await?;
     Ok(auth.map(|record| record.user))
 }
 
@@ -81,6 +105,7 @@ pub async fn find_user_auth_by_id(
             r.name AS role_name,
             u.is_active AS is_active,
             u.force_pw_reset AS force_pw_reset,
+            u.default_library_id AS default_library_id,
             u.login_attempts AS login_attempts,
             u.locked_until AS locked_until,
             u.created_at AS created_at,
@@ -112,6 +137,7 @@ pub async fn find_user_auth_by_username(
             r.name AS role_name,
             u.is_active AS is_active,
             u.force_pw_reset AS force_pw_reset,
+            u.default_library_id AS default_library_id,
             u.login_attempts AS login_attempts,
             u.locked_until AS locked_until,
             u.created_at AS created_at,
@@ -126,6 +152,38 @@ pub async fn find_user_auth_by_username(
     .await?;
 
     row_to_user_auth(row).context("parse user auth by username")
+}
+
+pub async fn find_user_auth_by_email(
+    db: &SqlitePool,
+    email: &str,
+) -> anyhow::Result<Option<UserAuthRecord>> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            u.id AS user_id,
+            u.username AS username,
+            u.email AS email,
+            u.password_hash AS password_hash,
+            u.role_id AS role_id,
+            r.name AS role_name,
+            u.is_active AS is_active,
+            u.force_pw_reset AS force_pw_reset,
+            u.default_library_id AS default_library_id,
+            u.login_attempts AS login_attempts,
+            u.locked_until AS locked_until,
+            u.created_at AS created_at,
+            u.last_modified AS last_modified
+        FROM users u
+        INNER JOIN roles r ON r.id = u.role_id
+        WHERE u.email = ?
+        "#,
+    )
+    .bind(email)
+    .fetch_optional(db)
+    .await?;
+
+    row_to_user_auth(row).context("parse user auth by email")
 }
 
 pub async fn mark_failed_login(
@@ -195,6 +253,28 @@ pub async fn update_password_hash(
     .execute(db)
     .await?;
     Ok(())
+}
+
+pub async fn set_user_default_library(
+    db: &SqlitePool,
+    user_id: &str,
+    library_id: &str,
+) -> anyhow::Result<Option<User>> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET default_library_id = ?, last_modified = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(library_id)
+    .bind(&now)
+    .bind(user_id)
+    .execute(db)
+    .await?;
+
+    find_user_by_id(db, user_id).await
 }
 
 pub fn generate_refresh_token() -> String {
@@ -379,6 +459,7 @@ fn row_to_user_auth(
             },
             is_active: row.get::<i64, _>("is_active") != 0,
             force_pw_reset: row.get::<i64, _>("force_pw_reset") != 0,
+            default_library_id: row.get("default_library_id"),
             created_at: row.get("created_at"),
             last_modified: row.get("last_modified"),
         },

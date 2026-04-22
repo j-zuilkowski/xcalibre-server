@@ -5,6 +5,8 @@ const NAV_ITEMS = [
   { to: "/admin/users", label: "Users" },
   { to: "/admin/import", label: "Import" },
   { to: "/admin/jobs", label: "Jobs" },
+  { to: "/admin/libraries", label: "Libraries" },
+  { to: "/admin/kobo-devices", label: "Kobo Devices" },
 ];
 
 export function AdminLayout() {

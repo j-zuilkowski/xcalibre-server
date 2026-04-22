@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ReadingProgressPatch } from "@calibre/shared";
+import type { ReadingProgressPatch } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { ComicReader } from "./ComicReader";
 import { EpubReader } from "./EpubReader";
 import { PdfReader } from "./PdfReader";
 import type { ReaderProgressUpdate } from "./types";
@@ -125,6 +126,7 @@ export function ReaderPage() {
   }
 
   const normalizedFormat = params.format.toLowerCase();
+  const isComic = normalizedFormat.includes("cbz") || normalizedFormat.includes("cbr");
 
   return (
     <main className="fixed inset-0 z-50 bg-zinc-950 text-zinc-100" data-testid="reader-page">
@@ -147,7 +149,13 @@ export function ReaderPage() {
       ) : null}
 
       {!normalizedFormat.includes("epub") && !normalizedFormat.includes("pdf") ? (
-        <div className="grid h-full place-items-center text-zinc-300">Unsupported reader format: {params.format}</div>
+        isComic ? (
+          <ComicReader bookId={params.bookId} onProgressChange={handleProgressChange} />
+        ) : (
+          <div className="grid h-full place-items-center text-zinc-300">
+            Unsupported reader format: {params.format}
+          </div>
+        )
       ) : null}
     </main>
   );

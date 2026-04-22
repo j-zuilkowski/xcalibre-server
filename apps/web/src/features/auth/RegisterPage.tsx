@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import type { ApiError } from "@calibre/shared";
+import type { ApiError } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 

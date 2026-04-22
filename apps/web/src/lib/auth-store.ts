@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { LoginResponse, User } from "@calibre/shared";
+import type { LoginResponse, User } from "@autolibre/shared";
 
 type AuthState = {
   access_token: string | null;

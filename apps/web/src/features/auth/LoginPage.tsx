@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import type { ApiError } from "@calibre/shared";
+import { useQuery } from "@tanstack/react-query";
+import type { ApiError } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 
@@ -63,6 +64,12 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const providersQuery = useQuery({
+    queryKey: ["auth-providers"],
+    queryFn: () => apiClient.getAuthProviders(),
+    staleTime: 5 * 60_000,
+  });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -143,6 +150,53 @@ export function LoginPage() {
             {isSubmitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
+
+        {providersQuery.data?.google || providersQuery.data?.github ? (
+          <div style={{ marginTop: "18px", display: "grid", gap: "10px" }}>
+            <div style={{ display: "grid", gap: "10px" }}>
+              {providersQuery.data?.google ? (
+                <a
+                  href="/api/v1/auth/oauth/google"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "14px",
+                    border: "1px solid #d4d4d8",
+                    background: "#fff",
+                    color: "#18181b",
+                    padding: "12px 16px",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    textDecoration: "none",
+                  }}
+                >
+                  Sign in with Google
+                </a>
+              ) : null}
+              {providersQuery.data?.github ? (
+                <a
+                  href="/api/v1/auth/oauth/github"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "14px",
+                    border: "1px solid #d4d4d8",
+                    background: "#18181b",
+                    color: "#fff",
+                    padding: "12px 16px",
+                    fontSize: "15px",
+                    fontWeight: 600,
+                    textDecoration: "none",
+                  }}
+                >
+                  Sign in with GitHub
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <p style={{ margin: "20px 0 0", color: "#71717a", fontSize: "14px", textAlign: "center" }}>
           Need the first admin account?{" "}

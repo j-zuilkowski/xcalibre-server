@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub app: AppSection,
     pub database: DatabaseSection,
     pub auth: AuthSection,
+    pub oauth: OauthSection,
+    pub ldap: LdapSection,
+    pub metadata: MetadataLookupSection,
     pub meilisearch: MeilisearchSection,
     pub llm: LlmSection,
     pub limits: LimitsSection,
@@ -27,6 +30,7 @@ pub struct AppConfig {
 pub struct AppSection {
     pub base_url: String,
     pub storage_path: String,
+    pub calibre_db_path: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -46,6 +50,113 @@ pub struct AuthSection {
     pub argon2_memory_kib: u32,
     pub argon2_iterations: u32,
     pub argon2_parallelism: u32,
+    pub proxy: ProxyAuthSection,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProxyAuthSection {
+    pub enabled: bool,
+    pub header: String,
+    pub email_header: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OauthSection {
+    pub google: OauthProviderSection,
+    pub github: OauthProviderSection,
+}
+
+impl Default for OauthSection {
+    fn default() -> Self {
+        Self {
+            google: OauthProviderSection {
+                authorization_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+                token_url: "https://oauth2.googleapis.com/token".to_string(),
+                userinfo_url: "https://openidconnect.googleapis.com/v1/userinfo".to_string(),
+                email_url: String::new(),
+                scope: "openid email profile".to_string(),
+                ..OauthProviderSection::default()
+            },
+            github: OauthProviderSection {
+                authorization_url: "https://github.com/login/oauth/authorize".to_string(),
+                token_url: "https://github.com/login/oauth/access_token".to_string(),
+                userinfo_url: "https://api.github.com/user".to_string(),
+                email_url: "https://api.github.com/user/emails".to_string(),
+                scope: "read:user user:email".to_string(),
+                ..OauthProviderSection::default()
+            },
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OauthProviderSection {
+    pub client_id: String,
+    pub client_secret: String,
+    pub authorization_url: String,
+    pub token_url: String,
+    pub userinfo_url: String,
+    pub email_url: String,
+    pub scope: String,
+}
+
+impl std::fmt::Debug for OauthProviderSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OauthProviderSection")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .field("authorization_url", &self.authorization_url)
+            .field("token_url", &self.token_url)
+            .field("userinfo_url", &self.userinfo_url)
+            .field("email_url", &self.email_url)
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LdapSection {
+    pub enabled: bool,
+    pub url: String,
+    pub bind_dn: String,
+    pub bind_pw: String,
+    pub search_base: String,
+    pub uid_attr: String,
+    pub email_attr: String,
+}
+
+impl std::fmt::Debug for LdapSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LdapSection")
+            .field("enabled", &self.enabled)
+            .field("url", &self.url)
+            .field("bind_dn", &self.bind_dn)
+            .field("bind_pw", &"[REDACTED]")
+            .field("search_base", &self.search_base)
+            .field("uid_attr", &self.uid_attr)
+            .field("email_attr", &self.email_attr)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetadataLookupSection {
+    pub openlibrary_base_url: String,
+    pub googlebooks_base_url: String,
+}
+
+impl Default for MetadataLookupSection {
+    fn default() -> Self {
+        Self {
+            openlibrary_base_url: "https://openlibrary.org".to_string(),
+            googlebooks_base_url: "https://www.googleapis.com".to_string(),
+        }
+    }
 }
 
 impl Default for AuthSection {
@@ -59,6 +170,17 @@ impl Default for AuthSection {
             argon2_memory_kib: MIN_ARGON2_MEMORY_KIB,
             argon2_iterations: MIN_ARGON2_ITERATIONS,
             argon2_parallelism: MIN_ARGON2_PARALLELISM,
+            proxy: ProxyAuthSection::default(),
+        }
+    }
+}
+
+impl Default for ProxyAuthSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            header: "X-Remote-User".to_string(),
+            email_header: "X-Remote-Email".to_string(),
         }
     }
 }
@@ -74,6 +196,7 @@ impl std::fmt::Debug for AuthSection {
             .field("argon2_memory_kib", &self.argon2_memory_kib)
             .field("argon2_iterations", &self.argon2_iterations)
             .field("argon2_parallelism", &self.argon2_parallelism)
+            .field("proxy", &self.proxy)
             .finish()
     }
 }
@@ -127,11 +250,15 @@ impl Default for AppConfig {
             app: AppSection {
                 base_url: "http://localhost:8083".to_string(),
                 storage_path: "./storage".to_string(),
+                calibre_db_path: "./calibre/metadata.db".to_string(),
             },
             database: DatabaseSection {
                 url: "sqlite://library.db".to_string(),
             },
             auth: AuthSection::default(),
+            oauth: OauthSection::default(),
+            ldap: LdapSection::default(),
+            metadata: MetadataLookupSection::default(),
             meilisearch: MeilisearchSection::default(),
             llm: LlmSection::default(),
             limits: LimitsSection {
@@ -207,6 +334,14 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
             config.auth.argon2_parallelism
         );
     }
+    if config.ldap.enabled
+        && (config.ldap.uid_attr.trim().is_empty() || config.ldap.email_attr.trim().is_empty())
+    {
+        anyhow::bail!("ldap.uid_attr and ldap.email_attr are required when ldap.enabled is true");
+    }
+    if config.auth.proxy.enabled && config.auth.proxy.header.trim().is_empty() {
+        anyhow::bail!("auth.proxy.header is required when auth.proxy.enabled is true");
+    }
     Ok(())
 }
 
@@ -231,6 +366,7 @@ fn write_config(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
 fn apply_env_overrides(config: &mut AppConfig) {
     config.app.base_url = pick_env("APP_BASE_URL", &config.app.base_url);
     config.app.storage_path = pick_env("APP_STORAGE_PATH", &config.app.storage_path);
+    config.app.calibre_db_path = pick_env("APP_CALIBRE_DB_PATH", &config.app.calibre_db_path);
     config.database.url = pick_env("APP_DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("APP_JWT_SECRET", &config.auth.jwt_secret);
     config.auth.access_token_ttl_mins = pick_env_u64(
@@ -253,6 +389,12 @@ fn apply_env_overrides(config: &mut AppConfig) {
         pick_env_u32("APP_ARGON2_ITERATIONS", config.auth.argon2_iterations);
     config.auth.argon2_parallelism =
         pick_env_u32("APP_ARGON2_PARALLELISM", config.auth.argon2_parallelism);
+    config.auth.proxy.enabled = pick_env_bool("APP_AUTH_PROXY_ENABLED", config.auth.proxy.enabled);
+    config.auth.proxy.header = pick_env("APP_AUTH_PROXY_HEADER", &config.auth.proxy.header);
+    config.auth.proxy.email_header = pick_env(
+        "APP_AUTH_PROXY_EMAIL_HEADER",
+        &config.auth.proxy.email_header,
+    );
 
     config.meilisearch.enabled =
         pick_env_bool("APP_MEILISEARCH_ENABLED", config.meilisearch.enabled);
@@ -294,8 +436,13 @@ fn apply_env_overrides(config: &mut AppConfig) {
 
     config.app.base_url = pick_env("BASE_URL", &config.app.base_url);
     config.app.storage_path = pick_env("STORAGE_PATH", &config.app.storage_path);
+    config.app.calibre_db_path = pick_env("CALIBRE_DB_PATH", &config.app.calibre_db_path);
     config.database.url = pick_env("DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("JWT_SECRET", &config.auth.jwt_secret);
+    config.auth.proxy.enabled = pick_env_bool("AUTH_PROXY_ENABLED", config.auth.proxy.enabled);
+    config.auth.proxy.header = pick_env("AUTH_PROXY_HEADER", &config.auth.proxy.header);
+    config.auth.proxy.email_header =
+        pick_env("AUTH_PROXY_EMAIL_HEADER", &config.auth.proxy.email_header);
     config.meilisearch.enabled = pick_env_bool("MEILISEARCH_ENABLED", config.meilisearch.enabled);
     config.meilisearch.url = pick_env("MEILISEARCH_URL", &config.meilisearch.url);
     config.meilisearch.api_key = pick_env("MEILISEARCH_API_KEY", &config.meilisearch.api_key);
@@ -358,6 +505,8 @@ fn decode_base64_secret(secret: &str) -> Result<Vec<u8>, base64::DecodeError> {
         .or_else(|_| base64::engine::general_purpose::STANDARD.decode(secret))
 }
 
+// DNS is resolved once at config load/startup, not on each request.
+// If LLM endpoints become runtime-configurable later, they must be validated per request.
 async fn validate_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
     for endpoint in [
         config.llm.librarian.endpoint.as_str(),
@@ -421,9 +570,15 @@ fn is_private_or_loopback(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 10
                 || (v4.octets()[0] == 172 && (16..=31).contains(&v4.octets()[1]))
                 || (v4.octets()[0] == 192 && v4.octets()[1] == 168)
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254) // link-local / cloud metadata
                 || v4 == Ipv4Addr::LOCALHOST
         }
-        IpAddr::V6(v6) => v6.is_loopback(),
+        IpAddr::V6(v6) => {
+            let octets = v6.octets();
+            v6.is_loopback()
+                || (octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80) // fe80::/10 link-local
+                || (octets[0] & 0xfe == 0xfc) // fc00::/7 ULA
+        }
     }
 }
 

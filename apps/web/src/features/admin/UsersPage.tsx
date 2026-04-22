@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AdminUser, Role } from "@calibre/shared";
+import type { AdminUser, Role, TagLookupItem } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
+import { TagAutocomplete } from "./TagAutocomplete";
 
 type UserDraft = {
   role_id: string;
@@ -33,6 +34,7 @@ function buildDraft(user: AdminUser): UserDraft {
 export function UsersPage() {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, UserDraft>>({});
+  const [tagRestrictionUser, setTagRestrictionUser] = useState<AdminUser | null>(null);
   const [createForm, setCreateForm] = useState<CreateUserState>({
     username: "",
     email: "",
@@ -266,6 +268,13 @@ export function UsersPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => setTagRestrictionUser(user)}
+                        className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
+                      >
+                        Tag Restrictions
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void deleteMutation.mutateAsync(user.id)}
                         className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300"
                       >
@@ -279,6 +288,141 @@ export function UsersPage() {
           </tbody>
         </table>
       </section>
+
+      {tagRestrictionUser ? (
+        <TagRestrictionsModal
+          user={tagRestrictionUser}
+          onClose={() => setTagRestrictionUser(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TagRestrictionsModal({
+  user,
+  onClose,
+}: {
+  user: AdminUser;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [selectedTag, setSelectedTag] = useState<TagLookupItem | null>(null);
+  const [mode, setMode] = useState<"allow" | "block">("block");
+
+  const restrictionsQuery = useQuery({
+    queryKey: ["admin-user-tag-restrictions", user.id],
+    queryFn: () => apiClient.listUserTagRestrictions(user.id),
+  });
+
+  const addMutation = useMutation({
+    mutationFn: (payload: { tagId: string; mode: "allow" | "block" }) =>
+      apiClient.setUserTagRestriction(user.id, {
+        tag_id: payload.tagId,
+        mode: payload.mode,
+      }),
+    onSuccess: async () => {
+      setSelectedTag(null);
+      await queryClient.invalidateQueries({ queryKey: ["admin-user-tag-restrictions", user.id] });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (tagId: string) => apiClient.deleteUserTagRestriction(user.id, tagId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-user-tag-restrictions", user.id] });
+    },
+  });
+
+  const restrictions = restrictionsQuery.data ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-teal-300">Tag restrictions</p>
+            <h3 className="mt-1 text-xl font-semibold text-zinc-50">{user.username}</h3>
+            <p className="text-sm text-zinc-400">{user.email}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto]">
+          <div className="space-y-2">
+            <label className="text-sm text-zinc-300">Tag</label>
+            <TagAutocomplete onSelect={setSelectedTag} placeholder="Search existing tags" />
+            {selectedTag ? (
+              <p className="text-xs text-zinc-400">
+                Selected <span className="font-medium text-zinc-200">{selectedTag.name}</span>
+              </p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm text-zinc-300">Mode</label>
+            <select
+              value={mode}
+              onChange={(event) => setMode(event.target.value as "allow" | "block")}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            >
+              <option value="block">Block</option>
+              <option value="allow">Allow</option>
+            </select>
+            <button
+              type="button"
+              disabled={!selectedTag || addMutation.isPending}
+              onClick={() => {
+                if (!selectedTag) {
+                  return;
+                }
+                void addMutation.mutateAsync({ tagId: selectedTag.id, mode });
+              }}
+              className="w-full rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-60"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <h4 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">
+            Current restrictions
+          </h4>
+          <div className="mt-3 space-y-2">
+            {restrictions.length > 0 ? (
+              restrictions.map((restriction) => (
+                <div
+                  key={restriction.tag_id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-zinc-100">{restriction.tag_name}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                      {restriction.mode}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void removeMutation.mutateAsync(restriction.tag_id)}
+                    className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-zinc-500">No restrictions yet.</p>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

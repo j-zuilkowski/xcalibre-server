@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import type { ApiError } from "@calibre/shared";
+import type { ApiError } from "@autolibre/shared";
 import { useApi, getApiBaseUrl, setApiBaseUrl } from "../lib/api";
 import { saveTokens } from "../lib/auth";
 

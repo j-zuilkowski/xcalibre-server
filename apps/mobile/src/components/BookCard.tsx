@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import type { BookSummary } from "@calibre/shared";
+import type { BookSummary } from "@autolibre/shared";
 import { useApi } from "../lib/api";
 
 type BookCardProps = {

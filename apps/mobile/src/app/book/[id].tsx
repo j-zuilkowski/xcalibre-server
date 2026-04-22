@@ -10,7 +10,7 @@ import {
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Book } from "@calibre/shared";
+import type { Book } from "@autolibre/shared";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
 import { deleteDownload, downloadBook, getLocalPath } from "../../lib/downloads";

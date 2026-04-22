@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ListBooksParams, SearchQuery } from "@calibre/shared";
+import type { ListBooksParams, SearchQuery } from "@autolibre/shared";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "../library/BookCard";

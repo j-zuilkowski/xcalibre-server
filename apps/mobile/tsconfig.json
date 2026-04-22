@@ -6,8 +6,8 @@
     "baseUrl": ".",
     "types": ["vitest/globals"],
     "paths": {
-      "@calibre/shared": ["../../packages/shared/src/index.ts"],
-      "@calibre/shared/*": ["../../packages/shared/src/*"]
+      "@autolibre/shared": ["../../packages/shared/src/index.ts"],
+      "@autolibre/shared/*": ["../../packages/shared/src/*"]
     }
   },
   "include": ["src", "vitest.config.ts"]

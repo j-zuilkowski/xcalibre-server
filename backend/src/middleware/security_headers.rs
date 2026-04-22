@@ -24,8 +24,12 @@ const PERMISSIONS_POLICY: &str = "permissions-policy";
 const X_CONTENT_TYPE_OPTIONS_VALUE: &str = "nosniff";
 const X_FRAME_OPTIONS_VALUE: &str = "DENY";
 const REFERRER_POLICY_VALUE: &str = "strict-origin-when-cross-origin";
-const CONTENT_SECURITY_POLICY_VALUE: &str =
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:";
+const CONTENT_SECURITY_POLICY_VALUE: &str = concat!(
+    "default-src 'self'; script-src 'self'; ",
+    // shadcn/ui theme variables are applied through inline styles.
+    "style-src 'self' 'unsafe-inline'; ",
+    "img-src 'self' data: blob:; worker-src 'self' blob:"
+);
 const PERMISSIONS_POLICY_VALUE: &str = "camera=(), microphone=(), geolocation=()";
 
 const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 10;
@@ -168,9 +172,15 @@ impl KeyExtractor for ClientIpKeyExtractor {
 
     fn extract<T>(&self, request: &http::Request<T>) -> Result<Self::Key, GovernorError> {
         x_forwarded_for_ip(request.headers())
+            .or_else(|| {
+                if request.headers().contains_key("x-forwarded-for") {
+                    direct_connection_ip(request)
+                } else {
+                    None
+                }
+            })
             .or_else(|| x_real_ip(request.headers()))
-            .or_else(|| connect_info_ip(request))
-            .or_else(|| socket_addr_ip(request))
+            .or_else(|| direct_connection_ip(request))
             .or(Some(IpAddr::V4(Ipv4Addr::LOCALHOST)))
             .ok_or(GovernorError::UnableToExtractKey)
     }
@@ -203,4 +213,8 @@ fn socket_addr_ip<T>(request: &http::Request<T>) -> Option<IpAddr> {
         .extensions()
         .get::<SocketAddr>()
         .map(std::net::SocketAddr::ip)
+}
+
+fn direct_connection_ip<T>(request: &http::Request<T>) -> Option<IpAddr> {
+    connect_info_ip(request).or_else(|| socket_addr_ip(request))
 }

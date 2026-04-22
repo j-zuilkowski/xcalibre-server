@@ -6,14 +6,17 @@ use tower_http::services::{ServeDir, ServeFile};
 pub mod admin;
 pub mod auth;
 pub mod books;
+pub mod kobo;
 pub mod llm;
+pub mod opds;
 pub mod search;
+pub mod shelves;
+pub mod users;
 
 pub fn router(state: crate::AppState) -> Router {
     let global_rate_limit_per_ip = state.config.limits.rate_limit_per_ip;
     let upload_max_bytes = state.config.limits.upload_max_bytes;
-    let auth_router = auth::router(state.clone())
-        .layer(crate::middleware::security_headers::auth_rate_limit_layer());
+    let auth_router = auth::router(state.clone());
     let web_dist_dir = web_dist_dir();
     let assets_dir = web_dist_dir.join("assets");
 
@@ -21,7 +24,11 @@ pub fn router(state: crate::AppState) -> Router {
         .nest("/api/v1/auth", auth_router)
         .merge(admin::router(state.clone()))
         .merge(books::router(state.clone()))
+        .merge(users::router(state.clone()))
+        .nest("/kobo/:kobo_token/v1", kobo::router(state.clone()))
         .merge(llm::router(state.clone()))
+        .nest("/opds", opds::router(state.clone()))
+        .merge(shelves::router(state.clone()))
         .merge(search::router(state.clone()))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .fallback(spa_fallback)

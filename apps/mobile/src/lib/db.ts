@@ -1,6 +1,6 @@
 import * as SQLite from "expo-sqlite";
 import type { SQLiteDatabase } from "expo-sqlite";
-import type { BookSummary, DocumentType, SeriesRef } from "@calibre/shared";
+import type { BookSummary, DocumentType, SeriesRef } from "@autolibre/shared";
 
 export const db = SQLite.openDatabaseAsync("calibre_local.db");
 

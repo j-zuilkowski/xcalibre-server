@@ -1,4 +1,4 @@
-import type { Book, ReadingProgress } from "@calibre/shared";
+import type { Book, ReadingProgress } from "@autolibre/shared";
 
 export type ReaderProgressUpdate = {
   percentage: number;
@@ -11,4 +11,9 @@ export type ReaderComponentProps = {
   format: string;
   initialProgress: ReadingProgress | null;
   onProgressChange: (progress: ReaderProgressUpdate) => void;
+};
+
+export type ComicReaderProps = {
+  bookId: string;
+  onProgressChange?: (progress: ReaderProgressUpdate) => void;
 };

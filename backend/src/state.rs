@@ -1,5 +1,6 @@
 use crate::{
     config::AppConfig,
+    db::queries::libraries as library_queries,
     llm::{chat::ChatClient, embeddings::EmbeddingClient},
 };
 use sqlx::SqlitePool;
@@ -17,6 +18,17 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(db: SqlitePool, config: AppConfig) -> Self {
+        if let Err(err) =
+            library_queries::sync_default_library_path(&db, &config.app.calibre_db_path).await
+        {
+            tracing::warn!(error = %err, "failed to sync default library path");
+        }
+        if config.auth.proxy.enabled {
+            tracing::warn!(
+                "proxy auth is enabled — ensure this server is behind a trusted reverse proxy"
+            );
+        }
+
         let storage = Arc::new(crate::storage::LocalFsStorage::new(
             &config.app.storage_path,
         ));

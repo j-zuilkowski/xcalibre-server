@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { BookSummary } from "@calibre/shared";
+import type { BookSummary } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import { CoverPlaceholder } from "../library/CoverPlaceholder";

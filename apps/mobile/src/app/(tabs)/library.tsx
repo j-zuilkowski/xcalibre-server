@@ -10,7 +10,7 @@ import {
   type ListRenderItem,
 } from "react-native";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BookSummary, PaginatedResponse } from "@calibre/shared";
+import type { BookSummary, PaginatedResponse } from "@autolibre/shared";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack } from "expo-router";
 import { useNetInfo } from "@react-native-community/netinfo";

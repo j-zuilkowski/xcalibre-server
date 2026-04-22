@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { ApiClient as CalibreClient, type RefreshResponse } from "@calibre/shared";
+import { ApiClient as CalibreClient, type RefreshResponse } from "@autolibre/shared";
 import {
   getAccessTokenSync,
   getRefreshTokenSync,

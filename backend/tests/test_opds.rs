@@ -172,7 +172,7 @@ async fn test_opds_authors_feed_returns_atom() {
     assert_eq!(feed.root_element().tag_name().name(), "feed");
     assert!(body.contains("opensearch:totalResults"));
     assert!(body.contains("rel=\"next\""));
-    assert!(body.contains("kind=acquisition"));
+    assert!(body.contains("kind=navigation"));
 }
 
 #[tokio::test]
@@ -233,7 +233,7 @@ async fn test_opds_series_feed() {
     assert_eq!(feed.root_element().tag_name().name(), "feed");
     assert!(body.contains("Foundation"));
     assert!(body.contains("2 books"));
-    assert!(body.contains("kind=acquisition"));
+    assert!(body.contains("kind=navigation"));
 }
 
 #[tokio::test]
@@ -273,7 +273,7 @@ async fn test_opds_language_feed() {
     assert_eq!(feed.root_element().tag_name().name(), "feed");
     assert!(body.contains("opensearch:totalResults"));
     assert!(body.contains("rel=\"next\""));
-    assert!(body.contains("kind=acquisition"));
+    assert!(body.contains("kind=navigation"));
 }
 
 #[tokio::test]
@@ -308,5 +308,5 @@ async fn test_opds_ratings_feed() {
     assert_eq!(feed.root_element().tag_name().name(), "feed");
     assert!(body.contains("1★"));
     assert!(body.contains("5★"));
-    assert!(body.contains("kind=acquisition"));
+    assert!(body.contains("kind=navigation"));
 }

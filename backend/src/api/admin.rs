@@ -1,5 +1,9 @@
 use crate::{
-    db::queries::{books as book_queries, llm as llm_queries},
+    db::queries::{
+        api_tokens as api_token_queries, auth as auth_queries, books as book_queries,
+        email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
+        llm as llm_queries, tags as tag_queries, user_tag_restrictions as restriction_queries,
+    },
     middleware::auth::AuthenticatedUser,
     AppError, AppState,
 };
@@ -8,11 +12,13 @@ use axum::{
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{delete, get, post},
     Json, Router,
 };
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -21,6 +27,28 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/jobs/:id", get(get_job).delete(delete_job))
+        .route(
+            "/api/v1/admin/email-settings",
+            get(get_email_settings).put(update_email_settings),
+        )
+        .route("/api/v1/admin/kobo-devices", get(list_kobo_devices))
+        .route("/api/v1/admin/kobo-devices/:id", delete(delete_kobo_device))
+        .route(
+            "/api/v1/admin/libraries",
+            get(list_libraries).post(create_library),
+        )
+        .route("/api/v1/admin/libraries/:id", delete(delete_library))
+        .route("/api/v1/admin/tags", get(search_tags))
+        .route(
+            "/api/v1/admin/users/:id/tag-restrictions",
+            get(list_user_tag_restrictions).post(set_user_tag_restriction),
+        )
+        .route(
+            "/api/v1/admin/users/:id/tag-restrictions/:tag_id",
+            delete(delete_user_tag_restriction),
+        )
+        .route("/api/v1/admin/tokens", post(create_token).get(list_tokens))
+        .route("/api/v1/admin/tokens/:id", delete(delete_token))
         .route_layer(auth_layer)
 }
 
@@ -32,12 +60,221 @@ struct ListJobsQuery {
     page_size: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateTokenRequest {
+    name: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct EmailSettingsRequest {
+    #[serde(default)]
+    smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    smtp_port: i64,
+    #[serde(default)]
+    smtp_user: String,
+    #[serde(default)]
+    smtp_password: String,
+    #[serde(default)]
+    from_address: String,
+    #[serde(default = "default_use_tls")]
+    use_tls: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateTokenResponse {
+    id: String,
+    name: String,
+    token: String,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ListTokensResponse {
+    items: Vec<api_token_queries::ApiToken>,
+}
+
+#[derive(Debug, Serialize)]
+struct EmailSettingsResponse {
+    id: String,
+    smtp_host: String,
+    smtp_port: i64,
+    smtp_user: String,
+    smtp_password: String,
+    from_address: String,
+    use_tls: bool,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct KoboDeviceResponse {
+    id: String,
+    user_id: String,
+    username: String,
+    email: String,
+    device_id: String,
+    device_name: String,
+    last_sync_at: Option<String>,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLibraryRequest {
+    name: String,
+    calibre_db_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagSearchQuery {
+    q: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagRestrictionRequest {
+    tag_id: String,
+    mode: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LibraryResponse {
+    id: String,
+    name: String,
+    calibre_db_path: String,
+    book_count: i64,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TagResponse {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UserTagRestrictionResponse {
+    user_id: String,
+    tag_id: String,
+    tag_name: String,
+    mode: String,
+}
+
 #[derive(Debug, Serialize)]
 struct PaginatedResponse<T> {
     items: Vec<T>,
     total: i64,
     page: u32,
     page_size: u32,
+}
+
+async fn search_tags(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Query(query): Query<TagSearchQuery>,
+) -> Result<Json<Vec<TagResponse>>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let tags = tag_queries::search_tags(
+        &state.db,
+        query.q.as_deref(),
+        query.limit.unwrap_or(20) as i64,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+    Ok(Json(
+        tags.into_iter()
+            .map(|tag| TagResponse {
+                id: tag.id,
+                name: tag.name,
+            })
+            .collect(),
+    ))
+}
+
+async fn list_user_tag_restrictions(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+) -> Result<Json<Vec<UserTagRestrictionResponse>>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+    let restrictions = restriction_queries::get_restrictions(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(
+        restrictions
+            .into_iter()
+            .map(|restriction| UserTagRestrictionResponse {
+                user_id: restriction.user_id,
+                tag_id: restriction.tag_id,
+                tag_name: restriction.tag_name,
+                mode: restriction.mode,
+            })
+            .collect(),
+    ))
+}
+
+async fn set_user_tag_restriction(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+    Json(payload): Json<TagRestrictionRequest>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+    let tag_id = payload.tag_id.trim();
+    if tag_id.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    let mode = payload.mode.trim().to_lowercase();
+    if mode != "allow" && mode != "block" {
+        return Err(AppError::BadRequest);
+    }
+    let Some(_) = tag_queries::find_tag_by_id(&state.db, tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    restriction_queries::set_restriction(&state.db, &user_id, tag_id, &mode)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_user_tag_restriction(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((user_id, tag_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+    if tag_id.trim().is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    let removed = restriction_queries::remove_restriction(&state.db, &user_id, &tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !removed {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn list_jobs(
@@ -117,6 +354,217 @@ async fn delete_job(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn create_token(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<CreateTokenRequest>,
+) -> Result<(StatusCode, Json<CreateTokenResponse>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let plain_token = generate_plain_token();
+    let token_hash = hash_token(&plain_token);
+    let token = api_token_queries::create_token(&state.db, name, &token_hash, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateTokenResponse {
+            id: token.id,
+            name: token.name,
+            token: plain_token,
+            created_at: token.created_at,
+        }),
+    ))
+}
+
+async fn list_tokens(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<ListTokensResponse>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let items = api_token_queries::list_tokens(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(ListTokensResponse { items }))
+}
+
+async fn get_email_settings(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<EmailSettingsResponse>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let settings = email_queries::get_email_settings(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let settings = settings.unwrap_or_else(default_email_settings);
+    Ok(Json(mask_email_settings(settings)))
+}
+
+async fn update_email_settings(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<EmailSettingsRequest>,
+) -> Result<Json<EmailSettingsResponse>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let settings = email_queries::EmailSettings {
+        id: "singleton".to_string(),
+        smtp_host: payload.smtp_host,
+        smtp_port: if payload.smtp_port <= 0 {
+            587
+        } else {
+            payload.smtp_port
+        },
+        smtp_user: payload.smtp_user,
+        smtp_password: payload.smtp_password,
+        from_address: payload.from_address,
+        use_tls: payload.use_tls,
+        updated_at: String::new(),
+    };
+    let updated = email_queries::upsert_email_settings(&state.db, settings)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(mask_email_settings(updated)))
+}
+
+async fn list_kobo_devices(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<KoboDeviceResponse>>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let devices = kobo_queries::list_devices(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(
+        devices
+            .into_iter()
+            .map(|device| KoboDeviceResponse {
+                id: device.id,
+                user_id: device.user_id,
+                username: device.username,
+                email: device.email,
+                device_id: device.device_id,
+                device_name: device.device_name,
+                last_sync_at: device.last_sync_at,
+                created_at: device.created_at,
+            })
+            .collect(),
+    ))
+}
+
+async fn list_libraries(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<LibraryResponse>>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let libraries = library_queries::list_libraries(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let mut response = Vec::with_capacity(libraries.len());
+    for library in libraries {
+        let book_count = library_queries::count_books_in_library(&state.db, &library.id)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        response.push(LibraryResponse {
+            id: library.id,
+            name: library.name,
+            calibre_db_path: library.calibre_db_path,
+            book_count,
+            created_at: library.created_at,
+            updated_at: library.updated_at,
+        });
+    }
+    Ok(Json(response))
+}
+
+async fn create_library(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<CreateLibraryRequest>,
+) -> Result<(StatusCode, Json<LibraryResponse>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let name = payload.name.trim();
+    let calibre_db_path = payload.calibre_db_path.trim();
+    if name.is_empty() || calibre_db_path.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let library = library_queries::create_library(&state.db, name, calibre_db_path)
+        .await
+        .map_err(|_| AppError::Conflict)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(LibraryResponse {
+            id: library.id,
+            name: library.name,
+            calibre_db_path: library.calibre_db_path,
+            book_count: 0,
+            created_at: library.created_at,
+            updated_at: library.updated_at,
+        }),
+    ))
+}
+
+async fn delete_library(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(library_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    match library_queries::delete_library(&state.db, &library_id).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(AppError::NotFound),
+        Err(err) => {
+            let err_text = err.to_string();
+            if err_text.contains("books assigned") || err_text.contains("cannot be deleted") {
+                Err(AppError::Conflict)
+            } else {
+                Err(AppError::Internal)
+            }
+        }
+    }
+}
+
+async fn delete_kobo_device(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(device_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let deleted = kobo_queries::revoke_device(&state.db, &device_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !deleted {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_token(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(token_id): Path<String>,
+) -> Result<StatusCode, Response> {
+    ensure_admin(&state, &auth_user.user.id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+
+    let deleted = api_token_queries::delete_token(&state.db, &token_id, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal.into_response())?;
+    if !deleted {
+        return Err(AppError::NotFound.into_response());
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -126,4 +574,49 @@ async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
         return Err(AppError::Forbidden);
     }
     Ok(())
+}
+
+fn generate_plain_token() -> String {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn hash_token(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    hex::encode(digest)
+}
+
+fn mask_email_settings(settings: email_queries::EmailSettings) -> EmailSettingsResponse {
+    EmailSettingsResponse {
+        id: settings.id,
+        smtp_host: settings.smtp_host,
+        smtp_port: settings.smtp_port,
+        smtp_user: settings.smtp_user,
+        smtp_password: String::new(),
+        from_address: settings.from_address,
+        use_tls: settings.use_tls,
+        updated_at: settings.updated_at,
+    }
+}
+
+fn default_smtp_port() -> i64 {
+    587
+}
+
+fn default_use_tls() -> bool {
+    true
+}
+
+fn default_email_settings() -> email_queries::EmailSettings {
+    email_queries::EmailSettings {
+        id: "singleton".to_string(),
+        smtp_host: String::new(),
+        smtp_port: default_smtp_port(),
+        smtp_user: String::new(),
+        smtp_password: String::new(),
+        from_address: String::new(),
+        use_tls: default_use_tls(),
+        updated_at: String::new(),
+    }
 }

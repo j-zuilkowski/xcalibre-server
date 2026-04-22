@@ -1,5 +1,5 @@
 {
-  "name": "@calibre/web",
+  "name": "@autolibre/web",
   "private": true,
   "type": "module",
   "version": "0.1.0",
@@ -10,7 +10,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@calibre/shared": "workspace:*",
+    "@autolibre/shared": "workspace:*",
     "@tanstack/react-query": "^5.59.16",
     "@tanstack/react-router": "^1.95.1",
     "epubjs": "^0.3.93",

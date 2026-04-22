@@ -21,11 +21,15 @@ config = "0.14"
 futures = "0.3"
 governor = "0.6"
 http = "1"
+hex = "0.4"
 image = "0.25"
 jsonwebtoken = "9"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 meilisearch-sdk = { version = "0.27", optional = true }
 mime = "0.3"
 mime_guess = "2"
+oauth2 = "4"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlite-vec = { version = "0.1", optional = true } # SQLite extension, loaded at runtime
 serde = { version = "1", features = ["derive"] }
@@ -41,10 +45,13 @@ tower_governor = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
 uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
 validator = { version = "0.20", features = ["derive"] }
 roxmltree = "0.20"
+urlencoding = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+unrar = "0.5"
 
 [dev-dependencies]
 axum-test = "14"

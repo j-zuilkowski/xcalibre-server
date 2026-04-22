@@ -129,7 +129,7 @@ async fn authors_feed(
             &author_name,
             &format!("/opds/authors/{}", urlencoding::encode(&author_id)),
             &format!("{book_count} {book_label}"),
-            "acquisition",
+            "navigation",
         );
     }
 
@@ -154,6 +154,8 @@ async fn author_books_feed(
         author_id: Some(id.clone()),
         page,
         page_size,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let title = format!("Books by {author_name}");
@@ -192,7 +194,7 @@ async fn series_feed(
             &series_name,
             &format!("/opds/series/{}", urlencoding::encode(&series_id)),
             &format!("{book_count} {}", pluralize("book", book_count)),
-            "acquisition",
+            "navigation",
         );
     }
 
@@ -217,6 +219,8 @@ async fn series_books_feed(
         series_id: Some(id.clone()),
         page,
         page_size,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let title = format!("Books in series {series_name}");
@@ -255,7 +259,7 @@ async fn publishers_feed(
             &publisher_name,
             &format!("/opds/publishers/{}", urlencoding::encode(&publisher_id)),
             &format!("{book_count} {}", pluralize("book", book_count)),
-            "acquisition",
+            "navigation",
         );
     }
 
@@ -274,6 +278,7 @@ async fn publisher_books_feed(
         publisher: Some(id.clone()),
         page,
         page_size,
+        rating_bucket: None,
         ..Default::default()
     };
     let title = format!("Books by publisher {id}");
@@ -317,7 +322,7 @@ async fn languages_feed(
             &language_code,
             &format!("/opds/languages/{}", urlencoding::encode(&language_code)),
             &format!("{book_count} {}", pluralize("book", book_count)),
-            "acquisition",
+            "navigation",
         );
     }
 
@@ -336,6 +341,8 @@ async fn language_books_feed(
         language: Some(lang_code.clone()),
         page,
         page_size,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let title = format!("Books in {lang_code}");
@@ -379,7 +386,7 @@ async fn ratings_feed(
             &format!("{}★", rating),
             &format!("/opds/ratings/{rating}"),
             &format!("{book_count} {}", pluralize("book", book_count)),
-            "acquisition",
+            "navigation",
         );
     }
 
@@ -402,6 +409,7 @@ async fn rating_books_feed(
         rating_bucket: Some(rating),
         page,
         page_size,
+        publisher: None,
         ..Default::default()
     };
     let title = format!("Books rated {}★", rating);
@@ -426,6 +434,8 @@ async fn all_books(
         q: query.q,
         page,
         page_size,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let mut extra_params = Vec::new();
@@ -455,6 +465,8 @@ async fn search(
         q: Some(search_terms.to_string()),
         page,
         page_size,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let extra_params = vec![("q", search_terms.to_string())];
@@ -477,6 +489,8 @@ async fn recently_added(State(state): State<AppState>) -> Result<Response, AppEr
         order: Some("desc".to_string()),
         page: 1,
         page_size: 30,
+        publisher: None,
+        rating_bucket: None,
         ..Default::default()
     };
     let extra_params = vec![("since", since)];

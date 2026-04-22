@@ -1,4 +1,4 @@
-import type { BookSummary } from "@calibre/shared";
+import type { BookSummary } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { CoverPlaceholder } from "./CoverPlaceholder";
 

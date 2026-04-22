@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { AdminJob } from "@calibre/shared";
+import type { AdminJob } from "@autolibre/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";

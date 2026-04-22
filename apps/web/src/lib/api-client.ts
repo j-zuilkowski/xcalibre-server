@@ -1,4 +1,4 @@
-import { ApiClient } from "@calibre/shared";
+import { ApiClient } from "@autolibre/shared";
 import { useAuthStore } from "./auth-store";
 
 export const apiClient = new ApiClient(

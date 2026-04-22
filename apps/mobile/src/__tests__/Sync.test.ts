@@ -1,5 +1,5 @@
 import * as SQLite from "expo-sqlite";
-import type { BookSummary } from "@calibre/shared";
+import type { BookSummary } from "@autolibre/shared";
 import { runMigrations } from "../lib/db";
 import { syncLibrary } from "../lib/sync";
 

@@ -1261,6 +1261,29 @@ fn apply_list_filters(
             qb.push("COALESCE(bus.is_read, 0) = ");
             qb.push_bind(i64::from(only_read));
         }
+
+        if let Some(user_id) = params
+            .user_id
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        {
+            let user_id_for_allow = user_id.clone();
+            and_where(qb);
+            qb.push(
+                "NOT EXISTS (SELECT 1 FROM book_tags bt2 JOIN user_tag_restrictions r ON r.tag_id = bt2.tag_id WHERE bt2.book_id = b.id AND r.user_id = ",
+            );
+            qb.push_bind(user_id.clone());
+            qb.push(" AND r.mode = 'block')");
+
+            and_where(qb);
+            qb.push("(");
+            qb.push("NOT EXISTS (SELECT 1 FROM user_tag_restrictions r WHERE r.user_id = ");
+            qb.push_bind(user_id_for_allow.clone());
+            qb.push(" AND r.mode = 'allow') OR EXISTS (SELECT 1 FROM book_tags bt2 JOIN user_tag_restrictions r ON r.tag_id = bt2.tag_id WHERE bt2.book_id = b.id AND r.user_id = ");
+            qb.push_bind(user_id_for_allow);
+            qb.push(" AND r.mode = 'allow'))");
+        }
     }
 
     if let Some(library_id) = params

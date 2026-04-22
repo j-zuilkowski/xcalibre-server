@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { AdminUser, Role } from "@calibre/shared";
+import type { AdminUser, Role } from "@autolibre/shared";
 import { UsersPage } from "../features/admin/UsersPage";
 import { apiClient } from "../lib/api-client";
 
@@ -29,6 +29,7 @@ function makeUser(id: string, username: string, role: Role): AdminUser {
     role,
     is_active: true,
     force_pw_reset: false,
+    default_library_id: "default",
     created_at: "2026-04-18T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
     last_login_at: "2026-04-19T00:00:00Z",

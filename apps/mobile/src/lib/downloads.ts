@@ -1,5 +1,5 @@
 import * as FileSystem from "expo-file-system";
-import type { ApiClient as CalibreClient } from "@calibre/shared";
+import type { ApiClient as CalibreClient } from "@autolibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { getAccessToken } from "./auth";
 import { runMigrations } from "./db";

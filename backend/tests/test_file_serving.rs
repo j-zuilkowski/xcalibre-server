@@ -207,10 +207,7 @@ async fn test_cover_requires_download_permission() {
     let created = ctx
         .server
         .post("/api/v1/books")
-        .add_header(
-            axum::http::header::AUTHORIZATION,
-            auth_header(&admin_token),
-        )
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&admin_token))
         .multipart(upload)
         .await;
     assert_status!(created, 201);
