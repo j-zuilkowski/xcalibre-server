@@ -2,12 +2,16 @@
 
 ## What Phase 12 Builds
 
-Closes the four post-v1.0 gaps identified in the Phase 11 evaluation:
+Eight post-v1.0 improvements spanning test coverage, ops, i18n, and backend quality:
 
 - **Stage 1** — Playwright E2E test suite (reader, search, auth, admin golden paths)
 - **Stage 2** — Deployment runbooks (single-instance Docker, HA MariaDB, backup/restore, S3 migration)
 - **Stage 3** — FR/DE/ES translation completion + CI coverage check
 - **Stage 4** — S3 range request support (audio + large PDF streaming restored on S3 backend)
+- **Stage 5** — Structured JSON logging + `/health` endpoint (DB + Meilisearch checks)
+- **Stage 6** — Rate-limit response headers (X-RateLimit-*, Retry-After on 429)
+- **Stage 7** — WebP cover conversion with JPEG fallback (content negotiation)
+- **Stage 8** — Global tag management — rename, merge, delete (admin UI + API)
 
 ## Key Design Decisions
 
@@ -972,6 +976,490 @@ git commit -m "Phase 12 Stage 4: S3 range request support — audio + PDF stream
 
 ---
 
+## STAGE 5 — Structured JSON Logging + `/health` Endpoint
+
+**Priority: High (ops table-stakes)**
+**Blocks: nothing. Blocked by: nothing.**
+**Model: GPT-5.3-Codex**
+
+**Paste this into Codex:**
+
+```
+Read backend/src/lib.rs, backend/Cargo.toml, backend/src/api/admin.rs,
+backend/src/db/queries/mod.rs, and backend/src/api/search.rs.
+Now add structured JSON logging and a proper health check endpoint.
+
+─────────────────────────────────────────
+DELIVERABLE 1 — JSON logging
+─────────────────────────────────────────
+
+backend/Cargo.toml — update tracing-subscriber:
+  tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+backend/src/lib.rs — replace the current tracing_subscriber::fmt() init:
+
+  let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "json".to_string());
+  match log_format.as_str() {
+    "text" => {
+      tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+    }
+    _ => {
+      tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_current_span(true)
+        .with_span_list(false)
+        .init();
+    }
+  }
+
+  Default is JSON. Set LOG_FORMAT=text for local development readability.
+  Document this in config.example.toml as a comment: # LOG_FORMAT=text for human-readable output
+
+All existing tracing::info!/warn!/error! call sites are unchanged — only the
+subscriber format changes.
+
+─────────────────────────────────────────
+DELIVERABLE 2 — GET /health endpoint
+─────────────────────────────────────────
+
+backend/src/api/mod.rs — add health route (no auth required):
+  router.route("/health", get(health_handler))
+
+backend/src/api/health.rs — new file:
+
+  use axum::Json;
+  use serde::Serialize;
+  use crate::AppState;
+
+  #[derive(Serialize)]
+  pub struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+    db: ComponentStatus,
+    search: ComponentStatus,
+  }
+
+  #[derive(Serialize)]
+  pub struct ComponentStatus {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+  }
+
+  pub async fn health_handler(
+    State(state): State<Arc<AppState>>,
+  ) -> (StatusCode, Json<HealthResponse>) {
+    // DB check: run a trivial query
+    let db_status = match sqlx::query("SELECT 1").fetch_one(&state.db).await {
+      Ok(_) => ComponentStatus { status: "ok", error: None },
+      Err(e) => ComponentStatus { status: "degraded", error: Some(e.to_string()) },
+    };
+
+    // Meilisearch check: GET /health on the Meilisearch client (if enabled)
+    let search_status = if state.config.meilisearch.enabled {
+      match state.meili.health().await {
+        Ok(_) => ComponentStatus { status: "ok", error: None },
+        Err(e) => ComponentStatus { status: "degraded", error: Some(e.to_string()) },
+      }
+    } else {
+      ComponentStatus { status: "disabled", error: None }
+    };
+
+    let overall_status = if db_status.status == "ok" { "ok" } else { "degraded" };
+    let http_status = if overall_status == "ok" {
+      StatusCode::OK
+    } else {
+      StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (http_status, Json(HealthResponse {
+      status: overall_status,
+      version: env!("CARGO_PKG_VERSION"),
+      db: db_status,
+      search: search_status,
+    }))
+  }
+
+  Response shape:
+    200 OK:
+    {
+      "status": "ok",
+      "version": "1.1.0",
+      "db": { "status": "ok" },
+      "search": { "status": "ok" }
+    }
+
+    503 Service Unavailable (DB down):
+    {
+      "status": "degraded",
+      "version": "1.1.0",
+      "db": { "status": "degraded", "error": "no connection available" },
+      "search": { "status": "ok" }
+    }
+
+  Note: search degraded does NOT cause 503 — the app is usable without Meilisearch.
+  Only DB degraded causes 503.
+
+─────────────────────────────────────────
+TESTS
+─────────────────────────────────────────
+
+backend/tests/test_health.rs:
+  test_health_returns_200_with_ok_status
+  test_health_includes_version_string
+  test_health_reports_search_disabled_when_meilisearch_not_configured
+  test_health_requires_no_auth
+
+─────────────────────────────────────────
+VERIFICATION
+─────────────────────────────────────────
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+# Manual: curl http://localhost:3000/health | jq
+# Manual: LOG_FORMAT=text cargo run — confirm human-readable output
+git add backend/
+git commit -m "Phase 12 Stage 5: JSON logging, /health endpoint (DB + Meilisearch checks)"
+```
+
+---
+
+## STAGE 6 — Rate-Limit Response Headers
+
+**Priority: High (API consumers get 429 with no retry guidance)**
+**Blocks: nothing. Blocked by: nothing.**
+**Model: GPT-5.3-Codex**
+
+**Paste this into Codex:**
+
+```
+Read backend/src/middleware/security_headers.rs, backend/src/lib.rs,
+and backend/Cargo.toml.
+Now add X-RateLimit-* headers to rate-limited responses.
+
+─────────────────────────────────────────
+BACKGROUND
+─────────────────────────────────────────
+
+tower_governor is already used for rate limiting. It enforces limits but returns
+a bare 429 response with no headers. Clients (Kobo sync, API token consumers,
+mobile app) cannot tell how long to back off.
+
+Standard rate-limit headers to add:
+  X-RateLimit-Limit: 10          — requests allowed per window
+  X-RateLimit-Remaining: 3       — requests remaining this window
+  X-RateLimit-Reset: 1713820800  — Unix timestamp when the window resets
+  Retry-After: 47                — seconds until next request is allowed (on 429 only)
+
+─────────────────────────────────────────
+DELIVERABLE
+─────────────────────────────────────────
+
+backend/src/middleware/security_headers.rs — add a tower middleware layer that
+injects rate-limit headers on every response from rate-limited routes:
+
+  Use tower_governor's GovernorConfig to expose the quota and remaining count.
+  If tower_governor exposes the current state via an extension, extract it in a
+  middleware and set the headers accordingly.
+
+  If tower_governor does not expose per-request remaining count:
+    - Set X-RateLimit-Limit with the configured burst size
+    - Set X-RateLimit-Reset to the next round window boundary (current time + window_seconds)
+    - Omit X-RateLimit-Remaining (better to omit than to lie)
+    - On 429: set Retry-After to window_seconds
+
+  Add the headers to ALL responses from rate-limited route groups, not just 429s.
+  This lets clients implement proactive backoff.
+
+  The global_rate_limit_layer and auth_rate_limit_layer wrappers in lib.rs should
+  each inject the appropriate limit value (global vs auth — they have different quotas).
+
+─────────────────────────────────────────
+TESTS
+─────────────────────────────────────────
+
+backend/tests/test_rate_limit.rs (add to existing if present, else create):
+  test_auth_endpoint_returns_ratelimit_headers
+    — POST /auth/login with valid creds; assert response has X-RateLimit-Limit header
+
+  test_429_response_includes_retry_after
+    — exceed the auth rate limit; assert 429 response contains Retry-After header
+
+  test_retry_after_value_is_positive_integer
+    — parse Retry-After value; assert it is a number > 0
+
+─────────────────────────────────────────
+VERIFICATION
+─────────────────────────────────────────
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+# Manual: curl -i -X POST http://localhost:3000/api/v1/auth/login | grep -i ratelimit
+git add backend/
+git commit -m "Phase 12 Stage 6: X-RateLimit-* and Retry-After headers on rate-limited routes"
+```
+
+---
+
+## STAGE 7 — WebP Cover Conversion
+
+**Priority: High (mobile grid load time — covers are the most-fetched asset)**
+**Blocks: nothing. Blocked by: nothing.**
+**Model: GPT-5.3-Codex**
+
+**Paste this into Codex:**
+
+```
+Read backend/src/api/books.rs (the cover upload and render_cover_variants sections),
+backend/Cargo.toml, and backend/src/storage.rs.
+Now add WebP output to cover image processing.
+
+─────────────────────────────────────────
+BACKGROUND
+─────────────────────────────────────────
+
+render_cover_variants() currently generates:
+  - Full size: JPEG at 400×600, stored as covers/{ab}/{id}.jpg
+  - Thumbnail: JPEG at 100×150, stored as covers/{ab}/{id}.thumb.jpg
+
+The image crate (already in Cargo.toml at version 0.25) has WebP encoding via the
+webp feature flag. WebP achieves equivalent visual quality at 25–35% smaller file
+size — meaningful for a grid of 50–200 cover images loaded on a mobile connection.
+
+─────────────────────────────────────────
+DELIVERABLE
+─────────────────────────────────────────
+
+backend/Cargo.toml — enable WebP:
+  image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
+
+backend/src/api/books.rs — update render_cover_variants():
+
+  Generate four files per book (two formats × two sizes):
+    covers/{ab}/{id}.jpg        — existing JPEG full size (keep for compatibility)
+    covers/{ab}/{id}.thumb.jpg  — existing JPEG thumbnail (keep for compatibility)
+    covers/{ab}/{id}.webp       — new WebP full size (same 400×600 dimensions)
+    covers/{ab}/{id}.thumb.webp — new WebP thumbnail (same 100×150 dimensions)
+
+  WebP encoding:
+    use image::codecs::webp::WebPEncoder;
+    let mut webp_bytes: Vec<u8> = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut webp_bytes);
+    // or lossy: WebPEncoder::new_with_quality(&mut webp_bytes, 85.0)
+    img.write_with_encoder(encoder)?;
+
+  Use lossy WebP at quality 82 for thumbnails, 85 for full size.
+  These values balance file size vs. visual quality for cover art.
+
+Cover-serving handler — add content negotiation:
+  Check the Accept header from the request.
+  If Accept contains "image/webp":
+    Try to serve the .webp variant first.
+    Fall back to .jpg if the .webp file does not exist (covers uploaded before this
+    change only have .jpg).
+  Otherwise: serve .jpg as before.
+
+  This is backward-compatible: old covers served as JPEG; new covers served as
+  WebP to clients that support it (all modern browsers, all mobile platforms).
+
+  Example handler logic:
+    let wants_webp = headers
+      .get(ACCEPT)
+      .and_then(|v| v.to_str().ok())
+      .map(|s| s.contains("image/webp"))
+      .unwrap_or(false);
+
+    let cover_path = if wants_webp {
+      let webp_path = format!("covers/{}/{}.webp", bucket, book_id);
+      if state.storage.resolve(&webp_path).is_ok() { webp_path } else { jpg_path }
+    } else {
+      jpg_path
+    };
+
+─────────────────────────────────────────
+MIGRATION NOTE
+─────────────────────────────────────────
+
+Existing covers are JPEG only. WebP variants are generated only on:
+  - New cover upload (POST /books/:id/cover)
+  - Cover replace
+  - Book ingest (if cover is extracted from the file)
+
+No bulk backfill migration is required — old covers fall back to JPEG gracefully.
+A future admin action ("Regenerate all covers") can backfill WebP variants if desired.
+
+─────────────────────────────────────────
+TESTS
+─────────────────────────────────────────
+
+backend/tests/test_covers.rs (add to existing):
+  test_cover_upload_generates_webp_variants
+    — upload a cover; assert .webp and .thumb.webp files exist in storage
+
+  test_cover_serve_returns_webp_when_accepted
+    — GET /books/:id/cover with Accept: image/webp; assert Content-Type: image/webp
+
+  test_cover_serve_falls_back_to_jpeg_when_webp_not_accepted
+    — GET /books/:id/cover without Accept: image/webp; assert Content-Type: image/jpeg
+
+  test_cover_serve_falls_back_to_jpeg_when_webp_missing
+    — manually delete .webp file; GET with Accept: image/webp; assert Content-Type: image/jpeg
+
+─────────────────────────────────────────
+VERIFICATION
+─────────────────────────────────────────
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+# Manual: upload a cover; compare file sizes of .jpg vs .webp in storage
+# Manual: open Chrome DevTools Network tab; verify cover requests return image/webp
+git add backend/
+git commit -m "Phase 12 Stage 7: WebP cover conversion with JPEG fallback (content negotiation)"
+```
+
+---
+
+## STAGE 8 — Global Tag Management
+
+**Priority: High (library hygiene — tags accumulate duplicates over time)**
+**Blocks: nothing. Blocked by: nothing.**
+**Model: GPT-5.3-Codex**
+
+**Paste this into Codex:**
+
+```
+Read backend/src/api/admin.rs, backend/src/db/queries/tags.rs,
+backend/src/db/queries/mod.rs, docs/API.md (the tags section),
+and backend/tests/ for any existing tag tests.
+Now add global tag management routes for admin users.
+
+─────────────────────────────────────────
+BACKGROUND
+─────────────────────────────────────────
+
+Tags currently accumulate duplicates: "sci-fi", "Sci-Fi", "science fiction",
+"Science Fiction" are treated as four different tags. The only existing tag
+routes are a search endpoint and per-book tag editing. There are no admin routes
+to rename, merge, or delete tags globally.
+
+─────────────────────────────────────────
+SCHEMA (no migration needed)
+─────────────────────────────────────────
+
+All operations work on the existing `tags` and `book_tags` tables:
+  tags:      id TEXT PK, name TEXT UNIQUE, source TEXT, created_at TEXT
+  book_tags: book_id TEXT, tag_id TEXT, confirmed INTEGER, source TEXT
+
+─────────────────────────────────────────
+DELIVERABLE 1 — API routes (Admin only)
+─────────────────────────────────────────
+
+backend/src/api/admin.rs — add to the admin router:
+
+  GET    /admin/tags                  — list all tags with book counts
+  PATCH  /admin/tags/:id              — rename a tag
+  DELETE /admin/tags/:id              — delete a tag (removes from all books)
+  POST   /admin/tags/:id/merge        — merge tag into another tag
+
+Route details:
+
+  GET /admin/tags
+    Query params: q (search), page, page_size
+    Response: PaginatedResponse<TagWithCount>
+      TagWithCount: { id, name, source, book_count, confirmed_count }
+    Order: by book_count DESC by default (most-used first)
+
+  PATCH /admin/tags/:id
+    Body: { "name": "Science Fiction" }
+    - Validate new name is non-empty and not already taken by another tag
+    - UPDATE tags SET name = ? WHERE id = ?
+    - Return 200 updated Tag
+    - On duplicate name: 409 { "error": "tag_name_conflict" }
+
+  DELETE /admin/tags/:id
+    - DELETE FROM book_tags WHERE tag_id = ?
+    - DELETE FROM tags WHERE id = ?
+    - Return 204 No Content
+    - On not found: 404
+
+  POST /admin/tags/:id/merge
+    Body: { "into_tag_id": "uuid-of-target-tag" }
+    Merges source tag (id) into target tag (into_tag_id):
+    1. For each book that has the source tag but NOT the target tag:
+       INSERT INTO book_tags (book_id, tag_id, confirmed, source)
+       VALUES (book_id, into_tag_id, confirmed, source)
+    2. DELETE FROM book_tags WHERE tag_id = source_id
+    3. DELETE FROM tags WHERE id = source_id
+    Return 200: { "merged_book_count": N, "target_tag": Tag }
+    Both steps in a single DB transaction — atomic merge.
+
+─────────────────────────────────────────
+DELIVERABLE 2 — DB queries
+─────────────────────────────────────────
+
+backend/src/db/queries/tags.rs — add:
+
+  pub async fn list_tags_with_counts(db, q, page, page_size) -> PaginatedResponse<TagWithCount>
+    SELECT t.id, t.name, t.source,
+           COUNT(bt.book_id) AS book_count,
+           SUM(CASE WHEN bt.confirmed = 1 THEN 1 ELSE 0 END) AS confirmed_count
+    FROM tags t
+    LEFT JOIN book_tags bt ON bt.tag_id = t.id
+    WHERE t.name LIKE '%' || ? || '%'
+    GROUP BY t.id
+    ORDER BY book_count DESC
+    LIMIT ? OFFSET ?
+
+  pub async fn rename_tag(db, tag_id, new_name) -> Result<Tag, AppError>
+  pub async fn delete_tag(db, tag_id) -> Result<(), AppError>
+  pub async fn merge_tags(db, source_id, target_id) -> Result<usize, AppError>
+    (returns count of books updated)
+
+─────────────────────────────────────────
+DELIVERABLE 3 — Admin UI
+─────────────────────────────────────────
+
+apps/web/src/features/admin/TagsPage.tsx — new page:
+
+  Table columns: Name | Books | Confirmed | Actions
+  Actions per row:
+    - Rename (inline edit — click name to edit in place, Enter to save)
+    - Merge (opens a combobox to pick the target tag, then confirms)
+    - Delete (confirmation dialog — "Remove this tag from N books?")
+
+  Search input above table (debounced, filters by name).
+  Pagination at bottom.
+
+  Add "Tags" to the admin sidebar nav (between Roles and Import).
+
+Add route to TanStack Router: /admin/tags
+
+─────────────────────────────────────────
+TESTS
+─────────────────────────────────────────
+
+backend/tests/test_tag_management.rs:
+  test_list_tags_returns_book_counts
+  test_rename_tag_updates_name
+  test_rename_tag_conflicts_with_existing_name_returns_409
+  test_delete_tag_removes_from_all_books
+  test_delete_nonexistent_tag_returns_404
+  test_merge_tag_moves_books_to_target
+  test_merge_tag_does_not_duplicate_on_books_that_already_have_target
+  test_merge_is_atomic_source_deleted_after_merge
+
+─────────────────────────────────────────
+VERIFICATION
+─────────────────────────────────────────
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+pnpm --filter @autolibre/web build
+git add backend/ apps/web/src/features/admin/TagsPage.tsx
+git commit -m "Phase 12 Stage 8: global tag rename, merge, delete — admin tag management"
+```
+
+---
+
 ## Review Checkpoints
 
 | After Stage | Skill to run |
@@ -980,5 +1468,9 @@ git commit -m "Phase 12 Stage 4: S3 range request support — audio + PDF stream
 | Stage 2 | `/review` — verify backup scripts are idempotent and fail loudly, runbook commands are copy-pasteable and accurate |
 | Stage 3 | `/review` — verify 100% key coverage confirmed by CI script, no EN keys missing from any locale |
 | Stage 4 | `/review` + `/security-review` — verify Range header parsing rejects malformed input, no path traversal via range, S3 key sanitizer unchanged |
+| Stage 5 | `/review` — verify health endpoint doesn't leak internal error details, JSON logging doesn't log secrets |
+| Stage 6 | `/review` + `/security-review` — verify rate-limit headers don't expose internal state, Retry-After is always a positive integer |
+| Stage 7 | `/review` — verify WebP fallback is correct, no broken cover-serve on pre-existing JPEG-only books |
+| Stage 8 | `/review` — verify merge is atomic (transaction), duplicate suppression on merge is correct, admin-only enforcement |
 
-Run `/engineering:deploy-checklist` after Stage 4 before tagging v1.1.
+Run `/engineering:deploy-checklist` after Stage 8 before tagging v1.1.
