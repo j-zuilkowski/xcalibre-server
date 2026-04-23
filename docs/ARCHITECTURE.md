@@ -446,20 +446,26 @@ A typical agentic query: user question → agent calls `search_books` (filter by
 
 ## Cross-Document Synthesis and Derivative Works
 
-Cross-document synthesis is a **first-class architectural goal**, not a side feature. The library is the corpus; the agent is the synthesizer. autolibre's role is to make retrieval precise enough that the agent can produce reliable, grounded derivative works.
+Cross-document synthesis is a **first-class architectural goal**, not a side feature. The library is the corpus; the agent is the synthesizer. autolibre's role is to make retrieval precise enough that the agent can produce reliable, grounded derivative works from any domain.
+
+**The retrieval layer is domain-agnostic.** Whether the library contains Oracle documentation, electronics datasheets, culinary texts, legal codes, or academic papers — the same chunking, indexing, and retrieval pipeline applies. What changes per domain is the output format and, optionally, the chunking strategy. The synthesis itself is always delegated to the agent.
 
 ### What "Derivative Works" Means
 
-A derivative work is any agent-produced output that is grounded in one or more books in the library:
+A derivative work is any agent-produced output grounded in one or more books in the library. There is no intended limit on output type — if it can be expressed in text and the source material exists in the library, it is a valid derivative:
 
-| Derivative Type | Example | Source Material |
+| Domain | Query | Output |
 |---|---|---|
-| **Runsheet / procedure** | "How to configure RMAN backup on Oracle Database Appliance" | Multiple Oracle admin guides |
-| **Comparative analysis** | "How do Kant and Mill differ on moral obligation?" | Two philosophy texts |
-| **Study guide** | "Key concepts from Chapter 5 of CLRS" | A textbook |
-| **Technical summary** | "What changed in PostgreSQL 16 vs 15?" | Two release note documents |
-| **Research synthesis** | "What does the literature say about X?" | Multiple papers/books on a topic |
-| **Cross-reference** | "Where is UNDO_RETENTION documented across all Oracle guides?" | An entire documentation set |
+| **Engineering / ops** | "Procedure to configure RMAN backup on Oracle Database Appliance" | Runsheet with prerequisites, numbered steps, verification, rollback |
+| **Electronics** | "Design a 5V→3.3V buck converter for a 2A load" | Component list, design equations, suggested topology, layout notes |
+| **Culinary** | "New composite recipe combining French reduction technique with Japanese umami ingredients" | Ingredient list, method, plating, flavor rationale |
+| **Legal / compliance** | "What does GDPR require for data retention of user activity logs?" | Obligation summary with article citations |
+| **Research** | "What does the literature say about attention mechanisms in transformers?" | Synthesized summary with per-paper attribution |
+| **Standards** | "Checklist for IPC-A-610 Class 3 solder joint inspection" | Inspection criteria table with clause references |
+| **Comparative** | "How does Knuth's analysis of quicksort differ from Sedgewick's?" | Side-by-side comparison with citations |
+| **Cross-reference** | "Every place UNDO_RETENTION is documented across all Oracle guides" | Indexed list with section and page references |
+
+The primary use case is **engineering** — technical documentation sets, datasheets, standards, reference manuals, and application notes loaded as collections and queried for procedures, specifications, and designs. All other domains are equally supported by the same architecture.
 
 This is why the `derive` feature (Phase 5) exists at the book level, and why the RAG surface is designed as a tool API rather than a chat interface — the agent orchestrating synthesis has full control over retrieval scope, ordering, and output format.
 
@@ -526,12 +532,13 @@ GET /api/v1/collections/:id/search/chunks?q=configure+RMAN&type=procedure&limit=
 
 Results are ranked across all books in the collection simultaneously, with per-book provenance preserved.
 
-**`synthesize_procedure` MCP tool:** Accepts a query + collection (or list of book IDs) and returns a structured synthesis object:
+**`synthesize` MCP tool:** Accepts a query, output format, and collection or book list. Returns a structured synthesis object with full source attribution. The format parameter drives what the agent is asked to produce — the retrieval pipeline is identical regardless of format.
 
 ```json
 {
   "query": "Configure RMAN backup policy on Oracle Database Appliance",
   "format": "runsheet",
+  "collection_id": "oracle-db-19c",
   "sources": [
     { "book": "Backup and Recovery Guide 19c", "section": "§8.3", "chunk_index": 142 },
     { "book": "ODA Administration Guide", "section": "§12.1", "chunk_index": 89 }
@@ -548,38 +555,112 @@ Results are ranked across all books in the collection simultaneously, with per-b
 }
 ```
 
-The agent receives a structured, citable runsheet grounded in the actual documentation set — not a hallucinated procedure.
+**Supported `format` values:**
 
-### Use Case: Technical Documentation Sets
+| Format | Output shape | Typical domain |
+|---|---|---|
+| `runsheet` | prerequisites, numbered steps, verification, rollback | Engineering ops, IT procedures |
+| `design-spec` | requirements, proposed design, component/material list, calculations, constraints | Electronics, mechanical, software |
+| `recipe` | ingredients, method, variations, rationale | Culinary |
+| `compliance-summary` | obligations, citations, checklist | Legal, standards |
+| `comparison` | side-by-side table, narrative summary, citations | Any |
+| `study-guide` | key concepts, definitions, practice questions | Academic |
+| `cross-reference` | indexed list of all locations a term/concept appears | Reference corpora |
+| `research-synthesis` | summarized findings, per-source attribution, gaps | Academic, R&D |
+| `custom` | agent-defined; synthesis prompt provided by caller | Any |
 
-The architecture is designed to handle large documentation corpora, not just individual books:
+The `format` parameter is a hint to the synthesis prompt — it does not change retrieval. An agent can always ignore the MCP tool and call the chunk retrieval API directly, constructing any output format it needs.
 
+### Domain-Specific Chunking Strategies
+
+The chunker (Phase 15.1) accepts a `domain` hint per collection that adjusts boundary detection:
+
+| Domain | Chunk boundary detection | Atomic unit |
+|---|---|---|
+| `technical` (default) | Numbered lists, heading levels, `Prerequisites/Steps/Verification` headings | Procedure or sub-section |
+| `electronics` | Component specification blocks, pin tables, application circuit paragraphs | Spec block or application note section |
+| `culinary` | Recipe title + ingredient list + method as one unit | Single recipe |
+| `legal` | Article/clause/sub-clause structure | Sub-clause |
+| `academic` | Abstract, section headings, theorem/proof blocks | Section or theorem |
+| `narrative` | Paragraph groups (overlap-based, no structure detection) | Overlapping passage |
+
+**Electronics-specific note:** Schematics and circuit diagrams embedded in PDFs as images are not text-extractable in the current pipeline. The chunk will contain the surrounding text (component values, pin assignments, application description) but not the schematic image itself. An agent generating a circuit design from this corpus produces a design specification — component selection, topology rationale, calculations — that can then be realized in a schematic tool (KiCad, Altium, etc.). Future work: extract structured netlist hints from application note text for agent consumption.
+
+### Use Case Examples
+
+**Engineering — Technical Documentation Set:**
 ```
 Oracle Database 19c Documentation Set (50+ PDFs, ~30,000 pages)
-  ├── Ingested as a collection
+  ├── Ingested as collection "oracle-db-19c"
   ├── Chunked at section/procedure level (~180,000 chunks)
   ├── Embedded and indexed (BM25 + vector)
   └── Searchable as a unit via GET /collections/:id/search/chunks
 
-Agent query: "Procedure to resize an undo tablespace on ODA"
-  → hybrid search across all 50 guides simultaneously
-  → reranked by cross-encoder
-  → top 8 chunks from 3 guides returned
-  → agent synthesizes into a runsheet with §-level citations
+Agent: synthesize("Resize undo tablespace on ODA", format="runsheet", collection="oracle-db-19c")
+  → hybrid search across all 50 guides
+  → reranked → top 8 chunks from 3 guides
+  → structured runsheet with §-level citations
 ```
 
-This is equivalent to having a technical librarian who has read every page of every guide and can assemble a procedure from the relevant sections — with citations.
+**Electronics — Datasheet + Application Note Collection:**
+```
+TI Power Management Library (200+ datasheets + app notes)
+  ├── Ingested as collection "ti-power-mgmt"
+  ├── domain="electronics" chunking: spec tables + application sections intact
+
+Agent: synthesize("5V to 3.3V buck converter, 2A load, >90% efficiency", 
+                  format="design-spec", collection="ti-power-mgmt")
+  → retrieves: buck converter topology sections, LMR33630 datasheet spec blocks,
+               layout guidelines from app note SLVA477
+  → output: recommended IC, inductor value calculation, output cap selection,
+            efficiency curve reference, layout constraints
+  → agent generates design spec; engineer realizes in KiCad
+```
+
+**Culinary — Cookbook Collection:**
+```
+Collection "culinary-library" (100 cookbooks, various cuisines)
+
+Agent: synthesize("New pasta dish combining French reduction technique 
+                   with Japanese umami ingredients", format="recipe", 
+                   collection="culinary-library")
+  → retrieves: demi-glace method from French Laundry cookbook,
+               dashi construction from Nobu cookbook,
+               umami layering theory from flavor-pairing reference
+  → output: composite recipe with ingredient list, method, 
+            flavor rationale, suggested variations
+```
+
+**Standards — IPC Inspection Library:**
+```
+Collection "ipc-standards" (IPC-A-610, IPC-J-STD-001, IPC-7711/7721)
+
+Agent: synthesize("Inspection checklist for Class 3 BGA solder joints",
+                  format="compliance-summary", collection="ipc-standards")
+  → retrieves relevant clauses from IPC-A-610 Rev G
+  → output: pass/fail criteria table with clause numbers,
+            defect descriptions, accept/reject thresholds
+```
+
+This is equivalent to a domain expert who has read every page of every reference in the collection and can assemble a precise, cited output from the relevant sections — without hallucinating specifications or steps that aren't in the source material.
 
 ### Connection to the `derive` Feature
 
-The existing `GET /books/:id/derive` endpoint (Phase 5) is single-book derivation: the server calls the LLM with one book's content and returns a derivative (summary, discussion questions, related titles).
+The existing `GET /books/:id/derive` endpoint (Phase 5) is **single-book derivation**: the server calls the LLM with one book's content and returns a derivative (summary, discussion questions, related titles). It is a convenience endpoint, not an architecture.
 
-Cross-document synthesis is multi-book derivation where the **agent** orchestrates the LLM calls, not the server. The server's role is:
-1. Expose precise, chunk-level retrieval (what Phase 15 adds)
-2. Return structured provenance with every chunk
-3. Provide the `synthesize_procedure` MCP tool as a convenience wrapper for structured output
+Cross-document synthesis is **multi-book, multi-format derivation** where the **agent** orchestrates the LLM calls, not the server. The server's role is:
+1. Expose precise, chunk-level retrieval with domain-aware chunking (Phase 15.1)
+2. Return structured provenance with every chunk — book, section, chunk index
+3. Provide the `synthesize` MCP tool as a convenience wrapper for structured output formats
 
-The design explicitly separates **retrieval** (autolibre's responsibility) from **synthesis** (the agent's responsibility). This separation keeps the server stateless with respect to synthesis and lets any agent framework — LangGraph, smolagents, Claude, custom — use the retrieval surface.
+The design explicitly separates **retrieval** (autolibre's responsibility) from **synthesis** (the agent's responsibility). This separation is intentional and load-bearing:
+
+- The server stays stateless with respect to synthesis — it never decides what the output format is
+- Any agent framework (LangGraph, smolagents, Claude, custom scripts) can use the retrieval surface
+- The output format is unlimited — runsheets, design specs, recipes, compliance checklists, circuit designs, or any format the agent constructs
+- The server enforces source grounding (every chunk carries provenance) but does not constrain output shape
+
+**The library becomes a grounded knowledge base for any agent that knows how to ask.**
 
 ---
 
