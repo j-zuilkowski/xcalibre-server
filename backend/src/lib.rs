@@ -6,10 +6,11 @@ pub mod error;
 pub mod ingest;
 pub mod llm;
 pub mod middleware;
-pub mod search;
 pub mod scheduler;
+pub mod search;
 pub mod state;
 pub mod storage;
+pub mod storage_s3;
 
 pub use api::router as app;
 pub use config::AppConfig;
@@ -28,7 +29,7 @@ pub async fn bootstrap() -> anyhow::Result<(AppState, tokio::net::TcpListener)> 
     let migrator = sqlx::migrate::Migrator::new(migration_path.as_path()).await?;
     migrator.run(&db).await?;
 
-    let state = AppState::new(db, config).await;
+    let state = AppState::new(db, config).await?;
     let bind_addr = std::env::var("APP_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8083".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 

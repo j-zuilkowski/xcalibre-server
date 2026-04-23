@@ -15,6 +15,20 @@ lockout_duration_mins = 15
 [llm]
 enabled = false
 
+[storage]
+backend = "local"   # "local" or "s3"
+
+# Only required when backend = "s3"
+[storage.s3]
+bucket       = "my-autolibre-library"
+region       = "us-east-1"
+endpoint_url = ""   # Override for MinIO / Backblaze B2 / Cloudflare R2
+                    # Example (MinIO): "http://minio.local:9000"
+                    # Example (R2):    "https://<account_id>.r2.cloudflarestorage.com"
+access_key   = ""
+secret_key   = ""
+key_prefix   = ""   # Optional. Example: "autolibre/" stores all files under that prefix
+
 [llm.librarian]
 endpoint = "http://192.168.0.72:1234/v1"
 model = ""
@@ -30,4 +44,3 @@ system_prompt = ""
 [limits]
 upload_max_bytes = 524288000
 rate_limit_per_ip = 200
-

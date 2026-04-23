@@ -12,6 +12,9 @@ sqlite-vec = ["dep:sqlite-vec"]
 anyhow = "1"
 async-trait = "0.1"
 argon2 = "0.5"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = "1"
+aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 axum = { version = "0.7", features = ["macros", "multipart", "json"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
@@ -44,6 +47,7 @@ semver = "1"
 totp-rs = { version = "5", features = ["gen_secret", "qr"] }
 toml = "0.8"
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio-rustls", "migrate", "uuid", "chrono", "json"] }
+tempfile = "3"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"

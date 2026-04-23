@@ -1,4 +1,5 @@
 use super::mobi_util;
+use crate::storage::StorageBackend;
 use anyhow::Context;
 use mobi::Mobi;
 use regex::Regex;
@@ -17,6 +18,46 @@ pub struct Chapter {
     pub index: u32,
     pub title: String,
     pub word_count: usize,
+}
+
+pub struct ExtractablePath {
+    path: PathBuf,
+    _temp_path: Option<tempfile::TempPath>,
+}
+
+impl ExtractablePath {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+pub async fn resolve_or_download_path(
+    storage: &dyn StorageBackend,
+    relative_path: &str,
+) -> anyhow::Result<ExtractablePath> {
+    match storage.resolve(relative_path) {
+        Ok(path) => Ok(ExtractablePath {
+            path,
+            _temp_path: None,
+        }),
+        Err(_) => {
+            let bytes = storage
+                .get_bytes(relative_path)
+                .await
+                .with_context(|| format!("download object for extraction: {relative_path}"))?;
+            let temp_file =
+                tempfile::NamedTempFile::new().context("create temp extraction file")?;
+            tokio::fs::write(temp_file.path(), &bytes)
+                .await
+                .context("write temp extraction file")?;
+            let temp_path = temp_file.into_temp_path();
+            let path = temp_path.to_path_buf();
+            Ok(ExtractablePath {
+                path,
+                _temp_path: Some(temp_path),
+            })
+        }
+    }
 }
 
 pub fn list_chapters(path: &Path, format: &str) -> anyhow::Result<Vec<Chapter>> {

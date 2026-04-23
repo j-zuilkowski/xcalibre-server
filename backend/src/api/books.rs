@@ -756,7 +756,11 @@ async fn upload_book(
 
     state
         .storage
-        .put(&relative_path, &parsed_upload.bytes)
+        .put(
+            &relative_path,
+            bytes::Bytes::from(parsed_upload.bytes.clone()),
+        )
+        .await
         .map_err(|_| AppError::Internal)?;
 
     let insert_result = book_queries::insert_uploaded_book(
@@ -784,7 +788,7 @@ async fn upload_book(
     let mut book = match insert_result {
         Ok(book) => book,
         Err(_) => {
-            let _ = state.storage.delete(&relative_path);
+            let _ = state.storage.delete(&relative_path).await;
             return Err(AppError::Internal);
         }
     };
@@ -797,18 +801,20 @@ async fn upload_book(
 
             state
                 .storage
-                .put(&cover_relative_path, &cover_jpg)
+                .put(&cover_relative_path, bytes::Bytes::from(cover_jpg))
+                .await
                 .map_err(|_| AppError::Internal)?;
             state
                 .storage
-                .put(&thumb_relative_path, &thumb_jpg)
+                .put(&thumb_relative_path, bytes::Bytes::from(thumb_jpg))
+                .await
                 .map_err(|_| AppError::Internal)?;
 
             if let Err(err) =
                 book_queries::set_book_cover_path(&state.db, &book.id, &cover_relative_path).await
             {
-                let _ = state.storage.delete(&cover_relative_path);
-                let _ = state.storage.delete(&thumb_relative_path);
+                let _ = state.storage.delete(&cover_relative_path).await;
+                let _ = state.storage.delete(&thumb_relative_path).await;
                 tracing::error!("failed to persist cover path for book {}: {err:#}", book.id);
                 return Err(AppError::Internal);
             }
@@ -927,7 +933,7 @@ async fn delete_book(
     queue_book_removal(state.search.clone(), book_id.clone());
 
     for path in paths {
-        if let Err(err) = state.storage.delete(&path) {
+        if let Err(err) = state.storage.delete(&path).await {
             tracing::error!(book_id = %book_id, path = %path, error = %err, "failed to delete book file");
             return Err(AppError::Internal);
         }
@@ -956,16 +962,21 @@ async fn download_format(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
     let file_extension = validated_download_format_extension(&format_file.format)?;
-
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
-    let mut response = serve_file(request, full_path).await?;
+    let download_content_type = mime_guess::from_ext(&file_extension)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
 
     let file_name = format!("{}.{}", book_id, file_extension);
-    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{file_name}\""))
-        .map_err(|_| AppError::Internal)?;
-    response
-        .headers_mut()
-        .insert(header::CONTENT_DISPOSITION, disposition);
+    let disposition = format!("attachment; filename=\"{file_name}\"");
+    let response = serve_storage_file(
+        &state,
+        request,
+        &format_file.path,
+        Some(download_content_type.as_str()),
+        Some(disposition.as_str()),
+    )
+    .await?;
 
     let db = state.db.clone();
     let history_user_id = auth_user.user.id.clone();
@@ -1024,14 +1035,14 @@ async fn stream_format(
         }
     };
 
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
-    let mut response = serve_file(request, full_path).await?;
-    let content_type_header =
-        HeaderValue::from_str(content_type.as_ref()).map_err(|_| AppError::Internal)?;
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, content_type_header);
-    Ok(response)
+    serve_storage_file(
+        &state,
+        request,
+        &format_file.path,
+        Some(content_type.as_ref()),
+        None,
+    )
+    .await
 }
 
 async fn mobi_to_epub(
@@ -1058,11 +1069,12 @@ async fn mobi_to_epub(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
 
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
-    let bytes = tokio::fs::read(&full_path)
+    let bytes = state
+        .storage
+        .get_bytes(&format_file.path)
         .await
-        .map_err(|_| AppError::Internal)?;
-    let mobi_book = mobi::Mobi::new(&bytes).map_err(|_| AppError::Internal)?;
+        .map_err(map_storage_read_error)?;
+    let mobi_book = mobi::Mobi::new(bytes.to_vec()).map_err(|_| AppError::Internal)?;
     let epub_bytes = build_epub_from_mobi(&mobi_book, &book_id)?;
 
     let source_title = mobi_book.title();
@@ -1105,9 +1117,18 @@ async fn get_cover(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
-
-    let full_path = canonicalize_storage_file_path(&state, &cover_path)?;
-    serve_file(request, full_path).await
+    let cover_content_type = mime_guess::from_path(&cover_path)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
+    serve_storage_file(
+        &state,
+        request,
+        &cover_path,
+        Some(cover_content_type.as_str()),
+        None,
+    )
+    .await
 }
 
 async fn get_chapters(
@@ -1130,9 +1151,12 @@ async fn get_chapters(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NoExtractableFormat)?;
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
+    let extractable_path =
+        ingest_text::resolve_or_download_path(&*state.storage, &format_file.path)
+            .await
+            .map_err(map_storage_read_error)?;
 
-    let chapters = list_extractable_chapters(&full_path, format);
+    let chapters = list_extractable_chapters(extractable_path.path(), format);
     Ok(Json(ChaptersResponse {
         book_id,
         format: format.to_string(),
@@ -1161,9 +1185,12 @@ async fn get_text(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NoExtractableFormat)?;
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
+    let extractable_path =
+        ingest_text::resolve_or_download_path(&*state.storage, &format_file.path)
+            .await
+            .map_err(map_storage_read_error)?;
 
-    let chapters = list_extractable_chapters(&full_path, format);
+    let chapters = list_extractable_chapters(extractable_path.path(), format);
     if let Some(chapter) = query.chapter {
         if chapter as usize >= chapters.len() {
             tracing::warn!(
@@ -1176,7 +1203,8 @@ async fn get_text(
         }
     }
 
-    let text = ingest_text::extract_text(&full_path, format, query.chapter).unwrap_or_default();
+    let text = ingest_text::extract_text(extractable_path.path(), format, query.chapter)
+        .unwrap_or_default();
     let word_count = text.split_whitespace().count();
 
     Ok(Json(BookTextResponse {
@@ -1218,8 +1246,11 @@ async fn send_book(
         return Err(AppError::NotFound);
     };
 
-    let full_path = canonicalize_storage_file_path(&state, &format_file.path)?;
-    let bytes = std::fs::read(&full_path).map_err(|_| AppError::Internal)?;
+    let bytes = state
+        .storage
+        .get_bytes(&format_file.path)
+        .await
+        .map_err(map_storage_read_error)?;
     let email_settings = crate::db::queries::email_settings::get_email_settings(&state.db)
         .await
         .map_err(|_| AppError::Internal)?
@@ -1898,7 +1929,10 @@ async fn load_comic_archive(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NoExtractableFormat)?;
 
-    let full_path = canonicalize_storage_file_path(state, &format_file.path)?;
+    let extractable_path =
+        ingest_text::resolve_or_download_path(&*state.storage, &format_file.path)
+            .await
+            .map_err(map_storage_read_error)?;
     let extension = FsPath::new(&format_file.path)
         .extension()
         .and_then(|ext| ext.to_str())
@@ -1906,13 +1940,13 @@ async fn load_comic_archive(
         .to_ascii_lowercase();
 
     let entries = if extension == "cbz" {
-        load_cbz_pages(&full_path)?
+        load_cbz_pages(extractable_path.path())?
     } else if extension == "cbr" {
-        load_cbr_pages(&full_path)?
+        load_cbr_pages(extractable_path.path())?
     } else if format.format.eq_ignore_ascii_case("CBZ") {
-        load_cbz_pages(&full_path)?
+        load_cbz_pages(extractable_path.path())?
     } else if format.format.eq_ignore_ascii_case("CBR") {
-        load_cbr_pages(&full_path)?
+        load_cbr_pages(extractable_path.path())?
     } else {
         return Err(AppError::NoExtractableFormat);
     };
@@ -2299,6 +2333,84 @@ fn canonicalize_storage_file_path(
     }
 
     Ok(canonical_target)
+}
+
+fn map_storage_read_error(err: anyhow::Error) -> AppError {
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        if io_err.kind() == std::io::ErrorKind::NotFound {
+            return AppError::NotFound;
+        }
+    }
+
+    let message = format!("{err:#}");
+    if message.contains("not found") || message.contains("NoSuchKey") {
+        AppError::NotFound
+    } else {
+        AppError::Internal
+    }
+}
+
+async fn serve_storage_file(
+    state: &AppState,
+    request: Request<Body>,
+    relative_path: &str,
+    content_type: Option<&str>,
+    content_disposition: Option<&str>,
+) -> Result<axum::response::Response, AppError> {
+    match state.storage.resolve(relative_path) {
+        Ok(_) => {
+            let full_path = canonicalize_storage_file_path(state, relative_path)?;
+            let mut response = serve_file(request, full_path).await?;
+            if let Some(value) = content_type {
+                let content_type_header =
+                    HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_TYPE, content_type_header);
+            }
+            if let Some(value) = content_disposition {
+                let disposition_header =
+                    HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_DISPOSITION, disposition_header);
+            }
+            Ok(response)
+        }
+        Err(resolve_err) => {
+            if state.config.storage.backend.trim().eq_ignore_ascii_case("local") {
+                tracing::warn!(
+                    path = %relative_path,
+                    error = %resolve_err,
+                    "rejected unsafe local storage path"
+                );
+                return Err(AppError::BadRequest);
+            }
+
+            // S3 serving currently loads full files into memory and does not implement
+            // HTTP range requests. Readers that rely on ranges will fall back to full-file
+            // loading; this is acceptable for files under roughly 50MB. Large PDF/audio
+            // streaming is degraded until range support is added via pre-signed URLs or
+            // a streaming proxy.
+            let bytes = state
+                .storage
+                .get_bytes(relative_path)
+                .await
+                .map_err(map_storage_read_error)?;
+            let mut response_builder = axum::response::Response::builder().status(StatusCode::OK);
+            if let Some(value) = content_type {
+                response_builder = response_builder.header(header::CONTENT_TYPE, value);
+            }
+            if let Some(value) = content_disposition {
+                response_builder = response_builder.header(header::CONTENT_DISPOSITION, value);
+            }
+            response_builder =
+                response_builder.header(header::CONTENT_LENGTH, bytes.len().to_string());
+            response_builder
+                .body(Body::from(bytes))
+                .map_err(|_| AppError::Internal)
+        }
+    }
 }
 
 async fn serve_file(

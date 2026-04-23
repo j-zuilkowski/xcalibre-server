@@ -15,6 +15,7 @@ const MIN_ARGON2_PARALLELISM: u32 = 4;
 #[serde(default)]
 pub struct AppConfig {
     pub app: AppSection,
+    pub storage: StorageSection,
     pub database: DatabaseSection,
     pub auth: AuthSection,
     pub oauth: OauthSection,
@@ -32,6 +33,59 @@ pub struct AppSection {
     pub base_url: String,
     pub storage_path: String,
     pub calibre_db_path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageSection {
+    pub backend: String,
+    pub s3: S3Section,
+}
+
+impl Default for StorageSection {
+    fn default() -> Self {
+        Self {
+            backend: "local".to_string(),
+            s3: S3Section::default(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct S3Section {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint_url: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub key_prefix: String,
+}
+
+impl Default for S3Section {
+    fn default() -> Self {
+        Self {
+            bucket: String::new(),
+            region: "us-east-1".to_string(),
+            endpoint_url: String::new(),
+            access_key: String::new(),
+            secret_key: String::new(),
+            key_prefix: String::new(),
+        }
+    }
+}
+
+impl std::fmt::Debug for S3Section {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Section")
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("endpoint_url", &self.endpoint_url)
+            .field("access_key", &self.access_key)
+            .field("secret_key", &"[REDACTED]")
+            .field("key_prefix", &self.key_prefix)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -254,6 +308,7 @@ impl Default for AppConfig {
                 storage_path: "./storage".to_string(),
                 calibre_db_path: "./calibre/metadata.db".to_string(),
             },
+            storage: StorageSection::default(),
             database: DatabaseSection {
                 url: "sqlite://library.db".to_string(),
             },
@@ -318,6 +373,36 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
     if config.app.base_url.trim().is_empty() {
         anyhow::bail!("app.base_url is required");
     }
+
+    let storage_backend = config.storage.backend.trim().to_ascii_lowercase();
+    match storage_backend.as_str() {
+        "local" => {
+            tracing::info!(
+                path = %config.app.storage_path,
+                "Storage backend: local filesystem"
+            );
+        }
+        "s3" => {
+            if config.storage.s3.bucket.trim().is_empty() {
+                anyhow::bail!("storage.s3.bucket is required when storage.backend = \"s3\"");
+            }
+            if config.storage.s3.access_key.trim().is_empty() {
+                anyhow::bail!("storage.s3.access_key is required when storage.backend = \"s3\"");
+            }
+            if config.storage.s3.secret_key.trim().is_empty() {
+                anyhow::bail!("storage.s3.secret_key is required when storage.backend = \"s3\"");
+            }
+            tracing::info!(
+                bucket = %config.storage.s3.bucket,
+                region = %config.storage.s3.region,
+                "Storage backend: S3"
+            );
+        }
+        other => {
+            anyhow::bail!("storage.backend must be \"local\" or \"s3\", got \"{other}\"");
+        }
+    }
+
     if config.auth.argon2_memory_kib < MIN_ARGON2_MEMORY_KIB {
         anyhow::bail!(
             "auth.argon2_memory_kib must be >= {MIN_ARGON2_MEMORY_KIB}, got {}",
@@ -369,6 +454,19 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.app.base_url = pick_env("APP_BASE_URL", &config.app.base_url);
     config.app.storage_path = pick_env("APP_STORAGE_PATH", &config.app.storage_path);
     config.app.calibre_db_path = pick_env("APP_CALIBRE_DB_PATH", &config.app.calibre_db_path);
+    config.storage.backend = pick_env("APP_STORAGE_BACKEND", &config.storage.backend);
+    config.storage.s3.bucket = pick_env("APP_STORAGE_S3_BUCKET", &config.storage.s3.bucket);
+    config.storage.s3.region = pick_env("APP_STORAGE_S3_REGION", &config.storage.s3.region);
+    config.storage.s3.endpoint_url = pick_env(
+        "APP_STORAGE_S3_ENDPOINT_URL",
+        &config.storage.s3.endpoint_url,
+    );
+    config.storage.s3.access_key =
+        pick_env("APP_STORAGE_S3_ACCESS_KEY", &config.storage.s3.access_key);
+    config.storage.s3.secret_key =
+        pick_env("APP_STORAGE_S3_SECRET_KEY", &config.storage.s3.secret_key);
+    config.storage.s3.key_prefix =
+        pick_env("APP_STORAGE_S3_KEY_PREFIX", &config.storage.s3.key_prefix);
     config.database.url = pick_env("APP_DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("APP_JWT_SECRET", &config.auth.jwt_secret);
     config.auth.access_token_ttl_mins = pick_env_u64(
@@ -439,6 +537,14 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.app.base_url = pick_env("BASE_URL", &config.app.base_url);
     config.app.storage_path = pick_env("STORAGE_PATH", &config.app.storage_path);
     config.app.calibre_db_path = pick_env("CALIBRE_DB_PATH", &config.app.calibre_db_path);
+    config.storage.backend = pick_env("STORAGE_BACKEND", &config.storage.backend);
+    config.storage.s3.bucket = pick_env("STORAGE_S3_BUCKET", &config.storage.s3.bucket);
+    config.storage.s3.region = pick_env("STORAGE_S3_REGION", &config.storage.s3.region);
+    config.storage.s3.endpoint_url =
+        pick_env("STORAGE_S3_ENDPOINT_URL", &config.storage.s3.endpoint_url);
+    config.storage.s3.access_key = pick_env("STORAGE_S3_ACCESS_KEY", &config.storage.s3.access_key);
+    config.storage.s3.secret_key = pick_env("STORAGE_S3_SECRET_KEY", &config.storage.s3.secret_key);
+    config.storage.s3.key_prefix = pick_env("STORAGE_S3_KEY_PREFIX", &config.storage.s3.key_prefix);
     config.database.url = pick_env("DATABASE_URL", &config.database.url);
     config.auth.jwt_secret = pick_env("JWT_SECRET", &config.auth.jwt_secret);
     config.auth.proxy.enabled = pick_env_bool("AUTH_PROXY_ENABLED", config.auth.proxy.enabled);

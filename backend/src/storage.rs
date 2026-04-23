@@ -1,9 +1,12 @@
 use anyhow::Context;
+use bytes::Bytes;
 use std::path::{Component, Path, PathBuf};
 
+#[async_trait::async_trait]
 pub trait StorageBackend: Send + Sync {
-    fn put(&self, relative_path: &str, bytes: &[u8]) -> anyhow::Result<()>;
-    fn delete(&self, relative_path: &str) -> anyhow::Result<()>;
+    async fn put(&self, relative_path: &str, bytes: Bytes) -> anyhow::Result<()>;
+    async fn delete(&self, relative_path: &str) -> anyhow::Result<()>;
+    async fn get_bytes(&self, relative_path: &str) -> anyhow::Result<Bytes>;
     fn resolve(&self, relative_path: &str) -> anyhow::Result<PathBuf>;
 }
 
@@ -44,25 +47,36 @@ impl LocalFsStorage {
     }
 }
 
+#[async_trait::async_trait]
 impl StorageBackend for LocalFsStorage {
-    fn put(&self, relative_path: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    async fn put(&self, relative_path: &str, bytes: Bytes) -> anyhow::Result<()> {
         let full_path = self.resolve(relative_path)?;
         if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)
+            tokio::fs::create_dir_all(parent)
+                .await
                 .with_context(|| format!("create parent directory for {}", full_path.display()))?;
         }
-        std::fs::write(&full_path, bytes)
+        tokio::fs::write(&full_path, bytes)
+            .await
             .with_context(|| format!("write file {}", full_path.display()))?;
         Ok(())
     }
 
-    fn delete(&self, relative_path: &str) -> anyhow::Result<()> {
+    async fn delete(&self, relative_path: &str) -> anyhow::Result<()> {
         let full_path = self.resolve(relative_path)?;
-        match std::fs::remove_file(&full_path) {
+        match tokio::fs::remove_file(&full_path).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err).with_context(|| format!("delete file {}", full_path.display())),
         }
+    }
+
+    async fn get_bytes(&self, relative_path: &str) -> anyhow::Result<Bytes> {
+        let full_path = self.resolve(relative_path)?;
+        let bytes = tokio::fs::read(&full_path)
+            .await
+            .with_context(|| format!("read file {}", full_path.display()))?;
+        Ok(Bytes::from(bytes))
     }
 
     fn resolve(&self, relative_path: &str) -> anyhow::Result<PathBuf> {

@@ -2,6 +2,8 @@ use crate::{
     config::AppConfig,
     db::queries::libraries as library_queries,
     llm::{chat::ChatClient, embeddings::EmbeddingClient},
+    storage::StorageBackend,
+    storage_s3::S3Storage,
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -17,7 +19,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(db: SqlitePool, config: AppConfig) -> Self {
+    pub async fn new(db: SqlitePool, config: AppConfig) -> anyhow::Result<Self> {
         if let Err(err) =
             library_queries::sync_default_library_path(&db, &config.app.calibre_db_path).await
         {
@@ -29,9 +31,14 @@ impl AppState {
             );
         }
 
-        let storage = Arc::new(crate::storage::LocalFsStorage::new(
-            &config.app.storage_path,
-        ));
+        let storage_kind = config.storage.backend.trim().to_ascii_lowercase();
+        let storage: Arc<dyn StorageBackend> = match storage_kind.as_str() {
+            "local" => Arc::new(crate::storage::LocalFsStorage::new(
+                &config.app.storage_path,
+            )),
+            "s3" => Arc::new(S3Storage::new(&config.storage.s3).await?),
+            other => anyhow::bail!("Unknown storage backend: {other}"),
+        };
         let search = crate::search::build_search_backend(&config, db.clone()).await;
         let semantic_search = if config.llm.enabled {
             match EmbeddingClient::new(&config) {
@@ -48,13 +55,13 @@ impl AppState {
             None
         };
         let chat_client = ChatClient::new(&config);
-        Self {
+        Ok(Self {
             db,
             config,
             storage,
             search,
             semantic_search,
             chat_client,
-        }
+        })
     }
 }

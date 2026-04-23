@@ -777,7 +777,9 @@ mod tests {
                 config.auth.jwt_secret = "test-secret-test-secret-test-secret-test".to_string();
             }
 
-            let state = AppState::new(db.clone(), config).await;
+            let state = AppState::new(db.clone(), config)
+                .await
+                .expect("initialize app state");
             let server = TestServer::new(crate::app(state)).expect("build test server");
             Self {
                 db,

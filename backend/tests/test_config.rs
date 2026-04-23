@@ -279,3 +279,15 @@ async fn test_debug_output_redacts_jwt_secret() {
     assert!(!debug.contains("super-secret"));
     assert!(debug.contains("[REDACTED]"));
 }
+
+#[tokio::test]
+async fn test_debug_output_redacts_s3_secret_key() {
+    let mut config = backend::config::AppConfig::default();
+    config.storage.backend = "s3".to_string();
+    config.storage.s3.bucket = "test-bucket".to_string();
+    config.storage.s3.access_key = "access".to_string();
+    config.storage.s3.secret_key = "very-secret".to_string();
+    let debug = format!("{:?}", config);
+    assert!(!debug.contains("very-secret"));
+    assert!(debug.contains("[REDACTED]"));
+}

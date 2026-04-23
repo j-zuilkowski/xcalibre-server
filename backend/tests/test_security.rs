@@ -176,7 +176,10 @@ async fn test_upload_over_size_limit_returns_413() {
     config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
     config.limits.upload_max_bytes = 8;
 
-    let server = TestServer::new(app(AppState::new(db, config).await)).expect("build test server");
+    let server = TestServer::new(app(AppState::new(db, config)
+        .await
+        .expect("initialize app state")))
+    .expect("build test server");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
     let ip = HeaderValue::from_static("198.51.100.12");
 
@@ -225,7 +228,10 @@ async fn test_cors_allows_configured_base_url_origin() {
     config.app.storage_path = storage.path().to_string_lossy().to_string();
     config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
 
-    let server = TestServer::new(app(AppState::new(db, config).await)).expect("build test server");
+    let server = TestServer::new(app(AppState::new(db, config)
+        .await
+        .expect("initialize app state")))
+    .expect("build test server");
     let response = server
         .method(axum::http::Method::OPTIONS, "/api/v1/books")
         .add_header(

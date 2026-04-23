@@ -57,7 +57,9 @@ impl TestContext {
         if config.auth.jwt_secret.trim().is_empty() {
             config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
         }
-        let state = AppState::new(db.clone(), config).await;
+        let state = AppState::new(db.clone(), config)
+            .await
+            .expect("initialize app state");
         let server = TestServer::new(app(state.clone())).expect("build test server");
 
         Self {

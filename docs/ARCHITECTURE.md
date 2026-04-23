@@ -799,6 +799,20 @@ Closes the gap between autolibre and calibre-web's full feature set. Four stages
 - Meilisearch is optional — app degrades to SQLite FTS5 if unavailable (same pattern as LLM)
 - No telemetry, no analytics, no external calls except LM Studio endpoints and the GitHub releases API (update checker)
 
+### Storage Backends
+
+| Backend | Config | Notes |
+|---|---|---|
+| Local filesystem (default) | `backend = "local"` | Full range request support for streaming |
+| S3-compatible | `backend = "s3"` | Works with AWS S3, MinIO, Cloudflare R2, Backblaze B2; range request streaming degraded (full-file load) |
+
+**Migrating from local to S3:**
+1. Stop the server
+2. `aws s3 sync {storage_path}/ s3://{bucket}/{key_prefix}/ --delete`
+3. Update `config.toml`: set `backend = "s3"` and fill in S3 credentials
+4. Restart the server
+5. Verify by downloading a book
+
 ### `books.flags` JSON Column
 
 `books.flags` is a `TEXT` column storing a JSON object. Known keys:
