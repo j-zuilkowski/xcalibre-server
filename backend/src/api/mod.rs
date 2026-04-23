@@ -1,4 +1,7 @@
-use axum::{extract::Request as AxumRequest, http::Method, middleware, response::Response, Router};
+use axum::{
+    extract::Request as AxumRequest, http::Method, middleware, response::Response, routing::get,
+    Router,
+};
 use std::path::PathBuf;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
@@ -6,6 +9,7 @@ use tower_http::services::{ServeDir, ServeFile};
 pub mod admin;
 pub mod auth;
 pub mod books;
+pub mod health;
 pub mod kobo;
 pub mod llm;
 pub mod opds;
@@ -21,6 +25,7 @@ pub fn router(state: crate::AppState) -> Router {
     let assets_dir = web_dist_dir.join("assets");
 
     Router::new()
+        .route("/health", get(health::health_handler))
         .nest("/api/v1/auth", auth_router)
         .merge(admin::router(state.clone()))
         .merge(books::router(state.clone()))

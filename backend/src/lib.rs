@@ -52,11 +52,23 @@ pub async fn run() -> anyhow::Result<()> {
 fn init_tracing() {
     static TRACING_INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let _ = TRACING_INIT.get_or_init(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-            )
-            .try_init();
+        use tracing_subscriber::EnvFilter;
+
+        let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "json".to_string());
+        match log_format.as_str() {
+            "text" => {
+                tracing_subscriber::fmt()
+                    .with_env_filter(EnvFilter::from_default_env())
+                    .init();
+            }
+            _ => {
+                tracing_subscriber::fmt()
+                    .json()
+                    .with_env_filter(EnvFilter::from_default_env())
+                    .with_current_span(true)
+                    .with_span_list(false)
+                    .init();
+            }
+        }
     });
 }

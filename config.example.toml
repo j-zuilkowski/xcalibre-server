@@ -1,4 +1,5 @@
 [app]
+# LOG_FORMAT=text for human-readable output
 base_url = "http://localhost:8083"
 storage_path = "./storage"
 
