@@ -1,9 +1,10 @@
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ScheduledTask {
     pub id: String,
     pub name: String,

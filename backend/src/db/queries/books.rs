@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, ToSchema)]
 pub struct BookSummary {
     pub id: String,
     pub title: String,
@@ -55,7 +56,8 @@ pub struct ListBooksParams {
     pub only_read: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, ToSchema)]
+#[schema(title = "Permission")]
 pub struct RolePermissions {
     pub role_id: String,
     pub role_name: String,

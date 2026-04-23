@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
+use utoipa::ToSchema;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -71,14 +72,14 @@ struct RegisterRequest {
     password: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct LoginRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct LoginRequest {
     username: String,
     password: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct RefreshRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct RefreshRequest {
     refresh_token: String,
 }
 
@@ -137,34 +138,34 @@ struct GithubEmailRecord {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(untagged)]
-enum LoginResponse {
+pub(crate) enum LoginResponse {
     Session(LoginSessionResponse),
     TotpRequired(LoginTotpRequiredResponse),
 }
 
-#[derive(Debug, Serialize)]
-struct LoginSessionResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct LoginSessionResponse {
     access_token: String,
     refresh_token: String,
     user: crate::db::models::User,
 }
 
-#[derive(Debug, Serialize)]
-struct LoginTotpRequiredResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct LoginTotpRequiredResponse {
     totp_required: bool,
     totp_token: String,
 }
 
-#[derive(Debug, Serialize)]
-struct RefreshResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct RefreshResponse {
     access_token: String,
     refresh_token: String,
 }
 
-#[derive(Debug, Serialize)]
-struct SuccessResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SuccessResponse {
     success: bool,
 }
 
@@ -194,7 +195,22 @@ async fn register(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-async fn login(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login response", body = LoginResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
@@ -482,7 +498,23 @@ async fn oauth_callback(
     Ok(response)
 }
 
-async fn logout(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    request_body = RefreshRequest,
+    responses(
+        (status = 200, description = "Logout result", body = SuccessResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn logout(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Json(payload): Json<RefreshRequest>,
@@ -510,7 +542,22 @@ async fn logout(
     ))
 }
 
-async fn refresh(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/refresh",
+    tag = "auth",
+    request_body = RefreshRequest,
+    responses(
+        (status = 200, description = "Refreshed tokens", body = RefreshResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn refresh(
     State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<(HeaderMap, Json<RefreshResponse>), AppError> {
@@ -604,8 +651,8 @@ async fn change_password(
     Ok(Json(SuccessResponse { success: true }))
 }
 
-#[derive(Debug, Deserialize)]
-struct TotpCodeRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct TotpCodeRequest {
     code: String,
 }
 
@@ -614,13 +661,40 @@ struct TotpPasswordRequest {
     password: String,
 }
 
-#[derive(Debug, Serialize)]
-struct TotpSetupResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct TotpSetupResponse {
     secret_base32: String,
     otpauth_uri: String,
 }
 
-async fn totp_setup(
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+struct TotpBackupCodesResponse {
+    backup_codes: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+struct TotpVerifyErrorResponse {
+    error: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/totp/setup",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "TOTP setup payload", body = TotpSetupResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn totp_setup(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
 ) -> Result<Json<TotpSetupResponse>, AppError> {
@@ -652,7 +726,23 @@ async fn totp_setup(
     }))
 }
 
-async fn totp_confirm(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/totp/confirm",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    request_body = TotpCodeRequest,
+    responses(
+        (status = 200, description = "Generated backup codes", body = TotpBackupCodesResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = TotpVerifyErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn totp_confirm(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Json(payload): Json<TotpCodeRequest>,
@@ -754,7 +844,23 @@ async fn totp_disable(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn totp_verify(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/totp/verify",
+    tag = "auth",
+    security(("bearer_auth" = [])),
+    request_body = TotpCodeRequest,
+    responses(
+        (status = 200, description = "Login session", body = LoginSessionResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = TotpVerifyErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn totp_verify(
     State(state): State<AppState>,
     Extension(totp_user): Extension<TotpPendingUser>,
     Json(payload): Json<TotpCodeRequest>,

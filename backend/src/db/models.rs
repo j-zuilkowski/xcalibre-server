@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+#[schema(title = "Role")]
 pub struct RoleRef {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 pub struct User {
     pub id: String,
     pub username: String,
@@ -20,34 +22,38 @@ pub struct User {
     pub last_modified: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+#[schema(title = "Author")]
 pub struct AuthorRef {
     pub id: String,
     pub name: String,
     pub sort_name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+#[schema(title = "Series")]
 pub struct SeriesRef {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+#[schema(title = "Tag")]
 pub struct TagRef {
     pub id: String,
     pub name: String,
     pub confirmed: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+#[schema(title = "Format")]
 pub struct FormatRef {
     pub id: String,
     pub format: String,
     pub size_bytes: i64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 pub struct Identifier {
     pub id: String,
     pub id_type: String,
@@ -85,7 +91,7 @@ pub struct KoboReadingState {
     pub last_modified: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 pub struct Book {
     pub id: String,
     pub title: String,
@@ -110,7 +116,7 @@ pub struct Book {
     pub indexed_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 pub struct ReadingProgress {
     pub id: String,
     pub book_id: String,
@@ -122,7 +128,7 @@ pub struct ReadingProgress {
     pub last_modified: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
 pub struct Shelf {
     pub id: String,
     pub name: String,

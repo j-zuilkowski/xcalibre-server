@@ -2,6 +2,7 @@ use crate::llm::classify::TagSuggestion;
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -11,7 +12,8 @@ pub struct SemanticIndexJob {
     pub book_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
+#[schema(title = "LlmJob")]
 pub struct JobRow {
     pub id: String,
     pub job_type: String,

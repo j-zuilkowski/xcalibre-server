@@ -33,6 +33,7 @@ use std::{
 };
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
+use utoipa::ToSchema;
 use uuid::Uuid;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -108,7 +109,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct ListBooksQuery {
+pub(crate) struct ListBooksQuery {
     q: Option<String>,
     author_id: Option<String>,
     series_id: Option<String>,
@@ -131,16 +132,16 @@ enum SingleOrMany {
     Many(Vec<String>),
 }
 
-#[derive(Debug, Serialize)]
-struct PaginatedResponse<T> {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PaginatedResponse<T> {
     items: Vec<T>,
     total: i64,
     page: i64,
     page_size: i64,
 }
 
-#[derive(Debug, Deserialize)]
-struct PatchBookRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct PatchBookRequest {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -250,8 +251,8 @@ struct ReadStateRequest {
     is_read: bool,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ReadingProgressRequest {
+#[derive(Debug, Deserialize, Default, ToSchema)]
+pub(crate) struct ReadingProgressRequest {
     #[serde(default)]
     format_id: Option<String>,
     #[serde(default)]
@@ -263,8 +264,8 @@ struct ReadingProgressRequest {
     page: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
-struct ReadingProgressResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ReadingProgressResponse {
     id: String,
     book_id: String,
     format_id: String,
@@ -275,8 +276,8 @@ struct ReadingProgressResponse {
     last_modified: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateAnnotationRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct CreateAnnotationRequest {
     #[serde(rename = "type")]
     annotation_type: String,
     cfi_range: String,
@@ -294,6 +295,20 @@ struct PatchAnnotationRequest {
     note: Option<Option<String>>,
     #[serde(default)]
     color: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ToSchema)]
+struct UploadBookRequestDoc {
+    #[schema(value_type = String, format = Binary)]
+    file: String,
+    #[schema(value_type = Option<String>)]
+    metadata: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct DeleteBookResponse {
+    success: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,7 +431,34 @@ impl UploadFormat {
     }
 }
 
-async fn list_books(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("q" = Option<String>, Query, description = "Search query"),
+        ("author_id" = Option<String>, Query, description = "Filter by author id"),
+        ("series_id" = Option<String>, Query, description = "Filter by series id"),
+        ("tag" = Option<String>, Query, description = "Filter by tag"),
+        ("language" = Option<String>, Query, description = "Filter by language"),
+        ("format" = Option<String>, Query, description = "Filter by format"),
+        ("sort" = Option<String>, Query, description = "Sort field"),
+        ("order" = Option<String>, Query, description = "Sort order"),
+        ("page" = Option<i64>, Query, description = "Page number"),
+        ("page_size" = Option<i64>, Query, description = "Page size")
+    ),
+    responses(
+        (status = 200, description = "Paginated books", body = PaginatedResponse<book_queries::BookSummary>),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn list_books(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<ListBooksQuery>,
@@ -454,7 +496,25 @@ async fn list_books(
     }))
 }
 
-async fn get_book(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 200, description = "Book", body = crate::db::models::Book),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn get_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -469,7 +529,25 @@ async fn get_book(
     Ok(Json(book))
 }
 
-async fn get_reading_progress(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/progress",
+    tag = "reader",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 200, description = "Reading progress", body = ReadingProgressResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn get_reading_progress(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -512,7 +590,26 @@ async fn get_reading_progress(
     }))
 }
 
-async fn upsert_reading_progress(
+#[utoipa::path(
+    put,
+    path = "/api/v1/books/{id}/progress",
+    tag = "reader",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    request_body = ReadingProgressRequest,
+    responses(
+        (status = 200, description = "Reading progress", body = ReadingProgressResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn upsert_reading_progress(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -584,7 +681,25 @@ async fn upsert_reading_progress(
     }))
 }
 
-async fn list_annotations(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/annotations",
+    tag = "reader",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 200, description = "Book annotations", body = [annotation_queries::Annotation]),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn list_annotations(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -603,7 +718,26 @@ async fn list_annotations(
     Ok(Json(annotations))
 }
 
-async fn create_annotation(
+#[utoipa::path(
+    post,
+    path = "/api/v1/books/{id}/annotations",
+    tag = "reader",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    request_body = CreateAnnotationRequest,
+    responses(
+        (status = 201, description = "Created annotation", body = annotation_queries::Annotation),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn create_annotation(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -1124,7 +1258,26 @@ pub(crate) fn accessible_library_id(user: &crate::db::models::User) -> Option<&s
     }
 }
 
-async fn upload_book(
+#[utoipa::path(
+    post,
+    path = "/api/v1/books",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    request_body(
+        content = UploadBookRequestDoc,
+        content_type = "multipart/form-data"
+    ),
+    responses(
+        (status = 201, description = "Book created", body = crate::db::models::Book),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn upload_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     multipart: Multipart,
@@ -1306,7 +1459,26 @@ async fn upload_book(
     Ok((StatusCode::CREATED, Json(book)))
 }
 
-async fn patch_book(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/books/{id}",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    request_body = PatchBookRequest,
+    responses(
+        (status = 200, description = "Updated book", body = crate::db::models::Book),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn patch_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -1370,7 +1542,25 @@ async fn patch_book(
     }
 }
 
-async fn delete_book(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/books/{id}",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 200, description = "Delete result", body = DeleteBookResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn delete_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,
@@ -1407,10 +1597,32 @@ async fn delete_book(
         }
     }
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(
+        serde_json::to_value(DeleteBookResponse { success: true })
+            .map_err(|_| AppError::Internal)?,
+    ))
 }
 
-async fn download_format(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/formats/{format}/download",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id"),
+        ("format" = String, Path, description = "Format name")
+    ),
+    responses(
+        (status = 200, description = "File download", content_type = "application/octet-stream", body = String),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn download_format(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path((book_id, format)): Path<(String, String)>,
@@ -1566,7 +1778,25 @@ async fn mobi_to_epub(
     Ok(response)
 }
 
-async fn get_cover(
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/cover",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 200, description = "Cover image", content_type = "image/*", body = String),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn get_cover(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(book_id): Path<String>,

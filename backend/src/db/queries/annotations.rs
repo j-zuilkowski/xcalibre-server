@@ -2,9 +2,11 @@ use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(title = "BookAnnotation")]
 pub struct Annotation {
     pub id: String,
     pub user_id: String,

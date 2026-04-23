@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::{IntoParams, ToSchema};
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -23,8 +24,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route_layer(auth_layer)
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct SearchQueryParams {
+#[derive(Debug, Deserialize, Default, IntoParams)]
+pub(crate) struct SearchQueryParams {
     q: Option<String>,
     author_id: Option<String>,
     tag: Option<String>,
@@ -34,29 +35,29 @@ struct SearchQueryParams {
     page_size: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, IntoParams)]
 struct SuggestionsQueryParams {
     q: Option<String>,
     limit: Option<u8>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct SemanticSearchQueryParams {
+#[derive(Debug, Deserialize, Default, IntoParams)]
+pub(crate) struct SemanticSearchQueryParams {
     q: Option<String>,
     page: Option<u32>,
     page_size: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
-struct PaginatedResponse<T> {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PaginatedResponse<T> {
     items: Vec<T>,
     total: u64,
     page: u32,
     page_size: u32,
 }
 
-#[derive(Debug, Serialize)]
-struct SearchResultItem {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SearchResultItem {
     #[serde(flatten)]
     book: book_queries::BookSummary,
     score: f32,
@@ -75,7 +76,23 @@ struct SearchStatusResponse {
     backend: String,
 }
 
-async fn search_books(
+#[utoipa::path(
+    get,
+    path = "/api/v1/search",
+    tag = "search",
+    security(("bearer_auth" = [])),
+    params(SearchQueryParams),
+    responses(
+        (status = 200, description = "Paginated search results", body = PaginatedResponse<SearchResultItem>),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn search_books(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<SearchQueryParams>,
@@ -159,7 +176,23 @@ async fn search_suggestions(
     Ok(Json(SuggestionsResponse { suggestions }))
 }
 
-async fn search_semantic(
+#[utoipa::path(
+    get,
+    path = "/api/v1/search/semantic",
+    tag = "search",
+    security(("bearer_auth" = [])),
+    params(SemanticSearchQueryParams),
+    responses(
+        (status = 200, description = "Paginated semantic search results", body = PaginatedResponse<SearchResultItem>),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn search_semantic(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<SemanticSearchQueryParams>,

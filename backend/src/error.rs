@@ -3,8 +3,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+use serde::Serialize;
 use thiserror::Error;
+use utoipa::ToSchema;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -32,6 +33,12 @@ pub enum AppError {
     Internal,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppErrorResponse {
+    pub error: String,
+    pub message: String,
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error) = match self {
@@ -49,10 +56,10 @@ impl IntoResponse for AppError {
             AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
-        let body = Json(json!({
-            "error": error,
-            "message": self.to_string(),
-        }));
+        let body = Json(AppErrorResponse {
+            error: error.to_string(),
+            message: self.to_string(),
+        });
         (status, body).into_response()
     }
 }

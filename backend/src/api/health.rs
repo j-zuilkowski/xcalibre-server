@@ -1,8 +1,9 @@
 use crate::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
     status: &'static str,
     version: &'static str,
@@ -10,14 +11,30 @@ pub struct HealthResponse {
     search: ComponentStatus,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ComponentStatus {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
-pub async fn health_handler(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn health_handler(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<HealthResponse>) {
     let db_status = match sqlx::query("SELECT 1").fetch_one(&state.db).await {
         Ok(_) => ComponentStatus {
             status: "ok",

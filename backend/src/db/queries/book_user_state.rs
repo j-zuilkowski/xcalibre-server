@@ -1,7 +1,8 @@
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
+use utoipa::ToSchema;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, ToSchema)]
 pub struct BookUserState {
     pub user_id: String,
     pub book_id: String,

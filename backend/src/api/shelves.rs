@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -17,6 +18,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/api/v1/shelves", get(list_shelves).post(create_shelf))
+        .route("/api/v1/shelves/:id", get(get_shelf).delete(delete_shelf))
         .route(
             "/api/v1/shelves/:id/books",
             get(list_shelf_books).post(add_book_to_shelf),
@@ -25,29 +27,28 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/shelves/:id/books/:book_id",
             delete(remove_book_from_shelf),
         )
-        .route("/api/v1/shelves/:id", delete(delete_shelf))
         .route_layer(auth_layer)
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, IntoParams)]
 struct ListQuery {
     page: Option<i64>,
     page_size: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateShelfRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct CreateShelfRequest {
     name: String,
     #[serde(default)]
     is_public: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct AddBookRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct AddBookRequest {
     book_id: String,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, ToSchema)]
 struct PaginatedResponse<T> {
     items: Vec<T>,
     total: i64,
@@ -55,7 +56,22 @@ struct PaginatedResponse<T> {
     page_size: i64,
 }
 
-async fn list_shelves(
+#[utoipa::path(
+    get,
+    path = "/api/v1/shelves",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Visible shelves", body = [crate::db::models::Shelf]),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn list_shelves(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
 ) -> Result<Json<Vec<crate::db::models::Shelf>>, AppError> {
@@ -65,7 +81,23 @@ async fn list_shelves(
     Ok(Json(shelves))
 }
 
-async fn create_shelf(
+#[utoipa::path(
+    post,
+    path = "/api/v1/shelves",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    request_body = CreateShelfRequest,
+    responses(
+        (status = 201, description = "Shelf created", body = crate::db::models::Shelf),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn create_shelf(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Json(payload): Json<CreateShelfRequest>,
@@ -79,6 +111,42 @@ async fn create_shelf(
         .await
         .map_err(|_| AppError::Internal)?;
     Ok((StatusCode::CREATED, Json(shelf)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/shelves/{id}",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Shelf id")
+    ),
+    responses(
+        (status = 200, description = "Shelf details", body = crate::db::models::Shelf),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn get_shelf(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(shelf_id): Path<String>,
+) -> Result<Json<crate::db::models::Shelf>, AppError> {
+    ensure_visible(&state, &auth_user.user.id, &shelf_id).await?;
+
+    let shelves = shelf_queries::list_shelves(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let shelf = shelves
+        .into_iter()
+        .find(|item| item.id == shelf_id)
+        .ok_or(AppError::NotFound)?;
+
+    Ok(Json(shelf))
 }
 
 async fn delete_shelf(
@@ -96,7 +164,26 @@ async fn delete_shelf(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn add_book_to_shelf(
+#[utoipa::path(
+    post,
+    path = "/api/v1/shelves/{id}/books",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Shelf id")
+    ),
+    request_body = AddBookRequest,
+    responses(
+        (status = 204, description = "Book added"),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn add_book_to_shelf(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(shelf_id): Path<String>,
@@ -119,7 +206,26 @@ async fn add_book_to_shelf(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn remove_book_from_shelf(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/shelves/{id}/books/{book_id}",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Shelf id"),
+        ("book_id" = String, Path, description = "Book id")
+    ),
+    responses(
+        (status = 204, description = "Book removed"),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn remove_book_from_shelf(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path((shelf_id, book_id)): Path<(String, String)>,
