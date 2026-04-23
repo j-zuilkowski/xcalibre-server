@@ -6,9 +6,9 @@ _Last updated: 2026-04-22_
 
 ---
 
-## Overall Status: Phase 11 Stage 2 Complete
+## Overall Status: Phase 11 Complete
 
-All planned phases through Phase 10 are complete. Phase 11 (open items) is in progress — Stage 1 (mobile search) and Stage 2 (2FA/TOTP) done. Stage 3 (S3 storage) remaining.
+All planned phases and open items are complete. The project is feature-complete: mobile search (Stage 1), 2FA/TOTP (Stage 2), and S3-compatible storage backend (Stage 3) all shipped.
 
 ---
 
@@ -26,6 +26,7 @@ All planned phases through Phase 10 are complete. Phase 11 (open items) is in pr
 | Phase 8 | MCP server (stdio + SSE transports) | ✅ Complete |
 | Phase 9 | Feature parity (OPDS, OAuth, LDAP, Kobo sync, multi-library) | ✅ Complete |
 | Phase 10 | Extended features (per-user state, OPDS feeds, i18n, scheduled tasks) | ✅ Complete |
+| Phase 11 | Open items: mobile search, 2FA/TOTP, S3 storage backend | ✅ Complete |
 
 ---
 

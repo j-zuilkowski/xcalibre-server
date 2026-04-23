@@ -36,7 +36,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 
 | # | Question | Options | Notes |
 |---|---|---|---|
-| B | Book file storage | ✅ Decided | Filesystem (default) via `StorageBackend` trait — S3-compatible as future option |
+| B | Book file storage | ✅ Decided | Filesystem (default) or S3-compatible via `StorageBackend` trait — config-driven (`backend = "local" | "s3"`) |
 | C | LLM endpoints | ✅ Decided | Fully configurable per role — endpoint, model, timeout, system prompt |
 | D | Mobile offline depth | ✅ Decided | Read-only cache + reading progress sync; `last_modified` on all mutable entities |
 | E | Admin UI | ✅ Decided | Same SPA, role-gated at `/admin/*`; upload permissions configurable per role |
@@ -114,7 +114,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | File serving | **tower-http ServeFile** | Native HTTP range request support (streaming for large files) |
 | Auth tokens | **JWT + refresh tokens** | Short-lived access + long-lived refresh, stored in DB |
 | Password hashing | **argon2** | Industry standard, Rust-native |
-| File storage | **LocalFs** (`StorageBackend` trait) | Filesystem default; trait allows S3-compatible backend in future |
+| File storage | **LocalFs / S3** (`StorageBackend` trait) | Filesystem default; S3-compatible backend (AWS S3, MinIO, R2, B2) config-driven |
 | Image processing | **image crate** | Cover resizing, thumbnail generation at ingest |
 | LLM client | **reqwest** | Async HTTP, replaces Python `requests` — same LM Studio API |
 | LLM config | **TOML config file** | Per-role: endpoint, model (auto-discover if blank), timeout, system prompt |

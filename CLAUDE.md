@@ -9,7 +9,7 @@ Design spec: docs/DESIGN.md
 Skills reference: docs/SKILLS.md
 
 ## Status
-Phase 11 Stage 2 complete (2FA/TOTP). One open item remaining: S3 storage backend (Stage 3). 32 DB tables across 14 migrations.
+Phase 11 complete. All open items shipped: mobile search (Stage 1), 2FA/TOTP (Stage 2), S3 storage backend (Stage 3). 33 DB tables across 14 migrations.
 
 ## Stack
 - Backend: Rust, Axum 0.7, sqlx 0.7, SQLite default / MariaDB optional

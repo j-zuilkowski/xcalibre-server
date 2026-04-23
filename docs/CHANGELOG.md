@@ -8,6 +8,20 @@ All notable changes to the autolibre Rust rewrite. Format: `[YYYY-MM-DD] — Com
 
 ---
 
+## 2026-04-22 — Phase 11 Stage 3: S3-compatible storage backend
+
+- `StorageBackend` trait made fully async (`put`, `delete`, `get_bytes`)
+- `LocalFsStorage` updated with async trait impl; `get_bytes` via `tokio::fs::read`
+- New `backend/src/storage_s3.rs` — `S3Storage` using `aws-sdk-s3`; endpoint_url override for MinIO/R2/B2; key sanitization; `resolve()` unsupported (returns `None`)
+- Config: `[storage]` + `[storage.s3]` sections in `config.toml`; S3 secret redacted in debug output; backend validated at startup
+- Runtime dispatch in file-serving handlers: `ServeFile` for local (range support), `get_bytes` + full response for S3 (range degraded, documented)
+- Text extraction falls back to temp-file download when `resolve()` returns `None` (S3 path)
+- Cargo deps: `aws-sdk-s3`, `tempfile` added
+- `backend/tests/test_storage_s3.rs` — unit tests + `#[ignore]` roundtrip test for real S3/MinIO endpoint
+- ARCHITECTURE.md updated: storage backend comparison table, local→S3 migration steps
+
+---
+
 ## 2026-04-22 — Phase 11 Stage 2: 2FA/TOTP — setup, login flow, backup codes, admin disable
 
 - Migration 0014: `ALTER TABLE users ADD COLUMN totp_secret TEXT / totp_enabled INTEGER`; `totp_backup_codes` table
