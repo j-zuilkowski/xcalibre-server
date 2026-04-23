@@ -26,6 +26,31 @@ async fn test_download_returns_full_file() {
 }
 
 #[tokio::test]
+async fn test_download_returns_206_for_range_request() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Download Range", "EPUB").await;
+    let bytes: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=0-1023"),
+        )
+        .await;
+
+    assert_status!(response, 206);
+    let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
+    let content_range = content_range_header.to_str().expect("content-range header");
+    assert!(content_range.starts_with("bytes 0-1023/"));
+    assert_eq!(response.as_bytes().len(), 1024);
+}
+
+#[tokio::test]
 async fn test_stream_supports_range_requests() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
@@ -47,6 +72,31 @@ async fn test_stream_supports_range_requests() {
     let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
     let content_range = content_range_header.to_str().expect("content-range header");
     assert!(content_range.starts_with("bytes 0-0/"));
+}
+
+#[tokio::test]
+async fn test_stream_returns_206_for_range_request() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Stream Range", "EPUB").await;
+    let bytes: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/stream", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=0-1023"),
+        )
+        .await;
+
+    assert_status!(response, 206);
+    let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
+    let content_range = content_range_header.to_str().expect("content-range header");
+    assert!(content_range.starts_with("bytes 0-1023/"));
+    assert_eq!(response.as_bytes().len(), 1024);
 }
 
 #[tokio::test]

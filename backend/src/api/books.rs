@@ -2350,6 +2350,26 @@ fn map_storage_read_error(err: anyhow::Error) -> AppError {
     }
 }
 
+fn parse_range(range_str: &str, _total: u64) -> Option<(u64, u64)> {
+    let bytes = range_str.strip_prefix("bytes=")?.trim();
+    if bytes.contains(',') {
+        return None;
+    }
+
+    let (start, end) = bytes.split_once('-')?;
+    let start = start.trim().parse::<u64>().ok()?;
+    let end = if end.trim().is_empty() {
+        u64::MAX
+    } else {
+        end.trim().parse::<u64>().ok()?
+    };
+    if end != u64::MAX && end < start {
+        return None;
+    }
+
+    Some((start, end))
+}
+
 async fn serve_storage_file(
     state: &AppState,
     request: Request<Body>,
@@ -2357,8 +2377,16 @@ async fn serve_storage_file(
     content_type: Option<&str>,
     content_disposition: Option<&str>,
 ) -> Result<axum::response::Response, AppError> {
+    let range_header = request
+        .headers()
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let range = range_header.as_deref().and_then(|value| parse_range(value, 0));
+    let using_local_backend = state.config.storage.backend.trim().eq_ignore_ascii_case("local");
+
     match state.storage.resolve(relative_path) {
-        Ok(_) => {
+        Ok(_) if range.is_none() => {
             let full_path = canonicalize_storage_file_path(state, relative_path)?;
             let mut response = serve_file(request, full_path).await?;
             if let Some(value) = content_type {
@@ -2377,37 +2405,47 @@ async fn serve_storage_file(
             }
             Ok(response)
         }
-        Err(resolve_err) => {
-            if state.config.storage.backend.trim().eq_ignore_ascii_case("local") {
-                tracing::warn!(
-                    path = %relative_path,
-                    error = %resolve_err,
-                    "rejected unsafe local storage path"
-                );
-                return Err(AppError::BadRequest);
+        Err(resolve_err) if using_local_backend => {
+            tracing::warn!(
+                path = %relative_path,
+                error = %resolve_err,
+                "rejected unsafe local storage path"
+            );
+            Err(AppError::BadRequest)
+        }
+        _ => {
+            if using_local_backend {
+                let _ = canonicalize_storage_file_path(state, relative_path)?;
             }
 
-            // S3 serving currently loads full files into memory and does not implement
-            // HTTP range requests. Readers that rely on ranges will fall back to full-file
-            // loading; this is acceptable for files under roughly 50MB. Large PDF/audio
-            // streaming is degraded until range support is added via pre-signed URLs or
-            // a streaming proxy.
-            let bytes = state
+            let result = state
                 .storage
-                .get_bytes(relative_path)
+                .get_range(relative_path, range)
                 .await
                 .map_err(map_storage_read_error)?;
-            let mut response_builder = axum::response::Response::builder().status(StatusCode::OK);
+
+            let status = if result.partial {
+                StatusCode::PARTIAL_CONTENT
+            } else {
+                StatusCode::OK
+            };
+
+            let mut response_builder = axum::response::Response::builder()
+                .status(status)
+                .header(header::ACCEPT_RANGES, "bytes")
+                .header(header::CONTENT_LENGTH, result.bytes.len().to_string());
             if let Some(value) = content_type {
                 response_builder = response_builder.header(header::CONTENT_TYPE, value);
             }
             if let Some(value) = content_disposition {
                 response_builder = response_builder.header(header::CONTENT_DISPOSITION, value);
             }
-            response_builder =
-                response_builder.header(header::CONTENT_LENGTH, bytes.len().to_string());
+            if let Some(content_range) = result.content_range.as_deref() {
+                response_builder = response_builder.header(header::CONTENT_RANGE, content_range);
+            }
+
             response_builder
-                .body(Body::from(bytes))
+                .body(Body::from(result.bytes))
                 .map_err(|_| AppError::Internal)
         }
     }

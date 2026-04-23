@@ -1,4 +1,7 @@
-use crate::{config::S3Section, storage::StorageBackend};
+use crate::{
+    config::S3Section,
+    storage::{GetRangeResult, StorageBackend},
+};
 use anyhow::Context;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::error::ProvideErrorMetadata;
@@ -55,6 +58,11 @@ impl S3Storage {
             format!("{}/{}", self.key_prefix, clean)
         }
     }
+
+    fn parse_total_length_from_content_range(content_range: &str) -> Option<u64> {
+        let (_, total) = content_range.rsplit_once('/')?;
+        total.parse().ok()
+    }
 }
 
 #[async_trait::async_trait]
@@ -100,16 +108,18 @@ impl StorageBackend for S3Storage {
         }
     }
 
-    async fn get_bytes(&self, relative_path: &str) -> anyhow::Result<Bytes> {
+    async fn get_range(
+        &self,
+        relative_path: &str,
+        range: Option<(u64, u64)>,
+    ) -> anyhow::Result<GetRangeResult> {
         let key = self.s3_key(relative_path);
-        let response = match self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await
-        {
+        let mut request = self.client.get_object().bucket(&self.bucket).key(&key);
+        if let Some((start, end)) = range {
+            request = request.range(format!("bytes={start}-{end}"));
+        }
+
+        let response = match request.send().await {
             Ok(response) => response,
             Err(err) => {
                 let service_err = err.into_service_error();
@@ -122,6 +132,16 @@ impl StorageBackend for S3Storage {
             }
         };
 
+        let content_range = response.content_range().map(ToString::to_string);
+        let partial = content_range.is_some();
+        let content_length = response
+            .content_length()
+            .and_then(|length| u64::try_from(length).ok())
+            .unwrap_or(0);
+        let total_length = content_range
+            .as_deref()
+            .and_then(Self::parse_total_length_from_content_range)
+            .unwrap_or(content_length);
         let bytes = response
             .body
             .collect()
@@ -129,13 +149,18 @@ impl StorageBackend for S3Storage {
             .context("collect S3 response body")?
             .into_bytes();
 
-        Ok(bytes)
+        Ok(GetRangeResult {
+            bytes,
+            content_range,
+            total_length,
+            partial,
+        })
     }
 
     fn resolve(&self, relative_path: &str) -> anyhow::Result<std::path::PathBuf> {
         anyhow::bail!(
             "resolve() is not supported for the S3 backend (path: {relative_path}). \
-             Use get_bytes() to retrieve file contents."
+             Use get_range() or get_bytes() to retrieve file contents."
         )
     }
 }
