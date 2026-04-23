@@ -205,13 +205,46 @@ interface Role {
 // Request
 { username: string; password: string }
 
-// Response 200
+// Response 200 (TOTP not enabled)
 {
   access_token: string          // JWT, 15 min TTL
   refresh_token: string         // opaque, 30 day TTL
   user: User
 }
+
+// Response 200 (TOTP enabled)
+{
+  totp_required: true
+  totp_token: string            // short-lived "totp_pending" JWT — use with /auth/totp/verify
+}
 ```
+
+#### `POST /auth/totp/verify`
+```typescript
+// Request (use totp_token from login response as Bearer token)
+{ code: string }               // 6-digit TOTP code or 8-char backup code
+
+// Response 200
+{ access_token: string; refresh_token: string; user: User }
+```
+
+#### `POST /auth/totp/setup`
+```typescript
+// Response 200
+{ otpauth_uri: string; backup_codes: string[] }  // render QR client-side
+```
+
+#### `POST /auth/totp/confirm`
+```typescript
+// Request — confirm setup by providing first valid code
+{ code: string }
+
+// Response 200
+{ ok: true }
+```
+
+#### `DELETE /auth/totp`
+Disables TOTP for the authenticated user. Requires valid TOTP code or backup code as `X-TOTP-Code` header.
 
 #### `POST /auth/refresh`
 ```typescript
@@ -504,6 +537,7 @@ Book                            // updated book with confirmed tags
 | PATCH | `/admin/users/:id` | Yes | Admin | Update user (role, active, force_pw_reset) |
 | DELETE | `/admin/users/:id` | Yes | Admin | Delete user |
 | POST | `/admin/users/:id/reset-password` | Yes | Admin | Force password reset flag |
+| DELETE | `/admin/users/:id/totp` | Yes | Admin | Disable TOTP for user (lockout recovery) |
 
 ---
 

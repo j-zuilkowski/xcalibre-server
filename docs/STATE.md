@@ -6,9 +6,9 @@ _Last updated: 2026-04-22_
 
 ---
 
-## Overall Status: Phase 10 Stage 7 Complete
+## Overall Status: Phase 11 Stage 2 Complete
 
-All planned phases through Phase 10 are complete. The project is feature-complete for v1.0 scope plus extended features.
+All planned phases through Phase 10 are complete. Phase 11 (open items) is in progress — Stage 1 (mobile search) and Stage 2 (2FA/TOTP) done. Stage 3 (S3 storage) remaining.
 
 ---
 
@@ -46,8 +46,9 @@ All planned phases through Phase 10 are complete. The project is feature-complet
 | `0011_download_history.sql` | `download_history` table | ✅ Applied |
 | `0012_user_tag_restrictions.sql` | `user_tag_restrictions` table | ✅ Applied |
 | `0013_scheduled_tasks.sql` | `scheduled_tasks` table | ✅ Applied |
+| `0014_totp.sql` | `totp_backup_codes` table; `totp_secret`/`totp_enabled` on `users` | ✅ Applied |
 
-Total: **31 tables** across SQLite and MariaDB migration sets.
+Total: **33 tables** across SQLite and MariaDB migration sets (including 2 new TOTP columns on `users`).
 
 ---
 

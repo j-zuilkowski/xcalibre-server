@@ -704,6 +704,30 @@ CREATE INDEX idx_scheduled_tasks_due ON scheduled_tasks(enabled, next_run_at);
 
 ---
 
+### `totp_backup_codes` (migration 0014)
+
+```sql
+-- users table gains two new columns:
+ALTER TABLE users ADD COLUMN totp_secret TEXT;         -- NULL = TOTP disabled; AES-256-GCM encrypted at rest
+ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE totp_backup_codes (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash   TEXT NOT NULL,   -- SHA-256 of the 8-char code
+    used_at     TEXT,            -- NULL = unused
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_totp_backup_user ON totp_backup_codes(user_id);
+```
+
+- `totp_secret` is encrypted with AES-256-GCM; key derived from `jwt_secret` via HKDF — never stored in plaintext
+- 8 single-use backup codes generated at setup; each stored as a SHA-256 hash
+- `totp_pending` JWT issued after password check when TOTP is enabled — cannot access other routes until `POST /auth/totp/verify` succeeds
+
+---
+
 ## SQLite vs MariaDB Notes
 
 | Concern | SQLite | MariaDB |
@@ -752,6 +776,7 @@ All foreign keys are indexed. Additional indexes on high-query-frequency columns
 | `kobo_devices` | `device_id` | Device lookup on every Kobo sync request |
 | `books` | `library_id` | Per-library browse and filtering |
 | `scheduled_tasks` | `enabled, next_run_at` | Scheduler poll — find due tasks |
+| `totp_backup_codes` | `user_id` | Backup code lookup per user |
 | `audit_log` | `entity, entity_id` | History view per book/author/etc. |
 | `audit_log` | `created_at` | Chronological admin audit feed |
 
@@ -778,7 +803,7 @@ covers/
 
 ## Table Count
 
-The schema has **25 tables** across 13 migration files:
+The schema has **33 tables** across 14 migration files:
 
 | # | Table | Migration |
 |---|---|---|
@@ -813,6 +838,8 @@ The schema has **25 tables** across 13 migration files:
 | 29 | `download_history` | 0011 |
 | 30 | `user_tag_restrictions` | 0012 |
 | 31 | `scheduled_tasks` | 0013 |
+| 32 | `totp_backup_codes` | 0014 |
+| 33 | `users.totp_secret / totp_enabled` (columns) | 0014 |
 
 ## Open Schema Questions
 

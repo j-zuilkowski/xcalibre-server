@@ -8,6 +8,20 @@ All notable changes to the autolibre Rust rewrite. Format: `[YYYY-MM-DD] — Com
 
 ---
 
+## 2026-04-22 — Phase 11 Stage 2: 2FA/TOTP — setup, login flow, backup codes, admin disable
+
+- Migration 0014: `ALTER TABLE users ADD COLUMN totp_secret TEXT / totp_enabled INTEGER`; `totp_backup_codes` table
+- `backend/src/auth/totp.rs` — TOTP crypto (totp-rs), AES-256-GCM encrypted secret, HKDF key derivation, backup code hashing
+- Backend routes: TOTP setup/confirm/disable, `POST /auth/totp/verify` for pending-token login step, admin disable at `DELETE /admin/users/:id/totp`
+- `totp_pending` JWT enforced in `backend/src/middleware/auth.rs` — cannot access non-TOTP routes until verified
+- DB queries in `backend/src/db/queries/totp.rs`
+- Shared types/client updated in `packages/shared/src/client.ts` and `packages/shared/src/types.ts`
+- Web UI: TOTP step in `LoginPage.tsx`, setup/disable flow in `ProfilePage.tsx`, admin disable in `UsersPage.tsx`
+- Mobile: TOTP step added to `apps/mobile/src/app/login.tsx`
+- 14 backend integration tests in `backend/tests/test_totp.rs`
+
+---
+
 ## 2026-04-22 — Phase 11 Stage 1: Mobile search screen (FTS + semantic)
 
 - Replaced stub `apps/mobile/src/app/(tabs)/search.tsx` with full search screen
