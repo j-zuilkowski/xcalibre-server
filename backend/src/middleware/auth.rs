@@ -19,10 +19,17 @@ pub struct AccessTokenClaims {
     pub sub: String,
     pub iat: usize,
     pub exp: usize,
+    #[serde(default)]
+    pub totp_pending: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct AuthenticatedUser {
+    pub user: crate::db::models::User,
+}
+
+#[derive(Clone, Debug)]
+pub struct TotpPendingUser {
     pub user: crate::db::models::User,
 }
 
@@ -36,6 +43,7 @@ pub fn issue_access_token(
         sub: user_id.to_string(),
         iat: now.timestamp() as usize,
         exp: (now + Duration::minutes(ttl_mins as i64)).timestamp() as usize,
+        totp_pending: false,
     };
 
     encode(
@@ -54,6 +62,49 @@ pub fn validate_access_token(token: &str, jwt_secret: &str) -> Result<AccessToke
     )
     .map(|token_data| token_data.claims)
     .map_err(|_| AppError::Unauthorized)
+    .and_then(|claims| {
+        if claims.totp_pending {
+            Err(AppError::Forbidden)
+        } else {
+            Ok(claims)
+        }
+    })
+}
+
+pub fn issue_totp_pending_token(user_id: &str, jwt_secret: &str) -> Result<String, AppError> {
+    let now = Utc::now();
+    let claims = AccessTokenClaims {
+        sub: user_id.to_string(),
+        iat: now.timestamp() as usize,
+        exp: (now + Duration::minutes(5)).timestamp() as usize,
+        totp_pending: true,
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(jwt_secret.as_bytes()),
+    )
+    .map_err(|_| AppError::Internal)
+}
+
+pub fn validate_totp_pending_token(
+    token: &str,
+    jwt_secret: &str,
+) -> Result<AccessTokenClaims, AppError> {
+    let claims = decode::<AccessTokenClaims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &Validation::default(),
+    )
+    .map(|token_data| token_data.claims)
+    .map_err(|_| AppError::Unauthorized)?;
+
+    if claims.totp_pending {
+        Ok(claims)
+    } else {
+        Err(AppError::Forbidden)
+    }
 }
 
 pub async fn require_auth(
@@ -84,6 +135,25 @@ pub async fn require_auth(
     }
 
     req.extensions_mut().insert(AuthenticatedUser { user });
+    Ok(next.run(req).await)
+}
+
+pub async fn require_totp_pending(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let token = bearer_token(req.headers()).ok_or(AppError::Unauthorized)?;
+    let claims = validate_totp_pending_token(token, &state.config.auth.jwt_secret)?;
+    let user = auth_queries::find_user_by_id(&state.db, &claims.sub)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !user.is_active {
+        return Err(AppError::Unauthorized);
+    }
+
+    req.extensions_mut().insert(TotpPendingUser { user });
     Ok(next.run(req).await)
 }
 

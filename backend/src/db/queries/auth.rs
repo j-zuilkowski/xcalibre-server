@@ -13,6 +13,8 @@ pub struct UserAuthRecord {
     pub password_hash: String,
     pub login_attempts: i64,
     pub locked_until: Option<DateTime<Utc>>,
+    pub totp_secret: Option<String>,
+    pub totp_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +108,8 @@ pub async fn find_user_auth_by_id(
             u.is_active AS is_active,
             u.force_pw_reset AS force_pw_reset,
             u.default_library_id AS default_library_id,
+            u.totp_secret AS totp_secret,
+            u.totp_enabled AS totp_enabled,
             u.login_attempts AS login_attempts,
             u.locked_until AS locked_until,
             u.created_at AS created_at,
@@ -138,6 +142,8 @@ pub async fn find_user_auth_by_username(
             u.is_active AS is_active,
             u.force_pw_reset AS force_pw_reset,
             u.default_library_id AS default_library_id,
+            u.totp_secret AS totp_secret,
+            u.totp_enabled AS totp_enabled,
             u.login_attempts AS login_attempts,
             u.locked_until AS locked_until,
             u.created_at AS created_at,
@@ -170,6 +176,8 @@ pub async fn find_user_auth_by_email(
             u.is_active AS is_active,
             u.force_pw_reset AS force_pw_reset,
             u.default_library_id AS default_library_id,
+            u.totp_secret AS totp_secret,
+            u.totp_enabled AS totp_enabled,
             u.login_attempts AS login_attempts,
             u.locked_until AS locked_until,
             u.created_at AS created_at,
@@ -460,12 +468,15 @@ fn row_to_user_auth(
             is_active: row.get::<i64, _>("is_active") != 0,
             force_pw_reset: row.get::<i64, _>("force_pw_reset") != 0,
             default_library_id: row.get("default_library_id"),
+            totp_enabled: row.get::<i64, _>("totp_enabled") != 0,
             created_at: row.get("created_at"),
             last_modified: row.get("last_modified"),
         },
         password_hash: row.get("password_hash"),
         login_attempts: row.get("login_attempts"),
         locked_until,
+        totp_secret: row.get("totp_secret"),
+        totp_enabled: row.get::<i64, _>("totp_enabled") != 0,
     }))
 }
 

@@ -68,6 +68,8 @@ describe("LoginScreen", () => {
         role: { id: "role-1", name: "User" },
         is_active: true,
         force_pw_reset: false,
+        default_library_id: "default",
+        totp_enabled: false,
         created_at: "2026-01-01T00:00:00Z",
         last_modified: "2026-01-01T00:00:00Z",
       },

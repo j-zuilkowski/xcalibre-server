@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -65,7 +65,13 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [totpToken, setTotpToken] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [totpError, setTotpError] = useState<string | null>(null);
+  const [step, setStep] = useState<"credentials" | "totp">("credentials");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const totpInputRef = useRef<HTMLInputElement | null>(null);
 
   const providersQuery = useQuery({
     queryKey: ["auth-providers"],
@@ -73,13 +79,51 @@ export function LoginPage() {
     staleTime: 5 * 60_000,
   });
 
+  useEffect(() => {
+    if (step === "totp") {
+      totpInputRef.current?.focus();
+    }
+  }, [step, useBackupCode]);
+
+  async function handleVerifyTotp() {
+    setIsSubmitting(true);
+    setTotpError(null);
+
+    try {
+      const response = useBackupCode
+        ? await apiClient.verifyTotpBackup(totpToken, totpCode.trim())
+        : await apiClient.verifyTotp(totpToken, totpCode.trim());
+      setAuth(response);
+      await navigate({ to: "/" });
+    } catch {
+      setTotpError("Invalid code");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (step === "totp") {
+      await handleVerifyTotp();
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
       const response = await apiClient.login({ username, password });
+      if ("totp_required" in response) {
+        setTotpToken(response.totp_token);
+        setTotpCode("");
+        setUseBackupCode(false);
+        setTotpError(null);
+        setError(null);
+        setStep("totp");
+        return;
+      }
+
       setAuth(response);
       await navigate({ to: "/" });
     } catch (err) {
@@ -101,36 +145,90 @@ export function LoginPage() {
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: "grid", gap: "18px" }}>
-          <div>
-            <label htmlFor="login-username" style={labelStyle}>
-              {t("auth.username")}
-            </label>
-            <input
-              id="login-username"
-              name="username"
-              autoComplete="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <label htmlFor="login-password" style={labelStyle}>
-              {t("auth.password")}
-            </label>
-            <input
-              id="login-password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
+          {step === "credentials" ? (
+            <>
+              <div>
+                <label htmlFor="login-username" style={labelStyle}>
+                  {t("auth.username")}
+                </label>
+                <input
+                  id="login-username"
+                  name="username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label htmlFor="login-password" style={labelStyle}>
+                  {t("auth.password")}
+                </label>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            </>
+          ) : (
+            <div style={{ display: "grid", gap: "14px" }}>
+              <div>
+                <p style={{ margin: 0, color: "#0f766e", fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Two-factor authentication
+                </p>
+                <h2 style={{ margin: "8px 0 4px", fontSize: "26px", lineHeight: 1.15 }}>
+                  {useBackupCode ? "Backup code" : "Verification code"}
+                </h2>
+                <p style={{ margin: 0, color: "#52525b", fontSize: "14px" }}>
+                  Enter the six-digit code from your authenticator app.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="totp-code" style={labelStyle}>
+                  {useBackupCode ? "Backup code" : "Code"}
+                </label>
+                <input
+                  ref={totpInputRef}
+                  id="totp-code"
+                  name="totp-code"
+                  inputMode={useBackupCode ? "text" : "numeric"}
+                  autoComplete={useBackupCode ? "off" : "one-time-code"}
+                  value={totpCode}
+                  onChange={(event) => setTotpCode(event.target.value)}
+                  maxLength={useBackupCode ? 8 : 6}
+                  style={inputStyle}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setUseBackupCode((current) => !current)}
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: "#0f766e",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  padding: 0,
+                  justifySelf: "start",
+                  cursor: "pointer",
+                }}
+              >
+                {useBackupCode ? "Use authenticator code instead" : "Use a backup code instead"}
+              </button>
+            </div>
+          )}
 
           {error ? (
             <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px", minHeight: "1.25em" }}>{error}</p>
+          ) : totpError ? (
+            <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px", minHeight: "1.25em" }}>{totpError}</p>
           ) : (
             <div style={{ minHeight: "1.25em" }} />
           )}
@@ -149,7 +247,7 @@ export function LoginPage() {
               cursor: isSubmitting ? "progress" : "pointer",
             }}
           >
-            {isSubmitting ? t("auth.signing_in") : t("auth.sign_in")}
+            {isSubmitting ? (step === "totp" ? "Verifying" : t("auth.signing_in")) : step === "totp" ? "Verify" : t("auth.sign_in")}
           </button>
         </form>
 

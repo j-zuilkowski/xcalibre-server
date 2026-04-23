@@ -15,6 +15,7 @@ export type User = {
   is_active: boolean;
   force_pw_reset: boolean;
   default_library_id: string;
+  totp_enabled: boolean;
   created_at: string;
   last_modified: string;
 };
@@ -395,11 +396,18 @@ export type LoginRequest = {
   password: string;
 };
 
-export type LoginResponse = {
+export type AuthSession = {
   access_token: string;
   refresh_token: string;
   user: User;
 };
+
+export type LoginTotpRequiredResponse = {
+  totp_required: true;
+  totp_token: string;
+};
+
+export type LoginResponse = AuthSession | LoginTotpRequiredResponse;
 
 export type RefreshResponse = {
   access_token: string;

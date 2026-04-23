@@ -15,7 +15,14 @@ const {
   mockClearTokens: vi.fn(),
   mockGetApiBaseUrl: vi.fn(),
   mockQueryData: {
-    data: null as null | { username: string; email: string },
+    data: null as
+      | null
+      | {
+          username: string;
+          email: string;
+          default_library_id: string;
+          totp_enabled: boolean;
+        },
   },
 }));
 
@@ -85,11 +92,15 @@ describe("ProfileScreen", () => {
     mockGetMe.mockResolvedValue({
       username: "reader",
       email: "reader@example.com",
+      default_library_id: "default",
+      totp_enabled: false,
     });
     mockClearTokens.mockResolvedValue(undefined);
     mockQueryData.data = {
       username: "reader",
       email: "reader@example.com",
+      default_library_id: "default",
+      totp_enabled: false,
     };
   });
 

@@ -105,6 +105,13 @@ export function UsersPage() {
     },
   });
 
+  const disableTotpMutation = useMutation({
+    mutationFn: (id: string) => apiClient.disableUserTotp(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+
   const resetMutation = useMutation({
     mutationFn: (id: string) => apiClient.resetUserPassword(id),
   });
@@ -275,6 +282,15 @@ export function UsersPage() {
                       >
                         {t("admin.tag_restrictions")}
                       </button>
+                      {user.totp_enabled ? (
+                        <button
+                          type="button"
+                          onClick={() => void disableTotpMutation.mutateAsync(user.id)}
+                          className="rounded-lg border border-amber-700 px-3 py-2 text-xs text-amber-300"
+                        >
+                          Disable 2FA
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void deleteMutation.mutateAsync(user.id)}

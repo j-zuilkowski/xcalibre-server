@@ -1,7 +1,9 @@
 use crate::{
-    auth::{ldap::authenticate_ldap, password::hash_password},
-    db::queries::{auth as auth_queries, oauth as oauth_queries},
-    middleware::auth::{issue_access_token, AuthenticatedUser},
+    auth::{ldap::authenticate_ldap, password::hash_password, totp as totp_auth},
+    db::queries::{auth as auth_queries, oauth as oauth_queries, totp as totp_queries},
+    middleware::auth::{
+        issue_access_token, issue_totp_pending_token, AuthenticatedUser, TotpPendingUser,
+    },
     AppError, AppState,
 };
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
@@ -20,11 +22,17 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
+    let totp_pending_layer = middleware::from_fn_with_state(
+        state.clone(),
+        crate::middleware::auth::require_totp_pending,
+    );
     let public = Router::new()
         .route("/providers", get(auth_providers))
         .route("/oauth/:provider", get(oauth_start))
@@ -37,9 +45,19 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/logout", post(logout))
         .route("/me", get(me))
         .route("/me/password", patch(change_password))
+        .route("/totp/setup", get(totp_setup))
+        .route("/totp/confirm", post(totp_confirm))
+        .route("/totp/disable", post(totp_disable))
         .route_layer(auth_layer);
+    let totp_pending = Router::new()
+        .route("/totp/verify", post(totp_verify))
+        .route("/totp/verify-backup", post(totp_verify_backup))
+        .layer(totp_pending_layer);
 
-    Router::new().merge(public).merge(protected)
+    Router::new()
+        .merge(public)
+        .merge(protected)
+        .merge(totp_pending)
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,11 +132,25 @@ struct GithubEmailRecord {
     verified: bool,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize)]
-struct LoginResponse {
+#[serde(untagged)]
+enum LoginResponse {
+    Session(LoginSessionResponse),
+    TotpRequired(LoginTotpRequiredResponse),
+}
+
+#[derive(Debug, Serialize)]
+struct LoginSessionResponse {
     access_token: String,
     refresh_token: String,
     user: crate::db::models::User,
+}
+
+#[derive(Debug, Serialize)]
+struct LoginTotpRequiredResponse {
+    totp_required: bool,
+    totp_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -212,11 +244,23 @@ async fn login(
         }
 
         if verify_password(&user.password_hash, &payload.password) {
+            if user.user.totp_enabled {
+                let pending_token =
+                    issue_totp_pending_token(&user.user.id, &state.config.auth.jwt_secret)?;
+                return Ok((
+                    HeaderMap::new(),
+                    Json(LoginResponse::TotpRequired(LoginTotpRequiredResponse {
+                        totp_required: true,
+                        totp_token: pending_token,
+                    })),
+                ));
+            }
+
             auth_queries::clear_login_lockout(&state.db, &user.user.id)
                 .await
                 .map_err(|_| AppError::Internal)?;
 
-            let response = create_login_response(&state, &user.user).await?;
+            let response = create_login_session_response(&state, &user.user).await?;
             record_login_success(&state, &user.user.id, username, client_ip.as_deref()).await;
 
             return Ok((
@@ -225,7 +269,7 @@ async fn login(
                     &response.refresh_token,
                     state.config.auth.refresh_token_ttl_days,
                 )?,
-                Json(response),
+                Json(LoginResponse::Session(response)),
             ));
         }
 
@@ -237,7 +281,22 @@ async fn login(
             Ok(Some(ldap_user)) => {
                 let user =
                     find_or_create_ldap_user(&state, &ldap_user.username, &ldap_user.email).await?;
-                let response = create_login_response(&state, &user).await?;
+                if user.totp_enabled {
+                    let pending_token =
+                        issue_totp_pending_token(&user.id, &state.config.auth.jwt_secret)?;
+                    return Ok((
+                        HeaderMap::new(),
+                        Json(LoginResponse::TotpRequired(LoginTotpRequiredResponse {
+                            totp_required: true,
+                            totp_token: pending_token,
+                        })),
+                    ));
+                }
+
+                auth_queries::clear_login_lockout(&state.db, &user.id)
+                    .await
+                    .map_err(|_| AppError::Internal)?;
+                let response = create_login_session_response(&state, &user).await?;
                 record_login_success(&state, &user.id, username, client_ip.as_deref()).await;
                 return Ok((
                     refresh_cookie_headers(
@@ -245,7 +304,7 @@ async fn login(
                         &response.refresh_token,
                         state.config.auth.refresh_token_ttl_days,
                     )?,
-                    Json(response),
+                    Json(LoginResponse::Session(response)),
                 ));
             }
             Ok(None) => {
@@ -541,13 +600,344 @@ async fn change_password(
     Ok(Json(SuccessResponse { success: true }))
 }
 
-async fn create_login_response(
+#[derive(Debug, Deserialize)]
+struct TotpCodeRequest {
+    code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TotpPasswordRequest {
+    password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TotpSetupResponse {
+    secret_base32: String,
+    otpauth_uri: String,
+}
+
+async fn totp_setup(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<TotpSetupResponse>, AppError> {
+    if auth_user.user.totp_enabled {
+        return Err(AppError::Conflict);
+    }
+
+    let user = auth_queries::find_user_auth_by_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if user.totp_enabled {
+        return Err(AppError::Conflict);
+    }
+
+    let secret_base32 = totp_auth::generate_secret_base32();
+    let encrypted_secret =
+        totp_auth::encrypt_secret(&secret_base32, &state.config.auth.jwt_secret)?;
+    totp_queries::set_totp_setup_secret(&state.db, &auth_user.user.id, &encrypted_secret)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let issuer = issuer_name(&state.config);
+    let otpauth_uri = totp_auth::build_otpauth_uri(&issuer, &auth_user.user.email, &secret_base32);
+
+    Ok(Json(TotpSetupResponse {
+        secret_base32,
+        otpauth_uri,
+    }))
+}
+
+async fn totp_confirm(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<TotpCodeRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<serde_json::Value>), AppError> {
+    let user = auth_queries::find_user_auth_by_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if user.totp_enabled {
+        return Err(AppError::Conflict);
+    }
+
+    let Some(ciphertext) = user.totp_secret.as_deref() else {
+        return Err(AppError::BadRequest);
+    };
+    let secret_base32 = totp_auth::decrypt_secret(ciphertext, &state.config.auth.jwt_secret)?;
+    let issuer = issuer_name(&state.config);
+    let code = payload.code.trim();
+    if code.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    if !totp_auth::validate_code(&issuer, &auth_user.user.email, &secret_base32, code)? {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            HeaderMap::new(),
+            Json(json!({
+                "error": "invalid_totp",
+                "message": "Invalid or expired code"
+            })),
+        ));
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET totp_enabled = 1, login_attempts = 0, locked_until = NULL, last_modified = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&now)
+    .bind(&auth_user.user.id)
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?;
+    sqlx::query("DELETE FROM totp_backup_codes WHERE user_id = ?")
+        .bind(&auth_user.user.id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut backup_codes = Vec::with_capacity(8);
+    for _ in 0..8 {
+        let code = totp_auth::generate_backup_code();
+        let code_hash = hash_totp_backup_code(&code);
+        let code_id = uuid::Uuid::new_v4().to_string();
+        totp_queries::insert_totp_backup_code(
+            &mut tx,
+            &code_id,
+            &auth_user.user.id,
+            &code_hash,
+            &now,
+        )
+        .await
+        .map_err(|_| AppError::Internal)?;
+        backup_codes.push(code);
+    }
+
+    tx.commit().await.map_err(|_| AppError::Internal)?;
+
+    Ok((
+        StatusCode::OK,
+        HeaderMap::new(),
+        Json(json!({
+            "backup_codes": backup_codes
+        })),
+    ))
+}
+
+async fn totp_disable(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<TotpPasswordRequest>,
+) -> Result<StatusCode, AppError> {
+    let user = auth_queries::find_user_auth_by_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+
+    if !verify_password(&user.password_hash, &payload.password) {
+        return Err(AppError::BadRequest);
+    }
+
+    totp_queries::disable_totp(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn totp_verify(
+    State(state): State<AppState>,
+    Extension(totp_user): Extension<TotpPendingUser>,
+    Json(payload): Json<TotpCodeRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<serde_json::Value>), AppError> {
+    let user = auth_queries::find_user_auth_by_id(&state.db, &totp_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !totp_user.user.is_active || !user.user.is_active {
+        return Err(AppError::Unauthorized);
+    }
+    if !user.totp_enabled {
+        return Err(AppError::Unauthorized);
+    }
+
+    let now = Utc::now();
+    if let Some(locked_until) = user.locked_until {
+        if locked_until > now {
+            return Err(AppError::Unauthorized);
+        }
+    }
+
+    let Some(ciphertext) = user.totp_secret.as_deref() else {
+        return Err(AppError::Unauthorized);
+    };
+    let secret_base32 = totp_auth::decrypt_secret(ciphertext, &state.config.auth.jwt_secret)?;
+    let code = payload.code.trim();
+    if code.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let issuer = issuer_name(&state.config);
+    let valid = totp_auth::validate_code(&issuer, &totp_user.user.email, &secret_base32, code)?;
+    if !valid {
+        auth_queries::mark_failed_login(
+            &state.db,
+            &user,
+            state.config.auth.max_login_attempts,
+            state.config.auth.lockout_duration_mins,
+        )
+        .await
+        .map_err(|_| AppError::Internal)?;
+        record_login_failure(
+            &state,
+            Some(&totp_user.user.id),
+            &totp_user.user.username,
+            "invalid_totp",
+            None,
+        )
+        .await;
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            HeaderMap::new(),
+            Json(json!({
+                "error": "invalid_totp"
+            })),
+        ));
+    }
+
+    auth_queries::clear_login_lockout(&state.db, &totp_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let response = create_login_session_response(&state, &user.user).await?;
+    record_login_success(&state, &totp_user.user.id, &totp_user.user.username, None).await;
+
+    Ok((
+        StatusCode::OK,
+        refresh_cookie_headers(
+            &state.config.app.base_url,
+            &response.refresh_token,
+            state.config.auth.refresh_token_ttl_days,
+        )?,
+        Json(json!({
+            "access_token": response.access_token,
+            "refresh_token": response.refresh_token,
+            "user": response.user,
+        })),
+    ))
+}
+
+async fn totp_verify_backup(
+    State(state): State<AppState>,
+    Extension(totp_user): Extension<TotpPendingUser>,
+    Json(payload): Json<TotpCodeRequest>,
+) -> Result<(StatusCode, HeaderMap, Json<serde_json::Value>), AppError> {
+    let user = auth_queries::find_user_auth_by_id(&state.db, &totp_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !totp_user.user.is_active || !user.user.is_active {
+        return Err(AppError::Unauthorized);
+    }
+    if !user.totp_enabled {
+        return Err(AppError::Unauthorized);
+    }
+
+    let code = payload.code.trim();
+    if code.len() != 8 || !code.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        auth_queries::mark_failed_login(
+            &state.db,
+            &user,
+            state.config.auth.max_login_attempts,
+            state.config.auth.lockout_duration_mins,
+        )
+        .await
+        .map_err(|_| AppError::Internal)?;
+        record_login_failure(
+            &state,
+            Some(&totp_user.user.id),
+            &totp_user.user.username,
+            "invalid_backup_code",
+            None,
+        )
+        .await;
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            HeaderMap::new(),
+            Json(json!({
+                "error": "invalid_backup_code"
+            })),
+        ));
+    }
+
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+    let code_hash = hash_totp_backup_code(code);
+    let Some(backup_code) =
+        totp_queries::find_unused_backup_code_in_tx(&mut tx, &totp_user.user.id, &code_hash)
+            .await
+            .map_err(|_| AppError::Internal)?
+    else {
+        let _ = tx.rollback().await;
+        auth_queries::mark_failed_login(
+            &state.db,
+            &user,
+            state.config.auth.max_login_attempts,
+            state.config.auth.lockout_duration_mins,
+        )
+        .await
+        .map_err(|_| AppError::Internal)?;
+        record_login_failure(
+            &state,
+            Some(&totp_user.user.id),
+            &totp_user.user.username,
+            "invalid_backup_code",
+            None,
+        )
+        .await;
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            HeaderMap::new(),
+            Json(json!({
+                "error": "invalid_backup_code"
+            })),
+        ));
+    };
+    totp_queries::mark_backup_code_used(&mut tx, &backup_code.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    clear_login_lockout_in_tx(&mut tx, &totp_user.user.id).await?;
+    let response = issue_session_tokens_in_transaction(&mut tx, &state, &user.user).await?;
+    tx.commit().await.map_err(|_| AppError::Internal)?;
+
+    record_login_success(&state, &totp_user.user.id, &totp_user.user.username, None).await;
+
+    Ok((
+        StatusCode::OK,
+        refresh_cookie_headers(
+            &state.config.app.base_url,
+            &response.refresh_token,
+            state.config.auth.refresh_token_ttl_days,
+        )?,
+        Json(json!({
+            "access_token": response.access_token,
+            "refresh_token": response.refresh_token,
+            "user": response.user,
+        })),
+    ))
+}
+
+async fn create_login_session_response(
     state: &AppState,
     user: &crate::db::models::User,
-) -> Result<LoginResponse, AppError> {
+) -> Result<LoginSessionResponse, AppError> {
     let (access_token, refresh_token) = issue_session_tokens(state, user).await?;
 
-    Ok(LoginResponse {
+    Ok(LoginSessionResponse {
         access_token,
         refresh_token,
         user: user.clone(),
@@ -574,6 +964,63 @@ async fn issue_session_tokens(
     .map_err(|_| AppError::Internal)?;
 
     Ok((access_token, refresh_token))
+}
+
+async fn issue_session_tokens_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &AppState,
+    user: &crate::db::models::User,
+) -> Result<LoginSessionResponse, AppError> {
+    let access_token = issue_access_token(
+        &user.id,
+        &state.config.auth.jwt_secret,
+        state.config.auth.access_token_ttl_mins,
+    )?;
+    let refresh_token = auth_queries::generate_refresh_token();
+    let now = Utc::now();
+    let expires_at = now + chrono::Duration::days(state.config.auth.refresh_token_ttl_days as i64);
+    let token_hash = auth_queries::hash_refresh_token(&refresh_token);
+    let token_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at, revoked_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        "#,
+    )
+    .bind(&token_id)
+    .bind(&user.id)
+    .bind(&token_hash)
+    .bind(expires_at.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(LoginSessionResponse {
+        access_token,
+        refresh_token,
+        user: user.clone(),
+    })
+}
+
+async fn clear_login_lockout_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    user_id: &str,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET login_attempts = 0, locked_until = NULL, last_modified = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(now)
+    .bind(user_id)
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?;
+    Ok(())
 }
 
 // LDAP is a trusted enterprise directory — matching existing users by username or email is correct.
@@ -896,6 +1343,20 @@ fn clear_refresh_cookie_headers(base_url: &str) -> Result<HeaderMap, AppError> {
         HeaderValue::from_str(&cookie).map_err(|_| AppError::Internal)?,
     );
     Ok(headers)
+}
+
+fn issuer_name(config: &crate::config::AppConfig) -> String {
+    let issuer = config.app.library_name.trim();
+    if issuer.is_empty() {
+        "autolibre".to_string()
+    } else {
+        issuer.to_string()
+    }
+}
+
+fn hash_totp_backup_code(code: &str) -> String {
+    let digest = Sha256::digest(code.as_bytes());
+    hex::encode(digest)
 }
 
 fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {

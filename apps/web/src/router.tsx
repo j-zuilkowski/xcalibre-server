@@ -11,6 +11,7 @@ import { LibrariesPage } from "./features/admin/LibrariesPage";
 import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
+import { ProfilePage } from "./features/profile/ProfilePage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -59,6 +60,12 @@ const shelvesRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "shelves",
   component: ShelvesPage,
+});
+
+const profileRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "profile",
+  component: ProfilePage,
 });
 
 const bookRoute = createRoute({
@@ -155,6 +162,7 @@ export const routeTree = rootRoute.addChildren([
     downloadHistoryRoute,
     searchRoute,
     shelvesRoute,
+    profileRoute,
     bookRoute,
     readerRoute,
     adminRoute.addChildren([

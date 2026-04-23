@@ -1,17 +1,17 @@
 import { create } from "zustand";
-import type { LoginResponse, User } from "@autolibre/shared";
+import type { AuthSession, User } from "@autolibre/shared";
 
 type AuthState = {
   access_token: string | null;
   refresh_token: string | null;
   user: User | null;
-  setAuth: (auth: LoginResponse) => void;
+  setAuth: (auth: AuthSession) => void;
   clearAuth: () => void;
 };
 
 export const AUTH_STORAGE_KEY = "calibre-web.auth";
 
-type StoredAuth = Pick<LoginResponse, "access_token" | "refresh_token" | "user">;
+type StoredAuth = AuthSession;
 
 function readStoredAuth(): StoredAuth | null {
   if (
@@ -34,10 +34,16 @@ function readStoredAuth(): StoredAuth | null {
       parsed.user &&
       typeof parsed.user === "object"
     ) {
+      const user = parsed.user as Partial<User> & Record<string, unknown>;
       return {
         access_token: parsed.access_token,
         refresh_token: parsed.refresh_token,
-        user: parsed.user as User,
+        user: {
+          ...(user as User),
+          default_library_id:
+            typeof user.default_library_id === "string" ? user.default_library_id : "default",
+          totp_enabled: typeof user.totp_enabled === "boolean" ? user.totp_enabled : false,
+        } as User,
       };
     }
   } catch {

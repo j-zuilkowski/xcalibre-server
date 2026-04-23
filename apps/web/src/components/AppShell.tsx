@@ -200,7 +200,7 @@ export function AppShell() {
             {menuOpen ? (
               <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl">
               <a
-                href="/library"
+                href="/profile"
                 className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
                 onClick={() => setMenuOpen(false)}
               >

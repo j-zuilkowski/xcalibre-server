@@ -268,6 +268,7 @@ impl TestContext {
             is_active: true,
             force_pw_reset: false,
             default_library_id: "default".to_string(),
+            totp_enabled: false,
             created_at: now.clone(),
             last_modified: now,
         }

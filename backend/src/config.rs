@@ -28,6 +28,7 @@ pub struct AppConfig {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSection {
+    pub library_name: String,
     pub base_url: String,
     pub storage_path: String,
     pub calibre_db_path: String,
@@ -248,6 +249,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             app: AppSection {
+                library_name: String::new(),
                 base_url: "http://localhost:8083".to_string(),
                 storage_path: "./storage".to_string(),
                 calibre_db_path: "./calibre/metadata.db".to_string(),

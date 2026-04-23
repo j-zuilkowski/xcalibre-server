@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -31,8 +31,13 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [baseUrl, setBaseUrl] = useState("http://localhost:8080");
   const [error, setError] = useState<string | null>(null);
+  const [totpToken, setTotpToken] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [step, setStep] = useState<"credentials" | "totp">("credentials");
   const [loading, setLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<"email" | "password" | "baseUrl" | null>(null);
+  const totpInputRef = useRef<TextInput | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -40,6 +45,12 @@ export default function LoginScreen() {
       setBaseUrl(storedBaseUrl);
     })();
   }, []);
+
+  useEffect(() => {
+    if (step === "totp") {
+      totpInputRef.current?.focus();
+    }
+  }, [step, useBackupCode]);
 
   const signIn = async () => {
     setLoading(true);
@@ -51,10 +62,35 @@ export default function LoginScreen() {
         username: email.trim(),
         password,
       });
+      if ("totp_required" in response) {
+        setTotpToken(response.totp_token);
+        setTotpCode("");
+        setUseBackupCode(false);
+        setStep("totp");
+        return;
+      }
+
       await saveTokens(response.access_token, response.refresh_token);
       router.replace("/(tabs)/library");
     } catch (caught) {
       setError(toErrorMessage(caught, t));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyTotp = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = useBackupCode
+        ? await client.verifyTotpBackup(totpToken, totpCode.trim())
+        : await client.verifyTotp(totpToken, totpCode.trim());
+      await saveTokens(response.access_token, response.refresh_token);
+      router.replace("/(tabs)/library");
+    } catch (caught) {
+      setError("Invalid code");
     } finally {
       setLoading(false);
     }
@@ -65,54 +101,84 @@ export default function LoginScreen() {
       <View style={styles.card}>
         <Text style={styles.title}>{t("auth.sign_in_title")}</Text>
 
-        <TextInput
-          testID="login-base-url"
-          value={baseUrl}
-          onChangeText={setBaseUrl}
-          onFocus={() => setFocusedField("baseUrl")}
-          onBlur={() => setFocusedField(null)}
-          placeholder={t("auth.server_url")}
-          placeholderTextColor="#71717a"
-          autoCapitalize="none"
-          keyboardType="url"
-          style={[
-            styles.input,
-            focusedField === "baseUrl" ? styles.inputFocused : null,
-          ]}
-        />
+        {step === "credentials" ? (
+          <>
+            <TextInput
+              testID="login-base-url"
+              value={baseUrl}
+              onChangeText={setBaseUrl}
+              onFocus={() => setFocusedField("baseUrl")}
+              onBlur={() => setFocusedField(null)}
+              placeholder={t("auth.server_url")}
+              placeholderTextColor="#71717a"
+              autoCapitalize="none"
+              keyboardType="url"
+              style={[
+                styles.input,
+                focusedField === "baseUrl" ? styles.inputFocused : null,
+              ]}
+            />
 
-        <TextInput
-          testID="login-email"
-          value={email}
-          onChangeText={setEmail}
-          onFocus={() => setFocusedField("email")}
-          onBlur={() => setFocusedField(null)}
-          placeholder={t("auth.email")}
-          placeholderTextColor="#71717a"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          style={[styles.input, focusedField === "email" ? styles.inputFocused : null]}
-        />
+            <TextInput
+              testID="login-email"
+              value={email}
+              onChangeText={setEmail}
+              onFocus={() => setFocusedField("email")}
+              onBlur={() => setFocusedField(null)}
+              placeholder={t("auth.email")}
+              placeholderTextColor="#71717a"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[styles.input, focusedField === "email" ? styles.inputFocused : null]}
+            />
 
-        <TextInput
-          testID="login-password"
-          value={password}
-          onChangeText={setPassword}
-          onFocus={() => setFocusedField("password")}
-          onBlur={() => setFocusedField(null)}
-          placeholder={t("auth.password")}
-          placeholderTextColor="#71717a"
-          secureTextEntry
-          style={[
-            styles.input,
-            focusedField === "password" ? styles.inputFocused : null,
-          ]}
-        />
+            <TextInput
+              testID="login-password"
+              value={password}
+              onChangeText={setPassword}
+              onFocus={() => setFocusedField("password")}
+              onBlur={() => setFocusedField(null)}
+              placeholder={t("auth.password")}
+              placeholderTextColor="#71717a"
+              secureTextEntry
+              style={[
+                styles.input,
+                focusedField === "password" ? styles.inputFocused : null,
+              ]}
+            />
+          </>
+        ) : (
+          <>
+            <Text style={styles.totpHeading}>Two-factor authentication</Text>
+            <Text style={styles.totpSubtitle}>
+              {useBackupCode ? "Enter one of your backup codes." : "Enter the 6-digit code from your authenticator app."}
+            </Text>
+            <TextInput
+              ref={totpInputRef}
+              testID="totp-code"
+              value={totpCode}
+              onChangeText={setTotpCode}
+              placeholder={useBackupCode ? "Backup code" : "123456"}
+              placeholderTextColor="#71717a"
+              keyboardType={useBackupCode ? "default" : "number-pad"}
+              autoCapitalize="none"
+              style={styles.input}
+            />
+            <Pressable
+              testID="totp-toggle-backup"
+              onPress={() => setUseBackupCode((current) => !current)}
+            >
+              <Text style={styles.backupLink}>
+                {useBackupCode ? "Use authenticator code instead" : "Use backup code instead"}
+              </Text>
+            </Pressable>
+          </>
+        )}
 
         <Pressable
           testID="login-submit"
           onPress={() => {
-            void signIn();
+            void (step === "totp" ? verifyTotp() : signIn());
           }}
           disabled={loading}
           style={({ pressed }) => [
@@ -124,7 +190,9 @@ export default function LoginScreen() {
           {loading ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.signInButtonText}>{t("auth.sign_in")}</Text>
+            <Text style={styles.signInButtonText}>
+              {step === "totp" ? "Verify" : t("auth.sign_in")}
+            </Text>
           )}
         </Pressable>
 
@@ -170,6 +238,20 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
+  },
+  totpHeading: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#18181b",
+  },
+  totpSubtitle: {
+    fontSize: 13,
+    color: "#52525b",
+  },
+  backupLink: {
+    color: "#0f766e",
+    fontSize: 13,
+    fontWeight: "600",
   },
   signInButton: {
     borderRadius: 10,

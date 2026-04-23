@@ -15,6 +15,7 @@ pub struct User {
     pub is_active: bool,
     pub force_pw_reset: bool,
     pub default_library_id: String,
+    pub totp_enabled: bool,
     pub created_at: String,
     pub last_modified: String,
 }

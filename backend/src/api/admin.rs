@@ -3,11 +3,10 @@ use crate::{
         api_tokens as api_token_queries, auth as auth_queries, books as book_queries,
         email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
         llm as llm_queries, scheduled_tasks as scheduled_task_queries, tags as tag_queries,
-        user_tag_restrictions as restriction_queries,
+        totp as totp_queries, user_tag_restrictions as restriction_queries,
     },
     middleware::auth::AuthenticatedUser,
-    scheduler,
-    AppError, AppState,
+    scheduler, AppError, AppState,
 };
 use axum::{
     extract::{Extension, Path, Query, State},
@@ -18,8 +17,8 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use reqwest::header::USER_AGENT;
 use rand::{rngs::OsRng, RngCore};
+use reqwest::header::USER_AGENT;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -64,6 +63,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/admin/users/:id/tag-restrictions/:tag_id",
             delete(delete_user_tag_restriction),
+        )
+        .route(
+            "/api/v1/admin/users/:id/totp/disable",
+            post(disable_user_totp),
         )
         .route("/api/v1/admin/tokens", post(create_token).get(list_tokens))
         .route("/api/v1/admin/tokens/:id", delete(delete_token))
@@ -334,6 +337,25 @@ async fn delete_user_tag_restriction(
     if !removed {
         return Err(AppError::NotFound);
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn disable_user_totp(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    totp_queries::disable_totp(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -648,7 +670,8 @@ async fn create_scheduled_task(
         return Err(AppError::BadRequest);
     }
 
-    let task_type = normalize_scheduled_task_type(&payload.task_type).ok_or(AppError::BadRequest)?;
+    let task_type =
+        normalize_scheduled_task_type(&payload.task_type).ok_or(AppError::BadRequest)?;
     let cron_expr = payload.cron_expr.trim();
     if cron_expr.is_empty() {
         return Err(AppError::BadRequest);

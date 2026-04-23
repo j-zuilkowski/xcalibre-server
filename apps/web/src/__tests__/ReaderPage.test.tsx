@@ -130,6 +130,7 @@ function makeUser(): User {
     is_active: true,
     force_pw_reset: false,
     default_library_id: "default",
+    totp_enabled: false,
     created_at: "2026-04-19T00:00:00Z",
     last_modified: "2026-04-19T00:00:00Z",
   };

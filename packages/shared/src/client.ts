@@ -12,6 +12,7 @@ import type {
   MetadataLookupResponse,
   BookSummary,
   BookText,
+  AuthSession,
   ClassifyResult,
   CustomColumn,
   CustomColumnType,
@@ -76,7 +77,9 @@ export class ApiClient {
       },
       { retryOnUnauthorized: false, notifyUnauthorized: false },
     );
-    this.rememberRefreshToken(response.refresh_token);
+    if (!("totp_required" in response)) {
+      this.rememberRefreshToken(response.refresh_token);
+    }
     return response;
   }
 
@@ -153,6 +156,54 @@ export class ApiClient {
     await this.requestJson<void>("/api/v1/auth/me/password", {
       method: "PATCH",
       body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+  }
+
+  async setupTotp(): Promise<{ secret_base32: string; otpauth_uri: string }> {
+    return this.requestJson<{ secret_base32: string; otpauth_uri: string }>("/api/v1/auth/totp/setup", {
+      method: "GET",
+    });
+  }
+
+  async confirmTotp(code: string): Promise<{ backup_codes: string[] }> {
+    return this.requestJson<{ backup_codes: string[] }>("/api/v1/auth/totp/confirm", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  async disableTotp(password: string): Promise<void> {
+    await this.requestJson<void>("/api/v1/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  async verifyTotp(token: string, code: string): Promise<AuthSession> {
+    return this.requestJson<AuthSession>("/api/v1/auth/totp/verify", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ code }),
+    }, {
+      authorizationToken: token,
+      retryOnUnauthorized: false,
+      notifyUnauthorized: false,
+    });
+  }
+
+  async verifyTotpBackup(token: string, code: string): Promise<AuthSession> {
+    return this.requestJson<AuthSession>("/api/v1/auth/totp/verify-backup", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ code }),
+    }, {
+      authorizationToken: token,
+      retryOnUnauthorized: false,
+      notifyUnauthorized: false,
     });
   }
 
@@ -475,6 +526,12 @@ export class ApiClient {
   async deleteUser(id: string): Promise<void> {
     await this.requestJson<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
       method: "DELETE",
+    });
+  }
+
+  async disableUserTotp(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/users/${encodeURIComponent(id)}/totp/disable`, {
+      method: "POST",
     });
   }
 
