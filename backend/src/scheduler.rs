@@ -138,9 +138,7 @@ async fn run_scheduled_task(
             let _ = llm_queries::enqueue_backup_job(&state.db).await?;
         }
         other => {
-            return Err(anyhow::anyhow!(
-                "unsupported scheduled task type: {other}"
-            ));
+            return Err(anyhow::anyhow!("unsupported scheduled task type: {other}"));
         }
     }
 

@@ -32,7 +32,10 @@ async fn test_create_scheduled_task() {
     assert_eq!(body["task_type"], "classify_all");
     assert_eq!(body["cron_expr"], "0 2 * * 0");
     assert_eq!(body["enabled"], true);
-    assert!(body["next_run_at"].as_str().unwrap_or_default().contains('T'));
+    assert!(body["next_run_at"]
+        .as_str()
+        .unwrap_or_default()
+        .contains('T'));
 
     let row = sqlx::query(
         "SELECT name, task_type, cron_expr, enabled, last_run_at, next_run_at FROM scheduled_tasks WHERE id = ?",
@@ -96,10 +99,11 @@ async fn test_disable_task_skips_execution() {
         .expect("run scheduler once");
     assert_eq!(processed, 0);
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM llm_jobs WHERE job_type = 'organize'")
-        .fetch_one(&ctx.db)
-        .await
-        .expect("count jobs");
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(1) FROM llm_jobs WHERE job_type = 'organize'")
+            .fetch_one(&ctx.db)
+            .await
+            .expect("count jobs");
     assert_eq!(count, 0);
 }
 
@@ -113,11 +117,12 @@ async fn test_due_task_creates_llm_job() {
         .expect("run scheduler once");
     assert_eq!(processed, 1);
 
-    let job_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(1) FROM llm_jobs WHERE job_type = 'organize' AND status = 'pending'")
-            .fetch_one(&ctx.db)
-            .await
-            .expect("count organize jobs");
+    let job_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(1) FROM llm_jobs WHERE job_type = 'organize' AND status = 'pending'",
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .expect("count organize jobs");
     assert_eq!(job_count, 1);
 
     let row = sqlx::query("SELECT last_run_at, next_run_at FROM scheduled_tasks WHERE id = ?")

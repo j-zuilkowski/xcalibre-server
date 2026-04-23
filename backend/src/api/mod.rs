@@ -41,6 +41,12 @@ pub fn router(state: crate::AppState) -> Router {
             crate::middleware::security_headers::global_rate_limit_layer(global_rate_limit_per_ip),
         )
         .layer(middleware::from_fn_with_state(
+            crate::middleware::security_headers::global_rate_limit_headers_config(
+                global_rate_limit_per_ip,
+            ),
+            crate::middleware::security_headers::apply_rate_limit_headers,
+        ))
+        .layer(middleware::from_fn_with_state(
             upload_max_bytes,
             crate::middleware::security_headers::enforce_upload_size,
         ))

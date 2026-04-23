@@ -1,4 +1,5 @@
 use crate::{
+    auth::password::hash_password,
     db::queries::{
         api_tokens as api_token_queries, auth as auth_queries, books as book_queries,
         email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
@@ -22,6 +23,7 @@ use reqwest::header::USER_AGENT;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use sqlx::Row;
 use std::{
     sync::OnceLock,
     time::{Duration, Instant},
@@ -44,6 +46,16 @@ pub fn router(state: AppState) -> Router<AppState> {
             patch(update_scheduled_task).delete(delete_scheduled_task),
         )
         .route("/api/v1/admin/update-check", get(update_check))
+        .route("/api/v1/admin/roles", get(list_roles))
+        .route("/api/v1/admin/users", get(list_users).post(create_user))
+        .route(
+            "/api/v1/admin/users/:id",
+            patch(update_user).delete(delete_user),
+        )
+        .route(
+            "/api/v1/admin/users/:id/reset-password",
+            post(reset_user_password),
+        )
         .route(
             "/api/v1/admin/email-settings",
             get(get_email_settings).put(update_email_settings),
@@ -102,12 +114,52 @@ struct EmailSettingsRequest {
     use_tls: bool,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct CreateUserRequest {
+    username: String,
+    email: String,
+    password: String,
+    #[serde(default)]
+    role_id: String,
+    #[serde(default = "default_is_active")]
+    is_active: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UpdateUserRequest {
+    #[serde(default)]
+    role_id: Option<String>,
+    #[serde(default)]
+    is_active: Option<bool>,
+    #[serde(default)]
+    force_pw_reset: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 struct CreateTokenResponse {
     id: String,
     name: String,
     token: String,
     created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RoleResponse {
+    id: String,
+    name: String,
+    can_upload: bool,
+    can_bulk: bool,
+    can_edit: bool,
+    can_download: bool,
+    created_at: String,
+    last_modified: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminUserResponse {
+    #[serde(flatten)]
+    user: crate::db::models::User,
+    last_login_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -384,6 +436,285 @@ async fn list_jobs(
         page,
         page_size,
     }))
+}
+
+async fn list_roles(State(state): State<AppState>) -> Result<Json<Vec<RoleResponse>>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified
+        FROM roles
+        ORDER BY name ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let roles = rows
+        .into_iter()
+        .map(|row| RoleResponse {
+            id: row.get("id"),
+            name: row.get("name"),
+            can_upload: row.get::<i64, _>("can_upload") != 0,
+            can_bulk: row.get::<i64, _>("can_bulk") != 0,
+            can_edit: row.get::<i64, _>("can_edit") != 0,
+            can_download: row.get::<i64, _>("can_download") != 0,
+            created_at: row.get("created_at"),
+            last_modified: row.get("last_modified"),
+        })
+        .collect();
+
+    Ok(Json(roles))
+}
+
+async fn list_users(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AdminUserResponse>>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            u.id AS user_id,
+            u.username AS username,
+            u.email AS email,
+            u.role_id AS role_id,
+            r.name AS role_name,
+            u.is_active AS is_active,
+            u.force_pw_reset AS force_pw_reset,
+            COALESCE(u.default_library_id, 'default') AS default_library_id,
+            COALESCE(u.totp_enabled, 0) AS totp_enabled,
+            u.created_at AS created_at,
+            u.last_modified AS last_modified
+        FROM users u
+        INNER JOIN roles r ON r.id = u.role_id
+        ORDER BY u.username ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| AdminUserResponse {
+                user: crate::db::models::User {
+                    id: row.get("user_id"),
+                    username: row.get("username"),
+                    email: row.get("email"),
+                    role: crate::db::models::RoleRef {
+                        id: row.get("role_id"),
+                        name: row.get("role_name"),
+                    },
+                    is_active: row.get::<i64, _>("is_active") != 0,
+                    force_pw_reset: row.get::<i64, _>("force_pw_reset") != 0,
+                    default_library_id: row.get("default_library_id"),
+                    totp_enabled: row.get::<i64, _>("totp_enabled") != 0,
+                    created_at: row.get("created_at"),
+                    last_modified: row.get("last_modified"),
+                },
+                last_login_at: None,
+            })
+            .collect(),
+    ))
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Json(payload): Json<CreateUserRequest>,
+) -> Result<(StatusCode, Json<AdminUserResponse>), AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let username = payload.username.trim();
+    let email = payload.email.trim();
+    let password = payload.password.trim();
+    if username.is_empty() || email.is_empty() || password.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let role_id = if payload.role_id.trim().is_empty() {
+        "user"
+    } else {
+        payload.role_id.trim()
+    };
+    let role_exists = sqlx::query_scalar::<_, String>("SELECT id FROM roles WHERE id = ?")
+        .bind(role_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if role_exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let password_hash = hash_password(password, &state.config.auth)?;
+    let mut user = match auth_queries::create_user(
+        &state.db,
+        username,
+        email,
+        role_id,
+        &password_hash,
+    )
+    .await
+    {
+        Ok(user) => user,
+        Err(err) => {
+            let err_text = err.to_string();
+            if err_text.contains("UNIQUE constraint failed") {
+                return Err(AppError::Conflict);
+            }
+            return Err(AppError::Internal);
+        }
+    };
+
+    if !payload.is_active {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET is_active = 0, last_modified = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(&user.id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+        user = auth_queries::find_user_by_id(&state.db, &user.id)
+            .await
+            .map_err(|_| AppError::Internal)?
+            .ok_or(AppError::NotFound)?;
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(AdminUserResponse {
+            user,
+            last_login_at: None,
+        }),
+    ))
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+    Json(payload): Json<UpdateUserRequest>,
+) -> Result<Json<AdminUserResponse>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    if payload.role_id.is_none() && payload.is_active.is_none() && payload.force_pw_reset.is_none()
+    {
+        return Err(AppError::BadRequest);
+    }
+
+    if let Some(role_id) = payload.role_id.as_deref() {
+        let role_id = role_id.trim();
+        if role_id.is_empty() {
+            return Err(AppError::BadRequest);
+        }
+        let role_exists = sqlx::query_scalar::<_, String>("SELECT id FROM roles WHERE id = ?")
+            .bind(role_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        if role_exists.is_none() {
+            return Err(AppError::NotFound);
+        }
+    }
+
+    let mut updates = Vec::new();
+    if payload.role_id.is_some() {
+        updates.push("role_id = ?");
+    }
+    if payload.is_active.is_some() {
+        updates.push("is_active = ?");
+    }
+    if payload.force_pw_reset.is_some() {
+        updates.push("force_pw_reset = ?");
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut query = String::from("UPDATE users SET ");
+    query.push_str(&updates.join(", "));
+    query.push_str(", last_modified = ? WHERE id = ?");
+
+    let mut stmt = sqlx::query(&query);
+    if let Some(role_id) = payload.role_id.as_deref() {
+        stmt = stmt.bind(role_id.trim());
+    }
+    if let Some(is_active) = payload.is_active {
+        stmt = stmt.bind(i64::from(is_active));
+    }
+    if let Some(force_pw_reset) = payload.force_pw_reset {
+        stmt = stmt.bind(i64::from(force_pw_reset));
+    }
+    stmt = stmt.bind(&now).bind(&user_id);
+    stmt.execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let user = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
+    Ok(Json(AdminUserResponse {
+        user,
+        last_login_at: None,
+    }))
+}
+
+async fn delete_user(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let deleted = sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(&user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn reset_user_password(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    let Some(_) = auth_queries::find_user_by_id(&state.db, &user_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET force_pw_reset = 1, last_modified = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(&user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_job(
@@ -934,6 +1265,10 @@ fn default_smtp_port() -> i64 {
 }
 
 fn default_use_tls() -> bool {
+    true
+}
+
+fn default_is_active() -> bool {
     true
 }
 

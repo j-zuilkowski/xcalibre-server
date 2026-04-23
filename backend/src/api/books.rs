@@ -23,6 +23,7 @@ use lettre::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::Row;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -61,6 +62,18 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/books/:id",
             get(get_book).patch(patch_book).delete(delete_book),
+        )
+        .route(
+            "/api/v1/books/:id/progress",
+            get(get_reading_progress)
+                .patch(upsert_reading_progress)
+                .put(upsert_reading_progress),
+        )
+        .route(
+            "/api/v1/reading-progress/:id",
+            get(get_reading_progress)
+                .patch(upsert_reading_progress)
+                .put(upsert_reading_progress),
         )
         .route("/api/v1/books/:id/read", post(set_read))
         .route("/api/v1/books/:id/archive", post(set_archive))
@@ -227,6 +240,31 @@ struct BulkEditResponse {
 #[derive(Debug, Deserialize)]
 struct ReadStateRequest {
     is_read: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ReadingProgressRequest {
+    #[serde(default)]
+    format_id: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    percentage: f64,
+    #[serde(default)]
+    cfi: Option<String>,
+    #[serde(default)]
+    page: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReadingProgressResponse {
+    id: String,
+    book_id: String,
+    format_id: String,
+    cfi: Option<String>,
+    page: Option<i64>,
+    percentage: f64,
+    updated_at: String,
+    last_modified: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +438,121 @@ async fn get_book(
     )
     .await?;
     Ok(Json(book))
+}
+
+async fn get_reading_progress(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+) -> Result<Json<ReadingProgressResponse>, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT id, book_id, format_id, cfi, page, percentage, updated_at, last_modified
+        FROM reading_progress
+        WHERE user_id = ? AND book_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(&auth_user.user.id)
+    .bind(&book_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let Some(row) = row else {
+        return Err(AppError::NotFound);
+    };
+
+    Ok(Json(ReadingProgressResponse {
+        id: row.get("id"),
+        book_id: row.get("book_id"),
+        format_id: row.get("format_id"),
+        cfi: row.get("cfi"),
+        page: row.get("page"),
+        percentage: row.get("percentage"),
+        updated_at: row.get("updated_at"),
+        last_modified: row.get("last_modified"),
+    }))
+}
+
+async fn upsert_reading_progress(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<ReadingProgressRequest>,
+) -> Result<Json<ReadingProgressResponse>, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let format_id = resolve_progress_format_id(&state.db, &book_id, &payload).await?;
+    let percentage = payload.percentage.clamp(0.0, 100.0);
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO reading_progress (
+            id, user_id, book_id, format_id, cfi, page, percentage, updated_at, last_modified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, book_id) DO UPDATE SET
+            format_id = excluded.format_id,
+            cfi = excluded.cfi,
+            page = excluded.page,
+            percentage = excluded.percentage,
+            updated_at = excluded.updated_at,
+            last_modified = excluded.last_modified
+        "#,
+    )
+    .bind(&id)
+    .bind(&auth_user.user.id)
+    .bind(&book_id)
+    .bind(&format_id)
+    .bind(&payload.cfi)
+    .bind(payload.page)
+    .bind(percentage)
+    .bind(&now)
+    .bind(&now)
+    .execute(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT id, book_id, format_id, cfi, page, percentage, updated_at, last_modified
+        FROM reading_progress
+        WHERE user_id = ? AND book_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(&auth_user.user.id)
+    .bind(&book_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(ReadingProgressResponse {
+        id: row.get("id"),
+        book_id: row.get("book_id"),
+        format_id: row.get("format_id"),
+        cfi: row.get("cfi"),
+        page: row.get("page"),
+        percentage: row.get("percentage"),
+        updated_at: row.get("updated_at"),
+        last_modified: row.get("last_modified"),
+    }))
 }
 
 async fn list_custom_columns(
@@ -629,6 +782,42 @@ async fn set_archive(
         .map_err(|_| AppError::Internal)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn resolve_progress_format_id(
+    db: &sqlx::SqlitePool,
+    book_id: &str,
+    payload: &ReadingProgressRequest,
+) -> Result<String, AppError> {
+    if let Some(format_id) = payload.format_id.as_deref() {
+        let row = sqlx::query(
+            r#"
+            SELECT id
+            FROM formats
+            WHERE id = ? AND book_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(format_id)
+        .bind(book_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+        return row.map(|row| row.get("id")).ok_or(AppError::BadRequest);
+    }
+
+    if let Some(format) = payload.format.as_deref() {
+        let Some(format_file) = book_queries::find_format_file(db, book_id, format)
+            .await
+            .map_err(|_| AppError::Internal)?
+        else {
+            return Err(AppError::NotFound);
+        };
+        return Ok(format_file.id);
+    }
+
+    Err(AppError::BadRequest)
 }
 
 pub(crate) async fn load_book_or_not_found(
@@ -2382,8 +2571,15 @@ async fn serve_storage_file(
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let range = range_header.as_deref().and_then(|value| parse_range(value, 0));
-    let using_local_backend = state.config.storage.backend.trim().eq_ignore_ascii_case("local");
+    let range = range_header
+        .as_deref()
+        .and_then(|value| parse_range(value, 0));
+    let using_local_backend = state
+        .config
+        .storage
+        .backend
+        .trim()
+        .eq_ignore_ascii_case("local");
 
     match state.storage.resolve(relative_path) {
         Ok(_) if range.is_none() => {

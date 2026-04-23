@@ -40,7 +40,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/refresh", post(refresh))
-        .layer(crate::middleware::security_headers::auth_rate_limit_layer());
+        .layer(crate::middleware::security_headers::auth_rate_limit_layer())
+        .layer(middleware::from_fn_with_state(
+            crate::middleware::security_headers::auth_rate_limit_headers_config(),
+            crate::middleware::security_headers::apply_rate_limit_headers,
+        ));
     let protected = Router::new()
         .route("/logout", post(logout))
         .route("/me", get(me))

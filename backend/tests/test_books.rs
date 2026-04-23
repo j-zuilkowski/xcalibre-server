@@ -123,6 +123,44 @@ async fn test_list_books_filter_by_tag() {
 }
 
 #[tokio::test]
+async fn test_reading_progress_surfaces_in_library_list() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, _) = ctx.create_book_with_file("Progress Book", "EPUB").await;
+    let format_id = book.formats[0].id.clone();
+
+    let patch_response = ctx
+        .server
+        .patch(format!("/api/v1/reading-progress/{}", book.id).as_str())
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .json(&serde_json::json!({
+            "format_id": format_id,
+            "percentage": 42,
+            "cfi": null,
+            "page": null,
+        }))
+        .await;
+
+    assert_status!(patch_response, 200);
+    let patch_body: serde_json::Value = patch_response.json();
+    assert_eq!(patch_body["percentage"], 42.0);
+
+    let list_response = ctx
+        .server
+        .get("/api/v1/books")
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(list_response, 200);
+    let body: serde_json::Value = list_response.json();
+    let item = body["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == book.id))
+        .expect("book in library list");
+    assert_eq!(item["progress_percentage"], 42.0);
+}
+
+#[tokio::test]
 async fn test_list_books_sort_by_title() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;

@@ -23,6 +23,7 @@ pub struct BookSummary {
     pub rating: Option<i64>,
     pub document_type: String,
     pub last_modified: String,
+    pub progress_percentage: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -244,6 +245,11 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     } else {
         data_query.push("0 AS is_read, 0 AS is_archived, ");
     }
+    if user_id.is_some() {
+        data_query.push("COALESCE(rp.percentage, 0.0) AS progress_percentage, ");
+    } else {
+        data_query.push("0.0 AS progress_percentage, ");
+    }
     data_query.push(
         r#"
             b.language AS language,
@@ -262,6 +268,8 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     }
     if let Some(user_id) = user_id {
         data_query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        data_query.push_bind(user_id);
+        data_query.push(" LEFT JOIN reading_progress rp ON rp.book_id = b.id AND rp.user_id = ");
         data_query.push_bind(user_id);
     }
     data_query.push(" LEFT JOIN series s ON s.id = b.series_id");
@@ -307,6 +315,7 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
             rating: row.get("rating"),
             document_type: row.get("document_type"),
             last_modified: row.get("last_modified"),
+            progress_percentage: row.get("progress_percentage"),
         });
     }
 
@@ -346,6 +355,11 @@ pub async fn list_book_summaries_by_ids(
     } else {
         query.push("0 AS is_read, 0 AS is_archived, ");
     }
+    if user_id.is_some() {
+        query.push("COALESCE(rp.percentage, 0.0) AS progress_percentage, ");
+    } else {
+        query.push("0.0 AS progress_percentage, ");
+    }
     query.push(
         r#"
             b.language AS language,
@@ -359,6 +373,8 @@ pub async fn list_book_summaries_by_ids(
     );
     if let Some(user_id) = user_id {
         query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        query.push_bind(user_id);
+        query.push(" LEFT JOIN reading_progress rp ON rp.book_id = b.id AND rp.user_id = ");
         query.push_bind(user_id);
     }
     query.push(" LEFT JOIN series s ON s.id = b.series_id WHERE ");
@@ -410,6 +426,7 @@ pub async fn list_book_summaries_by_ids(
                 rating: row.get("rating"),
                 document_type: row.get("document_type"),
                 last_modified: row.get("last_modified"),
+                progress_percentage: row.get("progress_percentage"),
             },
         );
     }
@@ -2175,8 +2192,12 @@ fn decode_custom_value(column_type: &str, row: &SqliteRow) -> Option<Value> {
     match normalize_custom_column_type(column_type) {
         "integer" => row.get::<Option<i64>, _>("value_int").map(Value::from),
         "float" => row.get::<Option<f64>, _>("value_float").map(Value::from),
-        "bool" => row.get::<Option<i64>, _>("value_bool").map(|value| Value::Bool(value != 0)),
-        _ => row.get::<Option<String>, _>("value_text").map(Value::String),
+        "bool" => row
+            .get::<Option<i64>, _>("value_bool")
+            .map(|value| Value::Bool(value != 0)),
+        _ => row
+            .get::<Option<String>, _>("value_text")
+            .map(Value::String),
     }
 }
 

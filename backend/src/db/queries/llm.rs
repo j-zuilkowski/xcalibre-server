@@ -154,9 +154,7 @@ pub async fn enqueue_backup_job(db: &SqlitePool) -> anyhow::Result<String> {
     Ok(id)
 }
 
-pub async fn enqueue_semantic_index_jobs_for_all_books(
-    db: &SqlitePool,
-) -> anyhow::Result<usize> {
+pub async fn enqueue_semantic_index_jobs_for_all_books(db: &SqlitePool) -> anyhow::Result<usize> {
     let book_ids = sqlx::query_scalar::<_, String>(
         r#"
         SELECT id

@@ -7,17 +7,20 @@ use backend::api::admin::clear_update_check_cache;
 use common::{auth_header, TestContext};
 use serde_json::json;
 use std::sync::OnceLock;
+use tokio::sync::Mutex;
 use wiremock::{
     matchers::{method, path},
     Mock, MockServer, ResponseTemplate,
 };
-use tokio::sync::Mutex;
 
 static RELEASES_URL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[tokio::test]
 async fn test_update_check_returns_current_version() {
-    let _guard = RELEASES_URL_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let _guard = RELEASES_URL_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
     clear_update_check_cache().await;
 
     let mock_server = MockServer::start().await;
@@ -32,7 +35,10 @@ async fn test_update_check_returns_current_version() {
 
     std::env::set_var(
         "AUTOLIBRE_RELEASES_URL",
-        format!("{}/repos/autolibre/autolibre/releases/latest", mock_server.uri()),
+        format!(
+            "{}/repos/autolibre/autolibre/releases/latest",
+            mock_server.uri()
+        ),
     );
 
     let ctx = TestContext::new().await;
@@ -60,7 +66,10 @@ async fn test_update_check_returns_current_version() {
 
 #[tokio::test]
 async fn test_update_check_github_unreachable_returns_503_gracefully() {
-    let _guard = RELEASES_URL_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let _guard = RELEASES_URL_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
     clear_update_check_cache().await;
 
     std::env::set_var(

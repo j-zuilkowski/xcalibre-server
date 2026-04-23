@@ -1,14 +1,14 @@
 use crate::AppError;
 use axum::{
     extract::{Request as AxumRequest, State},
-    http::{self, header, HeaderMap, HeaderName, HeaderValue, Method},
+    http::{self, header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::KeyExtractor, GovernorError, GovernorLayer,
@@ -33,17 +33,41 @@ const CONTENT_SECURITY_POLICY_VALUE: &str = concat!(
 const PERMISSIONS_POLICY_VALUE: &str = "camera=(), microphone=(), geolocation=()";
 
 const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 10;
+const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 const UPLOAD_ROUTE: &str = "/api/v1/books";
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RateLimitHeaderConfig {
+    limit: u32,
+    window_seconds: u64,
+}
+
+impl RateLimitHeaderConfig {
+    fn new(limit: u32, window_seconds: u64) -> Self {
+        Self {
+            limit: limit.max(1),
+            window_seconds: window_seconds.max(1),
+        }
+    }
+}
 
 pub(crate) fn auth_rate_limit_layer(
 ) -> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
     governor_layer(AUTH_RATE_LIMIT_PER_MINUTE)
 }
 
+pub(crate) fn auth_rate_limit_headers_config() -> RateLimitHeaderConfig {
+    RateLimitHeaderConfig::new(AUTH_RATE_LIMIT_PER_MINUTE, RATE_LIMIT_WINDOW_SECONDS)
+}
+
 pub(crate) fn global_rate_limit_layer(
     requests_per_minute: u32,
 ) -> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
     governor_layer(requests_per_minute.max(1))
+}
+
+pub(crate) fn global_rate_limit_headers_config(requests_per_minute: u32) -> RateLimitHeaderConfig {
+    RateLimitHeaderConfig::new(requests_per_minute, RATE_LIMIT_WINDOW_SECONDS)
 }
 
 pub(crate) fn cors_layer(base_url: &str) -> CorsLayer {
@@ -114,6 +138,56 @@ pub(crate) async fn enforce_upload_size(
     Ok(next.run(request).await)
 }
 
+pub(crate) async fn apply_rate_limit_headers(
+    State(config): State<RateLimitHeaderConfig>,
+    request: AxumRequest,
+    next: Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    let status = response.status();
+    let headers = response.headers_mut();
+
+    insert_header_if_absent(
+        headers,
+        "x-ratelimit-limit",
+        HeaderValue::from(config.limit.max(1)),
+    );
+
+    if let Some(remaining) = headers.get("x-ratelimit-remaining").cloned() {
+        insert_header_if_absent(headers, "x-ratelimit-remaining", remaining);
+    }
+
+    let retry_after_seconds = if status == StatusCode::TOO_MANY_REQUESTS {
+        retry_after_from_headers(headers)
+            .unwrap_or(config.window_seconds)
+            .max(1)
+    } else {
+        0
+    };
+
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        insert_header_if_absent(
+            headers,
+            header::RETRY_AFTER.as_str(),
+            HeaderValue::from(retry_after_seconds),
+        );
+    }
+
+    let reset_in = if status == StatusCode::TOO_MANY_REQUESTS {
+        retry_after_seconds
+    } else {
+        config.window_seconds
+    };
+    let reset_timestamp = unix_now().saturating_add(reset_in);
+    insert_header_if_absent(
+        headers,
+        "x-ratelimit-reset",
+        HeaderValue::from(reset_timestamp),
+    );
+
+    response
+}
+
 fn is_upload_request(request: &AxumRequest) -> bool {
     request.method() == Method::POST && request.uri().path() == UPLOAD_ROUTE
 }
@@ -123,6 +197,28 @@ fn put_static_header(headers: &mut HeaderMap, name: &'static str, value: &'stati
         HeaderName::from_static(name),
         HeaderValue::from_static(value),
     );
+}
+
+fn insert_header_if_absent(headers: &mut HeaderMap, name: &'static str, value: HeaderValue) {
+    let header_name = HeaderName::from_static(name);
+    if !headers.contains_key(&header_name) {
+        headers.insert(header_name, value);
+    }
+}
+
+fn retry_after_from_headers(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get("x-ratelimit-after")
+        .or_else(|| headers.get(header::RETRY_AFTER))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn unix_now() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(_) => 0,
+    }
 }
 
 fn cors_origin_from_base_url(base_url: &str) -> Result<HeaderValue, String> {
