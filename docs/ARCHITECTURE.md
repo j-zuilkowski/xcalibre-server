@@ -444,6 +444,145 @@ A typical agentic query: user question → agent calls `search_books` (filter by
 
 ---
 
+## Cross-Document Synthesis and Derivative Works
+
+Cross-document synthesis is a **first-class architectural goal**, not a side feature. The library is the corpus; the agent is the synthesizer. autolibre's role is to make retrieval precise enough that the agent can produce reliable, grounded derivative works.
+
+### What "Derivative Works" Means
+
+A derivative work is any agent-produced output that is grounded in one or more books in the library:
+
+| Derivative Type | Example | Source Material |
+|---|---|---|
+| **Runsheet / procedure** | "How to configure RMAN backup on Oracle Database Appliance" | Multiple Oracle admin guides |
+| **Comparative analysis** | "How do Kant and Mill differ on moral obligation?" | Two philosophy texts |
+| **Study guide** | "Key concepts from Chapter 5 of CLRS" | A textbook |
+| **Technical summary** | "What changed in PostgreSQL 16 vs 15?" | Two release note documents |
+| **Research synthesis** | "What does the literature say about X?" | Multiple papers/books on a topic |
+| **Cross-reference** | "Where is UNDO_RETENTION documented across all Oracle guides?" | An entire documentation set |
+
+This is why the `derive` feature (Phase 5) exists at the book level, and why the RAG surface is designed as a tool API rather than a chat interface — the agent orchestrating synthesis has full control over retrieval scope, ordering, and output format.
+
+### The Retrieval Precision Problem
+
+The single largest barrier to high-quality synthesis is retrieval precision. The current chapter-level retrieval model (`get_book_text?chapter=N`) returns units that are too large for precise synthesis:
+
+```
+Current: question → semantic_search → chapter (5,000–25,000 tokens) → agent synthesizes
+
+Target:  question → hybrid_search → procedure/section chunk (400–800 tokens, with heading path) → agent synthesizes
+```
+
+**Why chunk size matters:** An Oracle admin guide chapter on "Backup Configuration" contains 40+ distinct procedures. Retrieving the chapter returns all 40. The agent must re-read the entire chapter to find the 2 relevant procedures. With sub-chapter chunking, retrieval precision is exact — the agent receives only the procedures matching the query.
+
+**Why heading path matters:** Chunk-level retrieval without provenance produces hallucinations. A chunk tagged with its full heading path (`Oracle Admin Guide 19c > Part III > Chapter 12 > §12.3 Configure RMAN Retention`) gives the agent citable, verifiable source attribution.
+
+### The Planned Synthesis Architecture (Phase 15)
+
+Three layers, each building on the last:
+
+#### Layer 1 — Sub-Chapter Chunking (Phase 15.1)
+
+New API: `GET /books/:id/chunks?size=600&overlap=100`
+
+Returns overlapping passages instead of full chapters:
+```json
+[
+  {
+    "chunk_index": 0,
+    "heading_path": "Admin Guide > Part III > §12.3",
+    "text": "...",
+    "type": "procedure",        // procedure | reference | concept | example
+    "word_count": 312,
+    "starts_numbered_list": true
+  }
+]
+```
+
+**Procedural content awareness:** The chunker detects numbered list sequences (Steps 1, 2, 3...) and treats them as atomic units — a procedure is never split across chunk boundaries. This is critical for technical documentation where splitting a numbered sequence produces unusable fragments.
+
+Chunks are embedded at ingest and stored in `book_chunks` (replacing the current chapter-level `book_embeddings`). Retrieval operates at chunk level throughout.
+
+#### Layer 2 — Hybrid Retrieval + Reranking (Phase 15.2)
+
+Semantic search alone fails on technical terminology:
+- `ORA-01555` (Oracle error code) — embedding models map this poorly
+- `CONFIGURE RETENTION POLICY` (exact SQL syntax) — must match exactly
+- `srvctl add database` (an exact CLI command) — needs BM25, not cosine similarity
+
+**Hybrid scoring:** BM25 (existing FTS5 index) + cosine similarity (sqlite-vec), combined via Reciprocal Rank Fusion. The FTS5 index is already maintained by triggers; adding it to the retrieval path is a query-layer change only.
+
+**Cross-encoder reranking:** Top-50 candidates from hybrid search are reranked by a cross-encoder LLM call (the same LLM integration already in the app). Returns top-10 with rerank scores. Gated behind `llm.enabled` — falls back to hybrid-only scoring when LLM is disabled.
+
+New endpoint: `GET /api/v1/search/chunks?q=&book_ids[]=&type=procedure&limit=10`
+
+#### Layer 3 — Collections + Cross-Document Synthesis Tool (Phase 15.3)
+
+**Collections:** A `collections` table groups related books (e.g., "Oracle Database 19c Documentation Set" — 50+ guides). A single search query spans the entire collection:
+
+```
+GET /api/v1/collections/:id/search/chunks?q=configure+RMAN&type=procedure&limit=20
+```
+
+Results are ranked across all books in the collection simultaneously, with per-book provenance preserved.
+
+**`synthesize_procedure` MCP tool:** Accepts a query + collection (or list of book IDs) and returns a structured synthesis object:
+
+```json
+{
+  "query": "Configure RMAN backup policy on Oracle Database Appliance",
+  "format": "runsheet",
+  "sources": [
+    { "book": "Backup and Recovery Guide 19c", "section": "§8.3", "chunk_index": 142 },
+    { "book": "ODA Administration Guide", "section": "§12.1", "chunk_index": 89 }
+  ],
+  "output": {
+    "prerequisites": ["DBA role required", "Fast Recovery Area ≥ 3× DB size"],
+    "steps": [
+      { "step": 1, "action": "rman target /", "source_chunk": 142 },
+      { "step": 2, "action": "CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF 7 DAYS;", "source_chunk": 142 }
+    ],
+    "verification": ["LIST BACKUP SUMMARY — expect STATUS = A"],
+    "rollback": ["CONFIGURE RETENTION POLICY CLEAR;"]
+  }
+}
+```
+
+The agent receives a structured, citable runsheet grounded in the actual documentation set — not a hallucinated procedure.
+
+### Use Case: Technical Documentation Sets
+
+The architecture is designed to handle large documentation corpora, not just individual books:
+
+```
+Oracle Database 19c Documentation Set (50+ PDFs, ~30,000 pages)
+  ├── Ingested as a collection
+  ├── Chunked at section/procedure level (~180,000 chunks)
+  ├── Embedded and indexed (BM25 + vector)
+  └── Searchable as a unit via GET /collections/:id/search/chunks
+
+Agent query: "Procedure to resize an undo tablespace on ODA"
+  → hybrid search across all 50 guides simultaneously
+  → reranked by cross-encoder
+  → top 8 chunks from 3 guides returned
+  → agent synthesizes into a runsheet with §-level citations
+```
+
+This is equivalent to having a technical librarian who has read every page of every guide and can assemble a procedure from the relevant sections — with citations.
+
+### Connection to the `derive` Feature
+
+The existing `GET /books/:id/derive` endpoint (Phase 5) is single-book derivation: the server calls the LLM with one book's content and returns a derivative (summary, discussion questions, related titles).
+
+Cross-document synthesis is multi-book derivation where the **agent** orchestrates the LLM calls, not the server. The server's role is:
+1. Expose precise, chunk-level retrieval (what Phase 15 adds)
+2. Return structured provenance with every chunk
+3. Provide the `synthesize_procedure` MCP tool as a convenience wrapper for structured output
+
+The design explicitly separates **retrieval** (autolibre's responsibility) from **synthesis** (the agent's responsibility). This separation keeps the server stateless with respect to synthesis and lets any agent framework — LangGraph, smolagents, Claude, custom — use the retrieval surface.
+
+---
+
 ## LLM Integration (Graceful Degradation)
 
 Carried forward from current Python implementation. All constraints unchanged:
