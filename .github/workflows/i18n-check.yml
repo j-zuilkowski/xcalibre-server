@@ -1,0 +1,23 @@
+name: i18n Coverage
+
+on:
+  push:
+    paths:
+      - "apps/web/src/locales/**"
+      - "apps/web/public/locales/**"
+      - "scripts/check-translations.ts"
+  pull_request:
+    paths:
+      - "apps/web/src/locales/**"
+      - "apps/web/public/locales/**"
+
+jobs:
+  i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install -g tsx
+      - run: tsx scripts/check-translations.ts

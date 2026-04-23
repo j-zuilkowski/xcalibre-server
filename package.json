@@ -1,5 +1,5 @@
 {
-  "name": "calibre-web-rs",
+  "name": "autolibre",
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.33.0",
@@ -7,9 +7,11 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "check:i18n": "node --require tsx/cjs scripts/check-translations.ts"
   },
   "devDependencies": {
-    "turbo": "^2.3.0"
+    "turbo": "^2.3.0",
+    "tsx": "^4.20.6"
   }
 }

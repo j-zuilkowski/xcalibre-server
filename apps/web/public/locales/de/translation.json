@@ -321,6 +321,7 @@
     "job": "Job",
     "job_id": "Job ID",
     "jobs": "Jobs",
+    "scheduled_tasks": "Geplante Aufgaben",
     "kobo": "Kobo",
     "kobo_description": "Manage Kobo device sync and restrictions.",
     "kobo_devices": "Kobo devices",
