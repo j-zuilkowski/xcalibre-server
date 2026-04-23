@@ -172,6 +172,36 @@ export type ReadingProgressPatch = {
   percentage: number;
 };
 
+export type AnnotationType = "highlight" | "note" | "bookmark";
+
+export type AnnotationColor = "yellow" | "green" | "blue" | "pink";
+
+export type BookAnnotation = {
+  id: string;
+  user_id: string;
+  book_id: string;
+  type: AnnotationType;
+  cfi_range: string;
+  highlighted_text: string | null;
+  note: string | null;
+  color: AnnotationColor;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateBookAnnotationRequest = {
+  type: AnnotationType;
+  cfi_range: string;
+  highlighted_text?: string | null;
+  note?: string | null;
+  color?: AnnotationColor;
+};
+
+export type PatchBookAnnotationRequest = {
+  note?: string | null;
+  color?: AnnotationColor;
+};
+
 export type AdminUser = User & {
   last_login_at: string | null;
 };

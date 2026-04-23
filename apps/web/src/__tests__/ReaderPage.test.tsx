@@ -71,6 +71,7 @@ vi.mock("../features/reader/ComicReader", () => {
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getReadingProgressMock = vi.spyOn(apiClient, "getReadingProgress");
 const patchReadingProgressMock = vi.spyOn(apiClient, "patchReadingProgress");
+const listBookAnnotationsMock = vi.spyOn(apiClient, "listBookAnnotations");
 
 function makeBook(): Book {
   return {
@@ -168,10 +169,12 @@ describe("ReaderPage", () => {
     getBookMock.mockReset();
     getReadingProgressMock.mockReset();
     patchReadingProgressMock.mockReset();
+    listBookAnnotationsMock.mockReset();
     epubCallbacks.length = 0;
     getBookMock.mockResolvedValue(makeBook());
     getReadingProgressMock.mockResolvedValue(null);
     patchReadingProgressMock.mockResolvedValue(makeProgress());
+    listBookAnnotationsMock.mockResolvedValue([]);
 
     useAuthStore.setState({
       access_token: null,

@@ -1,7 +1,7 @@
 use crate::{
     db::queries::{
-        book_user_state as book_state_queries, books as book_queries,
-        download_history as download_history_queries, llm as llm_queries,
+        annotations as annotation_queries, book_user_state as book_state_queries,
+        books as book_queries, download_history as download_history_queries, llm as llm_queries,
     },
     ingest::{mobi_util, text as ingest_text},
     llm::classify_type::{classify_document_type, DocumentType},
@@ -13,7 +13,7 @@ use axum::{
     extract::{Extension, Multipart, Path, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use lettre::{
@@ -68,6 +68,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(get_reading_progress)
                 .patch(upsert_reading_progress)
                 .put(upsert_reading_progress),
+        )
+        .route(
+            "/api/v1/books/:id/annotations",
+            get(list_annotations).post(create_annotation),
+        )
+        .route(
+            "/api/v1/books/:id/annotations/:ann_id",
+            patch(patch_annotation).delete(delete_annotation),
         )
         .route(
             "/api/v1/reading-progress/:id",
@@ -265,6 +273,27 @@ struct ReadingProgressResponse {
     percentage: f64,
     updated_at: String,
     last_modified: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAnnotationRequest {
+    #[serde(rename = "type")]
+    annotation_type: String,
+    cfi_range: String,
+    #[serde(default)]
+    highlighted_text: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchAnnotationRequest {
+    #[serde(default)]
+    note: Option<Option<String>>,
+    #[serde(default)]
+    color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -555,6 +584,170 @@ async fn upsert_reading_progress(
     }))
 }
 
+async fn list_annotations(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+) -> Result<Json<Vec<annotation_queries::Annotation>>, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let annotations = annotation_queries::list_annotations(&state.db, &auth_user.user.id, &book_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(annotations))
+}
+
+async fn create_annotation(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<CreateAnnotationRequest>,
+) -> Result<(StatusCode, Json<annotation_queries::Annotation>), AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let annotation_type =
+        normalize_annotation_type(&payload.annotation_type).ok_or(AppError::BadRequest)?;
+    let color = normalize_annotation_color(payload.color.as_deref().unwrap_or("yellow"))
+        .ok_or(AppError::BadRequest)?;
+    let cfi_range = payload.cfi_range.trim();
+    if cfi_range.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let highlighted_text = normalize_optional_text(payload.highlighted_text);
+    let note = normalize_optional_text(payload.note);
+    validate_annotation_create_fields(
+        annotation_type,
+        highlighted_text.as_deref(),
+        note.as_deref(),
+    )?;
+
+    let created = annotation_queries::create_annotation(
+        &state.db,
+        annotation_queries::NewAnnotation {
+            user_id: auth_user.user.id.clone(),
+            book_id,
+            annotation_type: annotation_type.to_string(),
+            cfi_range: cfi_range.to_string(),
+            highlighted_text,
+            note,
+            color: color.to_string(),
+        },
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+async fn patch_annotation(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((book_id, annotation_id)): Path<(String, String)>,
+    Json(payload): Json<PatchAnnotationRequest>,
+) -> Result<Json<annotation_queries::Annotation>, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let Some(existing) = annotation_queries::get_annotation_by_id(&state.db, &annotation_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    if existing.book_id != book_id {
+        return Err(AppError::NotFound);
+    }
+
+    if existing.user_id != auth_user.user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    let color = match payload.color {
+        Some(value) => {
+            let normalized = normalize_annotation_color(&value).ok_or(AppError::BadRequest)?;
+            Some(normalized.to_string())
+        }
+        None => None,
+    };
+
+    let note_patch = payload
+        .note
+        .map(|value| value.and_then(|text| normalize_optional_text(Some(text))));
+
+    let updated = annotation_queries::update_annotation(
+        &state.db,
+        &annotation_id,
+        &auth_user.user.id,
+        annotation_queries::AnnotationPatch {
+            note: note_patch,
+            color,
+        },
+    )
+    .await
+    .map_err(|_| AppError::Internal)?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(updated))
+}
+
+async fn delete_annotation(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((book_id, annotation_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let Some(existing) = annotation_queries::get_annotation_by_id(&state.db, &annotation_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    if existing.book_id != book_id {
+        return Err(AppError::NotFound);
+    }
+
+    if existing.user_id != auth_user.user.id {
+        return Err(AppError::Forbidden);
+    }
+
+    let deleted =
+        annotation_queries::delete_annotation(&state.db, &annotation_id, &auth_user.user.id)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    if !deleted {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn list_custom_columns(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<book_queries::CustomColumn>>, AppError> {
@@ -782,6 +975,63 @@ async fn set_archive(
         .map_err(|_| AppError::Internal)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn normalize_annotation_type(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "highlight" => Some("highlight"),
+        "note" => Some("note"),
+        "bookmark" => Some("bookmark"),
+        _ => None,
+    }
+}
+
+fn normalize_annotation_color(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "yellow" => Some("yellow"),
+        "green" => Some("green"),
+        "blue" => Some("blue"),
+        "pink" => Some("pink"),
+        _ => None,
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn validate_annotation_create_fields(
+    annotation_type: &str,
+    highlighted_text: Option<&str>,
+    note: Option<&str>,
+) -> Result<(), AppError> {
+    match annotation_type {
+        "highlight" => {
+            if highlighted_text.is_none() || note.is_some() {
+                return Err(AppError::BadRequest);
+            }
+        }
+        "note" => {
+            if highlighted_text.is_none() || note.is_none() {
+                return Err(AppError::BadRequest);
+            }
+        }
+        "bookmark" => {
+            if note.is_some() {
+                return Err(AppError::BadRequest);
+            }
+        }
+        _ => return Err(AppError::BadRequest),
+    }
+
+    Ok(())
 }
 
 async fn resolve_progress_format_id(

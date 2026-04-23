@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AnnotationColor, BookAnnotation } from "@autolibre/shared";
 import { useAuthStore } from "../../lib/auth-store";
 import { apiClient } from "../../lib/api-client";
 import { useTranslation } from "react-i18next";
@@ -25,17 +26,46 @@ const DEFAULT_SETTINGS: EpubSettings = {
   theme: "light",
 };
 
+const ANNOTATION_COLORS: AnnotationColor[] = ["yellow", "green", "blue", "pink"];
+
 type TocItem = {
   id: string;
   label: string;
   href: string;
 };
 
+type SelectionMenuState = {
+  cfiRange: string;
+  highlightedText: string;
+  x: number;
+  y: number;
+  noteOpen: boolean;
+  noteText: string;
+};
+
+type AnnotationMenuState = {
+  annotationId: string;
+  x: number;
+  y: number;
+  editingNote: boolean;
+  noteDraft: string;
+};
+
 type EpubRendition = {
   display: (target?: string) => Promise<void>;
   next: () => Promise<void>;
   prev: () => Promise<void>;
-  on: (event: string, callback: (payload: any) => void) => void;
+  on: (event: string, callback: (...args: any[]) => void) => void;
+  annotations?: {
+    add?: (
+      type: string,
+      cfiRange: string,
+      data?: Record<string, unknown>,
+      callback?: ((...args: any[]) => void) | null,
+      className?: string,
+    ) => void;
+    remove?: (cfiRange: string, type?: string) => void;
+  };
   themes?: {
     default?: (styles: Record<string, unknown>) => void;
     fontSize?: (size: string) => void;
@@ -106,6 +136,112 @@ function clampProgress(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
+function clampOverlayCoordinates(x: number, y: number, container: HTMLDivElement | null): { x: number; y: number } {
+  if (!container) {
+    return { x, y };
+  }
+
+  const rect = container.getBoundingClientRect();
+  return {
+    x: Math.max(32, Math.min(rect.width - 32, x)),
+    y: Math.max(24, Math.min(rect.height - 24, y)),
+  };
+}
+
+function extractChapterToken(cfiRange: string): string | null {
+  const match = cfiRange.match(/\[([^\]]+)\]/);
+  if (!match || !match[1]) {
+    return null;
+  }
+  return match[1].toLowerCase();
+}
+
+function chapterLabelForAnnotation(cfiRange: string, tocItems: TocItem[]): string {
+  const token = extractChapterToken(cfiRange);
+  if (!token) {
+    return "Other";
+  }
+
+  const match = tocItems.find((item) => {
+    const itemId = item.id.toLowerCase();
+    const href = item.href.toLowerCase();
+    return itemId.includes(token) || href.includes(token);
+  });
+
+  return match?.label ?? "Other";
+}
+
+function sortAnnotations(annotations: BookAnnotation[]): BookAnnotation[] {
+  return [...annotations].sort((left, right) => {
+    const cfiSort = left.cfi_range.localeCompare(right.cfi_range);
+    if (cfiSort !== 0) {
+      return cfiSort;
+    }
+    return left.created_at.localeCompare(right.created_at);
+  });
+}
+
+function resolveSelectionMenuAnchor(
+  container: HTMLDivElement | null,
+  contents: any,
+): { x: number; y: number } {
+  if (!container) {
+    return { x: 200, y: 80 };
+  }
+
+  const iframeRect = container.querySelector("iframe")?.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+
+  const selection = contents?.window?.getSelection?.();
+  if (selection && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (Number.isFinite(rect.left) && Number.isFinite(rect.top)) {
+      const x = (iframeRect?.left ?? containerRect.left) + rect.left + rect.width / 2 - containerRect.left;
+      const y = (iframeRect?.top ?? containerRect.top) + rect.top - containerRect.top - 12;
+      return clampOverlayCoordinates(x, y, container);
+    }
+  }
+
+  return { x: containerRect.width / 2, y: 72 };
+}
+
+function resolveTooltipAnchor(
+  container: HTMLDivElement | null,
+  pointerEvent: any,
+): { x: number; y: number } {
+  if (!container) {
+    return { x: 220, y: 88 };
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  if (typeof pointerEvent?.clientX === "number" && typeof pointerEvent?.clientY === "number") {
+    return clampOverlayCoordinates(
+      pointerEvent.clientX - containerRect.left,
+      pointerEvent.clientY - containerRect.top - 8,
+      container,
+    );
+  }
+
+  return { x: containerRect.width / 2, y: 84 };
+}
+
+function annotationPreview(annotation: BookAnnotation): string {
+  if (annotation.type === "bookmark") {
+    return "Bookmark";
+  }
+
+  if (annotation.note && annotation.note.trim().length > 0) {
+    return annotation.note;
+  }
+
+  if (annotation.highlighted_text && annotation.highlighted_text.trim().length > 0) {
+    return annotation.highlighted_text;
+  }
+
+  return annotation.cfi_range;
+}
+
 export function EpubReader({
   book,
   format,
@@ -117,15 +253,25 @@ export function EpubReader({
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const renditionRef = useRef<EpubRendition | null>(null);
+  const annotationsRef = useRef<BookAnnotation[]>([]);
   const [engineUnavailable, setEngineUnavailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
+  const [tocTab, setTocTab] = useState<"chapters" | "annotations">("chapters");
   const [progress, setProgress] = useState(initialProgress?.percentage ?? 0);
   const [tocItems, setTocItems] = useState<TocItem[]>([]);
+  const [annotations, setAnnotations] = useState<BookAnnotation[]>([]);
+  const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(null);
+  const [annotationMenu, setAnnotationMenu] = useState<AnnotationMenuState | null>(null);
+  const [annotationMutationPending, setAnnotationMutationPending] = useState(false);
   const { toolbarVisible, showToolbar } = useReaderToolbar();
 
   const [settings, setSettings] = useState<EpubSettings>(() => readSettings(user?.id ?? null));
   const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
 
   useEffect(() => {
     setProgress(initialProgress?.percentage ?? 0);
@@ -160,9 +306,61 @@ export function EpubReader({
         color: palette.text,
         "background-color": palette.background,
       },
+      ".annotation-yellow": {
+        background: "rgba(255, 235, 59, 0.4)",
+      },
+      ".annotation-green": {
+        background: "rgba(76, 175, 80, 0.3)",
+      },
+      ".annotation-blue": {
+        background: "rgba(33, 150, 243, 0.3)",
+      },
+      ".annotation-pink": {
+        background: "rgba(233, 30, 99, 0.3)",
+      },
     });
 
     rendition.themes?.fontSize?.(`${nextSettings.fontSize}px`);
+  }, []);
+
+  const renderAnnotationHighlight = useCallback((rendition: EpubRendition, annotation: BookAnnotation) => {
+    if (annotation.type === "bookmark") {
+      return;
+    }
+
+    rendition.annotations?.add?.(
+      "highlight",
+      annotation.cfi_range,
+      {
+        id: annotation.id,
+        color: annotation.color,
+        note: annotation.note,
+        type: annotation.type,
+      },
+      null,
+      `annotation-${annotation.color}`,
+    );
+  }, []);
+
+  const removeAnnotationHighlight = useCallback((rendition: EpubRendition, annotation: BookAnnotation) => {
+    if (annotation.type === "bookmark") {
+      return;
+    }
+
+    rendition.annotations?.remove?.(annotation.cfi_range, "highlight");
+  }, []);
+
+  const upsertAnnotation = useCallback((annotation: BookAnnotation) => {
+    setAnnotations((previous) => {
+      const next = previous.some((entry) => entry.id === annotation.id)
+        ? previous.map((entry) => (entry.id === annotation.id ? annotation : entry))
+        : [...previous, annotation];
+      return sortAnnotations(next);
+    });
+  }, []);
+
+  const removeAnnotation = useCallback((annotationId: string) => {
+    setAnnotations((previous) => previous.filter((entry) => entry.id !== annotationId));
   }, []);
 
   useEffect(() => {
@@ -195,9 +393,6 @@ export function EpubReader({
         renditionRef.current = rendition;
         applyReaderTheme(rendition, settingsRef.current);
 
-        const startCfi = initialProgress?.cfi ?? undefined;
-        await rendition.display(startCfi);
-
         rendition.on("relocated", (location: any) => {
           const nextPercentage = clampProgress(Number((location?.start?.percentage ?? 0) * 100));
           const nextCfi = (location?.start?.cfi as string | undefined) ?? null;
@@ -205,19 +400,76 @@ export function EpubReader({
           onProgressChange({ percentage: nextPercentage, cfi: nextCfi, page: null });
         });
 
+        rendition.on("selected", (cfiRange: string, contents: any) => {
+          if (typeof cfiRange !== "string" || cfiRange.trim().length === 0) {
+            return;
+          }
+
+          const selectedText = String(contents?.window?.getSelection?.()?.toString?.() ?? "").trim();
+          if (!selectedText) {
+            return;
+          }
+
+          const anchor = resolveSelectionMenuAnchor(containerRef.current, contents);
+          setAnnotationMenu(null);
+          setSelectionMenu({
+            cfiRange,
+            highlightedText: selectedText,
+            x: anchor.x,
+            y: anchor.y,
+            noteOpen: false,
+            noteText: "",
+          });
+        });
+
+        rendition.on("markClicked", (cfiRange: string, data: any, _contents: any, pointerEvent: any) => {
+          const annotationId = typeof data?.id === "string" ? data.id : null;
+          const targetAnnotation = annotationId
+            ? annotationsRef.current.find((entry) => entry.id === annotationId)
+            : annotationsRef.current.find((entry) => entry.cfi_range === cfiRange);
+
+          if (!targetAnnotation) {
+            return;
+          }
+
+          const anchor = resolveTooltipAnchor(containerRef.current, pointerEvent);
+          setSelectionMenu(null);
+          setAnnotationMenu({
+            annotationId: targetAnnotation.id,
+            x: anchor.x,
+            y: anchor.y,
+            editingNote: false,
+            noteDraft: targetAnnotation.note ?? "",
+          });
+        });
+
+        const startCfi = initialProgress?.cfi ?? undefined;
+        await rendition.display(startCfi);
+
+        let nextToc: TocItem[] = [];
         try {
           const navigation = await epubBook.loaded?.navigation;
-          if (!cancelled) {
-            const nextToc = (navigation?.toc ?? []).map((entry, index) => ({
-              id: entry.id ?? `${index}`,
-              label: entry.label ?? `Chapter ${index + 1}`,
-              href: entry.href ?? "",
-            }));
-            setTocItems(nextToc);
-          }
+          nextToc = (navigation?.toc ?? []).map((entry, index) => ({
+            id: entry.id ?? `${index}`,
+            label: entry.label ?? `Chapter ${index + 1}`,
+            href: entry.href ?? "",
+          }));
         } catch {
-          if (!cancelled) {
-            setTocItems([]);
+          nextToc = [];
+        }
+
+        let nextAnnotations: BookAnnotation[] = [];
+        try {
+          nextAnnotations = sortAnnotations(await apiClient.listBookAnnotations(book.id));
+        } catch {
+          nextAnnotations = [];
+        }
+
+        if (!cancelled) {
+          setTocItems(nextToc);
+          setAnnotations(nextAnnotations);
+          for (const annotation of nextAnnotations) {
+            renderAnnotationHighlight(rendition, annotation);
           }
         }
       } catch {
@@ -234,7 +486,14 @@ export function EpubReader({
       renditionRef.current?.destroy?.();
       renditionRef.current = null;
     };
-  }, [applyReaderTheme, initialProgress?.cfi, onProgressChange, resolvedStreamUrl]);
+  }, [
+    applyReaderTheme,
+    book.id,
+    initialProgress?.cfi,
+    onProgressChange,
+    renderAnnotationHighlight,
+    resolvedStreamUrl,
+  ]);
 
   useEffect(() => {
     if (!renditionRef.current) {
@@ -288,6 +547,187 @@ export function EpubReader({
     };
   }, [goNext, goPrevious]);
 
+  const annotationsByChapter = useMemo(() => {
+    const chapterOrder = new Map<string, number>();
+    tocItems.forEach((item, index) => {
+      chapterOrder.set(item.label, index);
+    });
+
+    const grouped = new Map<string, BookAnnotation[]>();
+    for (const annotation of annotations) {
+      const chapter = chapterLabelForAnnotation(annotation.cfi_range, tocItems);
+      const existing = grouped.get(chapter) ?? [];
+      existing.push(annotation);
+      grouped.set(chapter, existing);
+    }
+
+    return Array.from(grouped.entries())
+      .sort(([left], [right]) => {
+        const leftOrder = chapterOrder.get(left);
+        const rightOrder = chapterOrder.get(right);
+        if (leftOrder !== undefined && rightOrder !== undefined) {
+          return leftOrder - rightOrder;
+        }
+        if (leftOrder !== undefined) {
+          return -1;
+        }
+        if (rightOrder !== undefined) {
+          return 1;
+        }
+        return left.localeCompare(right);
+      })
+      .map(([chapter, items]) => ({
+        chapter,
+        items: sortAnnotations(items),
+      }));
+  }, [annotations, tocItems]);
+
+  const selectedAnnotation = useMemo(() => {
+    if (!annotationMenu) {
+      return null;
+    }
+
+    return annotations.find((entry) => entry.id === annotationMenu.annotationId) ?? null;
+  }, [annotationMenu, annotations]);
+
+  const createAnnotationFromSelection = useCallback(
+    async (payload: {
+      type: "highlight" | "note" | "bookmark";
+      cfi_range: string;
+      highlighted_text?: string | null;
+      note?: string | null;
+      color?: AnnotationColor;
+    }) => {
+      setAnnotationMutationPending(true);
+      try {
+        const created = await apiClient.createBookAnnotation(book.id, payload);
+        if (renditionRef.current) {
+          renderAnnotationHighlight(renditionRef.current, created);
+        }
+        upsertAnnotation(created);
+      } finally {
+        setAnnotationMutationPending(false);
+      }
+    },
+    [book.id, renderAnnotationHighlight, upsertAnnotation],
+  );
+
+  const handleSelectionColorClick = useCallback(
+    async (color: AnnotationColor) => {
+      if (!selectionMenu) {
+        return;
+      }
+
+      await createAnnotationFromSelection({
+        type: "highlight",
+        cfi_range: selectionMenu.cfiRange,
+        highlighted_text: selectionMenu.highlightedText,
+        note: null,
+        color,
+      });
+      setSelectionMenu(null);
+    },
+    [createAnnotationFromSelection, selectionMenu],
+  );
+
+  const handleSelectionNoteSubmit = useCallback(async () => {
+    if (!selectionMenu) {
+      return;
+    }
+
+    const note = selectionMenu.noteText.trim();
+    if (!note) {
+      return;
+    }
+
+    await createAnnotationFromSelection({
+      type: "note",
+      cfi_range: selectionMenu.cfiRange,
+      highlighted_text: selectionMenu.highlightedText,
+      note,
+      color: "yellow",
+    });
+    setSelectionMenu(null);
+  }, [createAnnotationFromSelection, selectionMenu]);
+
+  const handleSelectionBookmark = useCallback(async () => {
+    if (!selectionMenu) {
+      return;
+    }
+
+    await createAnnotationFromSelection({
+      type: "bookmark",
+      cfi_range: selectionMenu.cfiRange,
+      highlighted_text: null,
+      note: null,
+      color: "yellow",
+    });
+    setSelectionMenu(null);
+  }, [createAnnotationFromSelection, selectionMenu]);
+
+  const handleAnnotationColorPatch = useCallback(
+    async (annotation: BookAnnotation, color: AnnotationColor) => {
+      setAnnotationMutationPending(true);
+      try {
+        const updated = await apiClient.patchBookAnnotation(book.id, annotation.id, { color });
+        if (renditionRef.current) {
+          removeAnnotationHighlight(renditionRef.current, annotation);
+          renderAnnotationHighlight(renditionRef.current, updated);
+        }
+        upsertAnnotation(updated);
+      } finally {
+        setAnnotationMutationPending(false);
+      }
+    },
+    [book.id, removeAnnotationHighlight, renderAnnotationHighlight, upsertAnnotation],
+  );
+
+  const handleAnnotationNotePatch = useCallback(
+    async (annotation: BookAnnotation, note: string) => {
+      setAnnotationMutationPending(true);
+      try {
+        const updated = await apiClient.patchBookAnnotation(book.id, annotation.id, {
+          note: note.trim() || null,
+        });
+        if (renditionRef.current) {
+          removeAnnotationHighlight(renditionRef.current, annotation);
+          renderAnnotationHighlight(renditionRef.current, updated);
+        }
+        upsertAnnotation(updated);
+        setAnnotationMenu((previous) => {
+          if (!previous) {
+            return previous;
+          }
+          return {
+            ...previous,
+            editingNote: false,
+            noteDraft: updated.note ?? "",
+          };
+        });
+      } finally {
+        setAnnotationMutationPending(false);
+      }
+    },
+    [book.id, removeAnnotationHighlight, renderAnnotationHighlight, upsertAnnotation],
+  );
+
+  const handleAnnotationDelete = useCallback(
+    async (annotation: BookAnnotation) => {
+      setAnnotationMutationPending(true);
+      try {
+        await apiClient.deleteBookAnnotation(book.id, annotation.id);
+        if (renditionRef.current) {
+          removeAnnotationHighlight(renditionRef.current, annotation);
+        }
+        removeAnnotation(annotation.id);
+        setAnnotationMenu(null);
+      } finally {
+        setAnnotationMutationPending(false);
+      }
+    },
+    [book.id, removeAnnotation, removeAnnotationHighlight],
+  );
+
   const progressLabel = `${Math.round(progress)}%`;
 
   return (
@@ -302,6 +742,239 @@ export function EpubReader({
       {engineUnavailable ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-zinc-400">
           {t("reader.epub_rendering_unavailable")}
+        </div>
+      ) : null}
+
+      {selectionMenu ? (
+        <div
+          className="absolute z-30 min-w-[240px] rounded border border-zinc-700 bg-zinc-900/95 p-3 text-xs text-zinc-100 shadow-xl"
+          style={{
+            left: selectionMenu.x,
+            top: selectionMenu.y,
+            transform: "translate(-50%, -100%)",
+          }}
+        >
+          <div className="mb-2 flex items-center gap-2">
+            {ANNOTATION_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                aria-label={`Create ${color} highlight`}
+                disabled={annotationMutationPending}
+                onClick={() => void handleSelectionColorClick(color)}
+                className="h-5 w-5 rounded-full border border-zinc-300/60"
+                style={{
+                  backgroundColor:
+                    color === "yellow"
+                      ? "rgba(255, 235, 59, 0.85)"
+                      : color === "green"
+                        ? "rgba(76, 175, 80, 0.8)"
+                        : color === "blue"
+                          ? "rgba(33, 150, 243, 0.8)"
+                          : "rgba(233, 30, 99, 0.8)",
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              disabled={annotationMutationPending}
+              className="rounded border border-zinc-600 px-2 py-1 text-zinc-200"
+              onClick={() =>
+                setSelectionMenu((previous) =>
+                  previous
+                    ? {
+                        ...previous,
+                        noteOpen: !previous.noteOpen,
+                      }
+                    : previous,
+                )
+              }
+            >
+              Note
+            </button>
+            <button
+              type="button"
+              disabled={annotationMutationPending}
+              className="rounded border border-zinc-600 px-2 py-1 text-zinc-200"
+              onClick={() => void handleSelectionBookmark()}
+            >
+              Bookmark
+            </button>
+            <button
+              type="button"
+              className="rounded border border-zinc-700 px-2 py-1 text-zinc-300"
+              onClick={() => setSelectionMenu(null)}
+            >
+              X
+            </button>
+          </div>
+
+          {selectionMenu.noteOpen ? (
+            <form
+              className="space-y-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleSelectionNoteSubmit();
+              }}
+            >
+              <input
+                value={selectionMenu.noteText}
+                onChange={(event) =>
+                  setSelectionMenu((previous) =>
+                    previous
+                      ? {
+                          ...previous,
+                          noteText: event.target.value,
+                        }
+                      : previous,
+                  )
+                }
+                className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100"
+                placeholder="Add a note"
+                maxLength={500}
+              />
+              <button
+                type="submit"
+                disabled={annotationMutationPending || selectionMenu.noteText.trim().length === 0}
+                className="rounded border border-zinc-500 px-2 py-1 text-zinc-100"
+              >
+                Save note
+              </button>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
+
+      {annotationMenu && selectedAnnotation ? (
+        <div
+          className="absolute z-30 w-[260px] rounded border border-zinc-700 bg-zinc-900/95 p-3 text-xs text-zinc-100 shadow-xl"
+          style={{
+            left: annotationMenu.x,
+            top: annotationMenu.y,
+            transform: "translate(-50%, -100%)",
+          }}
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <p className="font-semibold uppercase tracking-wide text-zinc-300">{selectedAnnotation.type}</p>
+            <button
+              type="button"
+              className="rounded border border-zinc-700 px-2 py-1 text-zinc-300"
+              onClick={() => setAnnotationMenu(null)}
+            >
+              X
+            </button>
+          </div>
+
+          {selectedAnnotation.note ? (
+            <p className="mb-2 rounded bg-zinc-800 px-2 py-1 text-zinc-200">{selectedAnnotation.note}</p>
+          ) : null}
+
+          <div className="mb-2 flex items-center gap-2">
+            {ANNOTATION_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                aria-label={`Set ${color} annotation color`}
+                disabled={annotationMutationPending}
+                onClick={() => void handleAnnotationColorPatch(selectedAnnotation, color)}
+                className={`h-5 w-5 rounded-full border ${
+                  selectedAnnotation.color === color ? "border-white" : "border-zinc-500"
+                }`}
+                style={{
+                  backgroundColor:
+                    color === "yellow"
+                      ? "rgba(255, 235, 59, 0.85)"
+                      : color === "green"
+                        ? "rgba(76, 175, 80, 0.8)"
+                        : color === "blue"
+                          ? "rgba(33, 150, 243, 0.8)"
+                          : "rgba(233, 30, 99, 0.8)",
+                }}
+              />
+            ))}
+          </div>
+
+          {selectedAnnotation.type === "note" ? (
+            annotationMenu.editingNote ? (
+              <form
+                className="mb-2 space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleAnnotationNotePatch(selectedAnnotation, annotationMenu.noteDraft);
+                }}
+              >
+                <input
+                  value={annotationMenu.noteDraft}
+                  maxLength={500}
+                  onChange={(event) =>
+                    setAnnotationMenu((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            noteDraft: event.target.value,
+                          }
+                        : previous,
+                    )
+                  }
+                  className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100"
+                  placeholder="Edit note"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={annotationMutationPending}
+                    className="rounded border border-zinc-500 px-2 py-1 text-zinc-100"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-zinc-700 px-2 py-1 text-zinc-300"
+                    onClick={() =>
+                      setAnnotationMenu((previous) =>
+                        previous
+                          ? {
+                              ...previous,
+                              editingNote: false,
+                              noteDraft: selectedAnnotation.note ?? "",
+                            }
+                          : previous,
+                      )
+                    }
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                disabled={annotationMutationPending}
+                className="mb-2 rounded border border-zinc-600 px-2 py-1 text-zinc-200"
+                onClick={() =>
+                  setAnnotationMenu((previous) =>
+                    previous
+                      ? {
+                          ...previous,
+                          editingNote: true,
+                        }
+                      : previous,
+                  )
+                }
+              >
+                Edit note
+              </button>
+            )
+          ) : null}
+
+          <button
+            type="button"
+            disabled={annotationMutationPending}
+            className="rounded border border-red-500/70 px-2 py-1 text-red-300"
+            onClick={() => void handleAnnotationDelete(selectedAnnotation)}
+          >
+            Delete
+          </button>
         </div>
       ) : null}
 
@@ -442,28 +1115,82 @@ export function EpubReader({
             <SheetTitle>{t("reader.table_of_contents")}</SheetTitle>
           </SheetHeader>
 
-          <div className="p-5 text-sm">
-            {tocItems.length > 0 ? (
-              <ul className="space-y-2">
-                {tocItems.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className="text-left text-zinc-200 hover:text-white"
-                      onClick={() => {
-                        if (item.href && renditionRef.current) {
-                          void renditionRef.current.display(item.href);
-                        }
-                        setTocOpen(false);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  </li>
+          <div className="space-y-4 p-5 text-sm">
+            <div className="inline-flex rounded border border-zinc-700 p-1">
+              <button
+                type="button"
+                className={`rounded px-3 py-1 text-xs ${
+                  tocTab === "chapters" ? "bg-zinc-700 text-white" : "text-zinc-300"
+                }`}
+                onClick={() => setTocTab("chapters")}
+              >
+                Chapters
+              </button>
+              <button
+                type="button"
+                className={`rounded px-3 py-1 text-xs ${
+                  tocTab === "annotations" ? "bg-zinc-700 text-white" : "text-zinc-300"
+                }`}
+                onClick={() => setTocTab("annotations")}
+              >
+                Annotations
+              </button>
+            </div>
+
+            {tocTab === "chapters" ? (
+              tocItems.length > 0 ? (
+                <ul className="space-y-2">
+                  {tocItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="text-left text-zinc-200 hover:text-white"
+                        onClick={() => {
+                          if (item.href && renditionRef.current) {
+                            void renditionRef.current.display(item.href);
+                          }
+                          setTocOpen(false);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-zinc-400">{t("reader.no_table_of_contents")}</p>
+              )
+            ) : annotationsByChapter.length > 0 ? (
+              <div className="space-y-4">
+                {annotationsByChapter.map((group) => (
+                  <div key={group.chapter}>
+                    <p className="mb-2 text-xs uppercase tracking-wide text-zinc-400">{group.chapter}</p>
+                    <ul className="space-y-2">
+                      {group.items.map((annotation) => (
+                        <li key={annotation.id}>
+                          <button
+                            type="button"
+                            className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-2 text-left text-zinc-200 hover:border-zinc-600"
+                            onClick={() => {
+                              if (renditionRef.current) {
+                                void renditionRef.current.display(annotation.cfi_range);
+                              }
+                              setTocOpen(false);
+                            }}
+                          >
+                            <p className="truncate text-xs text-zinc-100">{annotationPreview(annotation)}</p>
+                            <p className="mt-1 text-[10px] uppercase text-zinc-400">
+                              {annotation.type} · {annotation.color}
+                            </p>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </ul>
+              </div>
             ) : (
-              <p className="text-zinc-400">{t("reader.no_table_of_contents")}</p>
+              <p className="text-zinc-400">No annotations yet.</p>
             )}
           </div>
         </SheetContent>

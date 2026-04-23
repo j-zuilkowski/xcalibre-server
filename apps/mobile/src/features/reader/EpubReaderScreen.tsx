@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { useTranslation } from "react-i18next";
-import type { ApiClient as CalibreClient } from "@autolibre/shared";
+import type { ApiClient as CalibreClient, BookAnnotation } from "@autolibre/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
 
@@ -110,6 +110,7 @@ export function EpubReaderScreen({
   const [loadingProgress, setLoadingProgress] = useState(true);
   const [fontFamily, setFontFamily] = useState<"Inter" | "Literata">("Inter");
   const [nightMode, setNightMode] = useState(false);
+  const [annotations, setAnnotations] = useState<BookAnnotation[]>([]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<{ cfi?: string; percentage: number } | null>(null);
@@ -143,6 +144,27 @@ export function EpubReaderScreen({
         setInitialCfi(progress.cfi);
       }
       setLoadingProgress(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, client]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const remoteAnnotations = await client.listBookAnnotations(bookId);
+        if (!cancelled) {
+          setAnnotations(remoteAnnotations);
+        }
+      } catch {
+        if (!cancelled) {
+          setAnnotations([]);
+        }
+      }
     })();
 
     return () => {
@@ -213,6 +235,21 @@ export function EpubReaderScreen({
     void SecureStore.setItemAsync(NIGHT_KEY, next ? "1" : "0");
   };
 
+  const rendererHighlights = useMemo(
+    () =>
+      annotations
+        .filter((annotation) => annotation.type !== "bookmark")
+        .map((annotation) => ({
+          id: annotation.id,
+          cfiRange: annotation.cfi_range,
+          cfi: annotation.cfi_range,
+          color: annotation.color,
+          note: annotation.note,
+          type: annotation.type,
+        })),
+    [annotations],
+  );
+
   return (
     <View style={[styles.screen, nightMode ? styles.screenNight : null]}>
       <StatusBar hidden animated />
@@ -237,6 +274,9 @@ export function EpubReaderScreen({
           colorMode={nightMode ? "night" : "day"}
           font={fontFamily}
           fontFamily={fontFamily}
+          // TODO Phase 14: annotation creation on mobile
+          annotations={rendererHighlights}
+          highlights={rendererHighlights}
           swipeEnabled
           onLocationChange={handleLocationChange}
           onRelocated={handleLocationChange}

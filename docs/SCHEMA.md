@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Database Schema
 
 _Status: Current_
-_Last updated: 2026-04-22_
+_Last updated: 2026-04-23_
 
 ---
 
@@ -24,6 +24,7 @@ libraries
   │      │
   │      ├── book_tags ─── tags
   │      ├── book_user_state ─ users
+  │      ├── book_annotations ─ users
   │      ├── download_history ─ users
   │      ├── user_tag_restrictions ─ users
   │      ├── formats
@@ -400,6 +401,30 @@ CREATE INDEX idx_progress_book ON reading_progress(book_id);
 
 ---
 
+### `book_annotations`
+
+Per-user reader annotations for epub highlights, notes, and bookmarks.
+
+```sql
+CREATE TABLE book_annotations (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    book_id          TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    type             TEXT NOT NULL CHECK(type IN ('highlight', 'note', 'bookmark')),
+    cfi_range        TEXT NOT NULL,
+    highlighted_text TEXT,
+    note             TEXT,
+    color            TEXT NOT NULL DEFAULT 'yellow'
+                     CHECK(color IN ('yellow', 'green', 'blue', 'pink')),
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX idx_annotations_user_book ON book_annotations(user_id, book_id);
+```
+
+---
+
 ### `custom_columns`
 
 Imported from Calibre. Schema varies per library — flagged for manual review during migration.
@@ -769,6 +794,7 @@ All foreign keys are indexed. Additional indexes on high-query-frequency columns
 | `book_tags` | `confirmed = 0` | Pending LLM suggestion badge (SQLite partial index) |
 | `identifiers` | `value` | ISBN duplicate detection on ingest |
 | `reading_progress` | `user_id` | Per-user progress queries |
+| `book_annotations` | `user_id, book_id` | Reader annotation queries in epub view |
 | `llm_jobs` | `status` | Job queue polling |
 | `refresh_tokens` | `token_hash` | Auth token lookup on every request |
 | `api_tokens` | `token_hash` | MCP / Kobo token lookup |
@@ -803,7 +829,7 @@ covers/
 
 ## Table Count
 
-The schema has **33 tables** across 14 migration files:
+The schema has **34 tables** across 15 migration files:
 
 | # | Table | Migration |
 |---|---|---|
@@ -839,7 +865,8 @@ The schema has **33 tables** across 14 migration files:
 | 30 | `user_tag_restrictions` | 0012 |
 | 31 | `scheduled_tasks` | 0013 |
 | 32 | `totp_backup_codes` | 0014 |
-| 33 | `users.totp_secret / totp_enabled` (columns) | 0014 |
+| 33 | `book_annotations` | 0015 |
+| 34 | `users.totp_secret / totp_enabled` (columns) | 0014 |
 
 ## Open Schema Questions
 

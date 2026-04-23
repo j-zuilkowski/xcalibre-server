@@ -10,6 +10,7 @@ import type {
   BulkImportRequest,
   BulkImportResponse,
   Book,
+  BookAnnotation,
   BookChapters,
   MetadataLookupResponse,
   MergeTagResponse,
@@ -43,6 +44,8 @@ import type {
   TagLookupItem,
   ReadingProgress,
   ReadingProgressPatch,
+  CreateBookAnnotationRequest,
+  PatchBookAnnotationRequest,
   SystemStats,
   Role,
   RefreshResponse,
@@ -477,6 +480,40 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
+  }
+
+  async listBookAnnotations(bookId: string): Promise<BookAnnotation[]> {
+    return this.requestJson<BookAnnotation[]>(`/api/v1/books/${encodeURIComponent(bookId)}/annotations`);
+  }
+
+  async createBookAnnotation(bookId: string, payload: CreateBookAnnotationRequest): Promise<BookAnnotation> {
+    return this.requestJson<BookAnnotation>(`/api/v1/books/${encodeURIComponent(bookId)}/annotations`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async patchBookAnnotation(
+    bookId: string,
+    annotationId: string,
+    payload: PatchBookAnnotationRequest,
+  ): Promise<BookAnnotation> {
+    return this.requestJson<BookAnnotation>(
+      `/api/v1/books/${encodeURIComponent(bookId)}/annotations/${encodeURIComponent(annotationId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  async deleteBookAnnotation(bookId: string, annotationId: string): Promise<void> {
+    await this.requestJson<void>(
+      `/api/v1/books/${encodeURIComponent(bookId)}/annotations/${encodeURIComponent(annotationId)}`,
+      {
+        method: "DELETE",
+      },
+    );
   }
 
   async listUsers(): Promise<AdminUser[]> {
