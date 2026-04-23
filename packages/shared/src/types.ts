@@ -42,6 +42,24 @@ export type TagLookupItem = {
   name: string;
 };
 
+export type TagSource = "manual" | "llm" | "calibre_import";
+
+export type AdminTag = {
+  id: string;
+  name: string;
+  source: TagSource;
+};
+
+export type AdminTagWithCount = AdminTag & {
+  book_count: number;
+  confirmed_count: number;
+};
+
+export type MergeTagResponse = {
+  merged_book_count: number;
+  target_tag: AdminTag;
+};
+
 export type UserTagRestriction = {
   user_id: string;
   tag_id: string;
@@ -349,7 +367,9 @@ export type BookSummary = Pick<
   | "rating"
   | "document_type"
   | "last_modified"
->;
+> & {
+  progress_percentage?: number;
+};
 
 export type PaginatedResponse<T> = {
   items: T[];

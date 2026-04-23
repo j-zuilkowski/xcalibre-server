@@ -67,7 +67,12 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(list_libraries).post(create_library),
         )
         .route("/api/v1/admin/libraries/:id", delete(delete_library))
-        .route("/api/v1/admin/tags", get(search_tags))
+        .route("/api/v1/admin/tags", get(list_tags))
+        .route(
+            "/api/v1/admin/tags/:id",
+            patch(rename_tag).delete(delete_tag),
+        )
+        .route("/api/v1/admin/tags/:id/merge", post(merge_tag))
         .route(
             "/api/v1/admin/users/:id/tag-restrictions",
             get(list_user_tag_restrictions).post(set_user_tag_restriction),
@@ -198,8 +203,10 @@ struct CreateLibraryRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct TagSearchQuery {
+struct ListTagsQuery {
     q: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
     limit: Option<u32>,
 }
 
@@ -223,6 +230,32 @@ struct LibraryResponse {
 struct TagResponse {
     id: String,
     name: String,
+    source: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TagWithCountResponse {
+    id: String,
+    name: String,
+    source: String,
+    book_count: i64,
+    confirmed_count: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameTagRequest {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MergeTagRequest {
+    into_tag_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MergeTagResponse {
+    merged_book_count: usize,
+    target_tag: TagResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,27 +316,108 @@ struct GitHubRelease {
 
 static UPDATE_CHECK_CACHE: OnceLock<RwLock<Option<CachedUpdateCheck>>> = OnceLock::new();
 
-async fn search_tags(
+async fn list_tags(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
-    Query(query): Query<TagSearchQuery>,
-) -> Result<Json<Vec<TagResponse>>, AppError> {
+    Query(query): Query<ListTagsQuery>,
+) -> Result<Json<PaginatedResponse<TagWithCountResponse>>, AppError> {
     ensure_admin(&state, &auth_user.user.id).await?;
-    let tags = tag_queries::search_tags(
-        &state.db,
-        query.q.as_deref(),
-        query.limit.unwrap_or(20) as i64,
-    )
-    .await
-    .map_err(|_| AppError::Internal)?;
-    Ok(Json(
-        tags.into_iter()
-            .map(|tag| TagResponse {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query
+        .page_size
+        .unwrap_or(query.limit.unwrap_or(20))
+        .clamp(1, 100);
+    let (items, total) =
+        tag_queries::list_tags_with_counts(&state.db, query.q.as_deref(), page, page_size)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    Ok(Json(PaginatedResponse {
+        items: items
+            .into_iter()
+            .map(|tag| TagWithCountResponse {
                 id: tag.id,
                 name: tag.name,
+                source: tag.source,
+                book_count: tag.book_count,
+                confirmed_count: tag.confirmed_count,
             })
             .collect(),
-    ))
+        total,
+        page,
+        page_size,
+    }))
+}
+
+async fn rename_tag(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(tag_id): Path<String>,
+    Json(payload): Json<RenameTagRequest>,
+) -> Result<Response, Response> {
+    ensure_admin(&state, &auth_user.user.id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+
+    let new_name = payload.name.trim();
+    if new_name.is_empty() {
+        return Err(AppError::BadRequest.into_response());
+    }
+
+    match tag_queries::rename_tag(&state.db, &tag_id, new_name).await {
+        Ok(tag) => Ok(Json(TagResponse {
+            id: tag.id,
+            name: tag.name,
+            source: tag.source,
+        })
+        .into_response()),
+        Err(AppError::Conflict) => Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "tag_name_conflict",
+                "message": "tag name already exists"
+            })),
+        )
+            .into_response()),
+        Err(err) => Err(err.into_response()),
+    }
+}
+
+async fn delete_tag(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(tag_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+    tag_queries::delete_tag(&state.db, &tag_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn merge_tag(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(source_id): Path<String>,
+    Json(payload): Json<MergeTagRequest>,
+) -> Result<Json<MergeTagResponse>, AppError> {
+    ensure_admin(&state, &auth_user.user.id).await?;
+
+    let target_id = payload.into_tag_id.trim();
+    if target_id.is_empty() || source_id == target_id {
+        return Err(AppError::BadRequest);
+    }
+
+    let merged_book_count = tag_queries::merge_tags(&state.db, &source_id, target_id).await?;
+    let target_tag = tag_queries::find_tag_record_by_id(&state.db, target_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    Ok(Json(MergeTagResponse {
+        merged_book_count,
+        target_tag: TagResponse {
+            id: target_tag.id,
+            name: target_tag.name,
+            source: target_tag.source,
+        },
+    }))
 }
 
 async fn list_user_tag_restrictions(

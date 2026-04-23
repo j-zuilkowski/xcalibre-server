@@ -1,4 +1,4 @@
-import { Outlet, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { RegisterPage } from "./features/auth/RegisterPage";
@@ -11,6 +11,7 @@ import { LibrariesPage } from "./features/admin/LibrariesPage";
 import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
+import { TagsPage } from "./features/admin/TagsPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
@@ -25,17 +26,8 @@ const rootRoute = createRootRoute({
 
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/",
+  id: "protected",
   component: ProtectedRoute,
-});
-
-const indexRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/library", replace: true });
-  },
-  component: () => null,
 });
 
 const libraryRoute = createRoute({
@@ -86,15 +78,6 @@ const adminRoute = createRoute({
   component: AdminLayout,
 });
 
-const adminIndexRoute = createRoute({
-  getParentRoute: () => adminRoute,
-  path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/admin/dashboard", replace: true });
-  },
-  component: () => null,
-});
-
 const adminDashboardRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "dashboard",
@@ -105,6 +88,12 @@ const adminUsersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "users",
   component: UsersPage,
+});
+
+const adminTagsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "tags",
+  component: TagsPage,
 });
 
 const adminImportRoute = createRoute({
@@ -157,7 +146,6 @@ const registerRoute = createRoute({
 
 export const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
-    indexRoute,
     libraryRoute,
     downloadHistoryRoute,
     searchRoute,
@@ -166,9 +154,9 @@ export const routeTree = rootRoute.addChildren([
     bookRoute,
     readerRoute,
     adminRoute.addChildren([
-      adminIndexRoute,
       adminDashboardRoute,
       adminUsersRoute,
+      adminTagsRoute,
       adminImportRoute,
       adminJobsRoute,
       adminScheduledTasksRoute,

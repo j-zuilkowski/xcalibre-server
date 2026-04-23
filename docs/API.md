@@ -381,9 +381,49 @@ PaginatedResponse<Author>
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| GET | `/tags` | Yes | Any | List all tags |
-| GET | `/tags/:id/books` | Yes | Any | Books with this tag |
-| DELETE | `/tags/:id` | Yes | Admin | Delete tag (removes from all books) |
+| GET | `/admin/tags` | Yes | Admin | List tags with usage counts (paginated; supports `q`) |
+| PATCH | `/admin/tags/:id` | Yes | Admin | Rename a tag globally |
+| DELETE | `/admin/tags/:id` | Yes | Admin | Delete a tag globally (removes from all books) |
+| POST | `/admin/tags/:id/merge` | Yes | Admin | Merge source tag into a target tag |
+
+#### `GET /admin/tags`
+```typescript
+// Query params
+{ q?: string; page?: number; page_size?: number }
+
+// Response 200
+PaginatedResponse<{
+  id: string
+  name: string
+  source: 'manual' | 'llm' | 'calibre_import'
+  book_count: number
+  confirmed_count: number
+}>
+```
+
+#### `PATCH /admin/tags/:id`
+```typescript
+// Request
+{ name: string }
+
+// Response 200
+{ id: string; name: string; source: 'manual' | 'llm' | 'calibre_import' }
+
+// Response 409
+{ error: 'tag_name_conflict'; message: string }
+```
+
+#### `POST /admin/tags/:id/merge`
+```typescript
+// Request
+{ into_tag_id: string }
+
+// Response 200
+{
+  merged_book_count: number
+  target_tag: { id: string; name: string; source: 'manual' | 'llm' | 'calibre_import' }
+}
+```
 
 ---
 

@@ -1,5 +1,7 @@
 import type {
   ApiError,
+  AdminTag,
+  AdminTagWithCount,
   AdminJob,
   AdminUser,
   AdminUserCreateRequest,
@@ -10,6 +12,7 @@ import type {
   Book,
   BookChapters,
   MetadataLookupResponse,
+  MergeTagResponse,
   BookSummary,
   BookText,
   AuthSession,
@@ -371,13 +374,48 @@ export class ApiClient {
   }
 
   async searchTags(q: string, limit = 20): Promise<TagLookupItem[]> {
+    const response = await this.listAdminTags({
+      q,
+      page: 1,
+      page_size: limit,
+    });
+    return response.items.map((item) => ({ id: item.id, name: item.name }));
+  }
+
+  async listAdminTags(params: {
+    q?: string;
+    page?: number;
+    page_size?: number;
+  } = {}): Promise<PaginatedResponse<AdminTagWithCount>> {
     const search = new URLSearchParams();
-    if (q.trim()) {
-      search.set("q", q.trim());
+    for (const [key, value] of Object.entries(params)) {
+      if (!isPresentParam(value)) {
+        continue;
+      }
+      search.set(key, String(value));
     }
-    search.set("limit", String(limit));
     const suffix = search.toString() ? `?${search.toString()}` : "";
-    return this.requestJson<TagLookupItem[]>(`/api/v1/admin/tags${suffix}`);
+    return this.requestJson<PaginatedResponse<AdminTagWithCount>>(`/api/v1/admin/tags${suffix}`);
+  }
+
+  async renameAdminTag(id: string, name: string): Promise<AdminTag> {
+    return this.requestJson<AdminTag>(`/api/v1/admin/tags/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteAdminTag(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/tags/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async mergeAdminTag(id: string, intoTagId: string): Promise<MergeTagResponse> {
+    return this.requestJson<MergeTagResponse>(`/api/v1/admin/tags/${encodeURIComponent(id)}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ into_tag_id: intoTagId }),
+    });
   }
 
   async validateBook(bookId: string): Promise<ValidationResult> {
@@ -423,7 +461,7 @@ export class ApiClient {
   async getReadingProgress(id: string): Promise<ReadingProgress | null> {
     try {
       return await this.requestJson<ReadingProgress>(
-        `/api/v1/reading-progress/${encodeURIComponent(id)}`,
+        `/api/v1/books/${encodeURIComponent(id)}/progress`,
       );
     } catch (error) {
       const apiError = error as ApiError;
@@ -435,7 +473,7 @@ export class ApiClient {
   }
 
   async patchReadingProgress(id: string, patch: ReadingProgressPatch): Promise<ReadingProgress> {
-    return this.requestJson<ReadingProgress>(`/api/v1/reading-progress/${encodeURIComponent(id)}`, {
+    return this.requestJson<ReadingProgress>(`/api/v1/books/${encodeURIComponent(id)}/progress`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
