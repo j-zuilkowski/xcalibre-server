@@ -507,6 +507,12 @@ Returns overlapping passages instead of full chapters:
 
 **Procedural content awareness:** The chunker detects numbered list sequences (Steps 1, 2, 3...) and treats them as atomic units — a procedure is never split across chunk boundaries. This is critical for technical documentation where splitting a numbered sequence produces unusable fragments.
 
+**Vision LLM pass (image-heavy pages):** After OCR, pages with a high image-to-text ratio (detected heuristically: image area > 40% of page area, text token count < 100) are sent to the vision LLM for structural extraction. The LLM response is appended to the OCR text before chunking and embedding. This pass:
+- Is gated behind `llm.enabled` and LLM vision capability (detected at startup via `/v1/models`)
+- Uses the existing 10s timeout + silent fallback pattern — OCR-only chunk is stored if the vision call fails
+- Applies to any domain where images carry semantic content: schematics, circuit diagrams, data flow diagrams, charts, tables rendered as images, assembly diagrams
+- Is the mechanism by which schematic topology becomes retrievable text
+
 Chunks are embedded at ingest and stored in `book_chunks` (replacing the current chapter-level `book_embeddings`). Retrieval operates at chunk level throughout.
 
 #### Layer 2 — Hybrid Retrieval + Reranking (Phase 15.2)
@@ -584,7 +590,24 @@ The chunker (Phase 15.1) accepts a `domain` hint per collection that adjusts bou
 | `academic` | Abstract, section headings, theorem/proof blocks | Section or theorem |
 | `narrative` | Paragraph groups (overlap-based, no structure detection) | Overlapping passage |
 
-**Electronics-specific note:** Schematics and circuit diagrams embedded in PDFs as images are not text-extractable in the current pipeline. The chunk will contain the surrounding text (component values, pin assignments, application description) but not the schematic image itself. An agent generating a circuit design from this corpus produces a design specification — component selection, topology rationale, calculations — that can then be realized in a schematic tool (KiCad, Altium, etc.). Future work: extract structured netlist hints from application note text for agent consumption.
+**Electronics-specific note — schematics require two extraction passes:**
+
+OCR (already in the ingest pipeline) and schematic topology extraction are distinct problems:
+
+| Pass | What it extracts | Method |
+|---|---|---|
+| **OCR** | All text on the schematic: reference designators (R1, C3, U1), component values (10kΩ, 100nF, LM358N), net labels (VCC, GND, ENABLE, FB), tolerances, notes | Existing OCR ingest pass |
+| **Vision LLM** | Circuit topology: which pins connect to which nets, block-level function ("non-inverting amplifier, gain set by R4/R5"), design intent ("C2 bypasses VCC at U1 pin 8") | Vision-capable LLM called on the page image |
+
+The combined chunk for a schematic page is OCR text + LLM topology description. Together they give an agent everything needed to reason about the circuit: component identities and values (from OCR) plus connection structure and function (from vision LLM).
+
+**Implementation:** During ingest, pages with a high image-to-text ratio are flagged as potential schematic pages. If `llm.enabled = true` and the configured LLM supports vision (detected via `/v1/models` capability metadata), the page image is sent to the LLM with a structured extraction prompt:
+
+> "Describe this circuit schematic. List all components with reference designators and values. Describe the connections between components and nets. Identify the circuit function or topology."
+
+The LLM response is appended to the OCR text as the chunk content. This pass is gated behind `llm.enabled` — without LLM, OCR-only text (labels and values) is still extracted and indexed, giving partial but useful retrieval.
+
+**Result:** An agent querying "5V→3.3V buck converter, 2A, >90% efficiency" retrieves chunks containing both the component values from the datasheet spec table AND the topology description from the application schematic — sufficient to produce a grounded design specification.
 
 ### Use Case Examples
 
