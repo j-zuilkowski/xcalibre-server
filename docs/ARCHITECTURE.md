@@ -507,11 +507,10 @@ Returns overlapping passages instead of full chapters:
 
 **Procedural content awareness:** The chunker detects numbered list sequences (Steps 1, 2, 3...) and treats them as atomic units — a procedure is never split across chunk boundaries. This is critical for technical documentation where splitting a numbered sequence produces unusable fragments.
 
-**Vision LLM pass (image-heavy pages):** After OCR, pages with a high image-to-text ratio (detected heuristically: image area > 40% of page area, text token count < 100) are sent to the vision LLM for structural extraction. The LLM response is appended to the OCR text before chunking and embedding. This pass:
-- Is gated behind `llm.enabled` and LLM vision capability (detected at startup via `/v1/models`)
-- Uses the existing 10s timeout + silent fallback pattern — OCR-only chunk is stored if the vision call fails
-- Applies to any domain where images carry semantic content: schematics, circuit diagrams, data flow diagrams, charts, tables rendered as images, assembly diagrams
-- Is the mechanism by which schematic topology becomes retrievable text
+**Vision LLM pass (image-heavy pages):** After OCR, pages with a high image-to-text ratio (image area > 40% of page, text token count < 100) are sent to the vision LLM. The LLM reads the image — schematic, diagram, chart, assembly drawing, waveform, table — and returns a full description that is appended to the OCR text before chunking and embedding. Vision-capable LLMs handle all of these natively; no special per-type logic is required.
+- Gated behind `llm.enabled` + vision capability confirmed at startup via `/v1/models`
+- Existing 10s timeout + silent fallback — OCR-only chunk stored on vision call failure
+- Domain-agnostic: schematics, data flow diagrams, assembly sequences, charts, floor plans, wiring diagrams all handled identically
 
 Chunks are embedded at ingest and stored in `book_chunks` (replacing the current chapter-level `book_embeddings`). Retrieval operates at chunk level throughout.
 
@@ -590,24 +589,30 @@ The chunker (Phase 15.1) accepts a `domain` hint per collection that adjusts bou
 | `academic` | Abstract, section headings, theorem/proof blocks | Section or theorem |
 | `narrative` | Paragraph groups (overlap-based, no structure detection) | Overlapping passage |
 
-**Electronics-specific note — schematics require two extraction passes:**
+**Electronics — schematics, diagrams, and image-based content:**
 
-OCR (already in the ingest pipeline) and schematic topology extraction are distinct problems:
+Vision-capable LLMs read schematics, assembly diagrams, data flow diagrams, waveform plots, and layout drawings the same way they read text pages. There is no special handling required. The ingest pipeline sends image-heavy pages to the vision LLM and stores the response as chunk text — topology, component connections, design intent, and functional description all become fully searchable and retrievable.
 
-| Pass | What it extracts | Method |
+OCR and vision run as complementary passes:
+
+| Pass | Extracts | Gate |
 |---|---|---|
-| **OCR** | All text on the schematic: reference designators (R1, C3, U1), component values (10kΩ, 100nF, LM358N), net labels (VCC, GND, ENABLE, FB), tolerances, notes | Existing OCR ingest pass |
-| **Vision LLM** | Circuit topology: which pins connect to which nets, block-level function ("non-inverting amplifier, gain set by R4/R5"), design intent ("C2 bypasses VCC at U1 pin 8") | Vision-capable LLM called on the page image |
+| **OCR** | All text on the page: reference designators, component values, net labels, notes, tolerances | Always runs |
+| **Vision LLM** | Structure and meaning of images: circuit topology, pin connections, block function, assembly sequence, spatial relationships | `llm.enabled = true` + vision capability confirmed via `/v1/models` |
 
-The combined chunk for a schematic page is OCR text + LLM topology description. Together they give an agent everything needed to reason about the circuit: component identities and values (from OCR) plus connection structure and function (from vision LLM).
+Without LLM, OCR-only retrieval still works — component values and labels are indexed and searchable. With LLM, the full schematic is understood.
 
-**Implementation:** During ingest, pages with a high image-to-text ratio are flagged as potential schematic pages. If `llm.enabled = true` and the configured LLM supports vision (detected via `/v1/models` capability metadata), the page image is sent to the LLM with a structured extraction prompt:
+**Synthesis output formats for electronics:** The `synthesize` tool is not limited to prose. With the right format parameter, an agent produces machine-readable output directly from library content:
 
-> "Describe this circuit schematic. List all components with reference designators and values. Describe the connections between components and nets. Identify the circuit function or topology."
+| Format | Output | Toolchain |
+|---|---|---|
+| `spice-netlist` | SPICE `.cir` file — component models, nodes, simulation directives | LTspice, ngspice |
+| `kicad-schematic` | KiCad `.kicad_sch` — native schematic format, importable directly | KiCad EDA |
+| `netlist-json` | `{ components: [], nets: [], connections: [] }` — structured for programmatic use | Any |
+| `svg-schematic` | SVG markup — rendered schematic, browser-viewable | Any |
+| `bom` | Bill of materials: reference, value, footprint, quantity | Procurement |
 
-The LLM response is appended to the OCR text as the chunk content. This pass is gated behind `llm.enabled` — without LLM, OCR-only text (labels and values) is still extracted and indexed, giving partial but useful retrieval.
-
-**Result:** An agent querying "5V→3.3V buck converter, 2A, >90% efficiency" retrieves chunks containing both the component values from the datasheet spec table AND the topology description from the application schematic — sufficient to produce a grounded design specification.
+LLMs with image output capability can generate a schematic as an image directly. This is a natural extension of the synthesis pipeline — the agent retrieves reference designs from the library, reasons about the requirements, and outputs a schematic image alongside or instead of a netlist. The autolibre architecture does not constrain the output modality; that is the agent's decision based on the LLM capabilities it has access to.
 
 ### Use Case Examples
 
@@ -629,15 +634,20 @@ Agent: synthesize("Resize undo tablespace on ODA", format="runsheet", collection
 ```
 TI Power Management Library (200+ datasheets + app notes)
   ├── Ingested as collection "ti-power-mgmt"
-  ├── domain="electronics" chunking: spec tables + application sections intact
+  ├── domain="electronics": spec tables + application circuit sections intact
+  ├── Vision LLM pass: application schematics read and described as chunk text
 
-Agent: synthesize("5V to 3.3V buck converter, 2A load, >90% efficiency", 
-                  format="design-spec", collection="ti-power-mgmt")
-  → retrieves: buck converter topology sections, LMR33630 datasheet spec blocks,
-               layout guidelines from app note SLVA477
-  → output: recommended IC, inductor value calculation, output cap selection,
-            efficiency curve reference, layout constraints
-  → agent generates design spec; engineer realizes in KiCad
+Agent: synthesize("5V to 3.3V buck converter, 2A load, >90% efficiency",
+                  format="kicad-schematic", collection="ti-power-mgmt")
+  → retrieves: buck topology sections, LMR33630 spec blocks,
+               vision-extracted application circuit from SLVA477 app note
+  → output: KiCad .kicad_sch file — importable directly, or
+
+Agent: synthesize(..., format="spice-netlist")
+  → output: SPICE .cir file — simulate in LTspice immediately, or
+
+Agent: synthesize(..., format="design-spec")
+  → output: prose + BOM + calculation walkthrough with §-level citations
 ```
 
 **Culinary — Cookbook Collection:**
