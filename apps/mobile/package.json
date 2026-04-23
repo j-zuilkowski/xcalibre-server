@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@autolibre/shared": "workspace:*",
+    "@gorhom/bottom-sheet": "^5.0.0",
     "@react-native-community/netinfo": "^11.4.1",
     "@expo/vector-icons": "^14.0.2",
     "@tanstack/react-query": "^5.59.16",

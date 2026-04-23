@@ -53,6 +53,10 @@ type ClientOptions = {
   onRefreshTokens?: (tokens: RefreshResponse) => void;
 };
 
+function isPresentParam(value: unknown): boolean {
+  return !(value === undefined || value === null || (typeof value === "string" && value.length === 0));
+}
+
 export class ApiClient {
   private refreshTokenCache: string | null = null;
 
@@ -155,7 +159,7 @@ export class ApiClient {
   async listBooks(params: ListBooksParams): Promise<PaginatedResponse<BookSummary>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === "") {
+      if (!isPresentParam(value)) {
         continue;
       }
       if (Array.isArray(value)) {
@@ -173,7 +177,7 @@ export class ApiClient {
     const search = new URLSearchParams();
 
     for (const [key, value] of Object.entries(searchParams)) {
-      if (value === undefined || value === null || value === "") {
+      if (!isPresentParam(value)) {
         continue;
       }
       if (Array.isArray(value)) {
@@ -352,7 +356,7 @@ export class ApiClient {
   } = {}): Promise<PaginatedResponse<DownloadHistoryItem>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === "") {
+      if (!isPresentParam(value)) {
         continue;
       }
       search.set(key, String(value));
@@ -501,7 +505,7 @@ export class ApiClient {
   } = {}): Promise<PaginatedResponse<AdminJob>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === "") {
+      if (!isPresentParam(value)) {
         continue;
       }
       search.set(key, String(value));
@@ -597,7 +601,7 @@ export class ApiClient {
   ): Promise<PaginatedResponse<BookSummary>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null || value === "") {
+      if (!isPresentParam(value)) {
         continue;
       }
       search.set(key, String(value));

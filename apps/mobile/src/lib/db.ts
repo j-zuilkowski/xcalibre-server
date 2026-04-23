@@ -90,6 +90,8 @@ function rowToBookSummary(row: LocalBookRow): BookSummary {
     series_index: null,
     cover_url: row.cover_url,
     has_cover: row.has_cover === 1,
+    is_read: false,
+    is_archived: false,
     language: row.language,
     rating: row.rating,
     document_type: row.document_type,

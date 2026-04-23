@@ -1,5 +1,5 @@
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import LibraryScreen, { LIBRARY_QUERY_KEY } from "../app/(tabs)/library";
 
 const {
@@ -32,6 +32,25 @@ const {
       isRefetching: false,
       refetch: vi.fn(),
     },
+  } as {
+    isOffline: boolean;
+    onlineQuery: {
+      data: {
+        pages: Array<{ items: Array<Record<string, unknown>>; total: number; page: number; page_size: number }>;
+        pageParams: number[];
+      };
+      isLoading: boolean;
+      isRefetching: boolean;
+      isFetchingNextPage: boolean;
+      hasNextPage: boolean;
+      fetchNextPage: ReturnType<typeof vi.fn>;
+    };
+    localQuery: {
+      data: Array<Record<string, unknown>>;
+      isLoading: boolean;
+      isRefetching: boolean;
+      refetch: ReturnType<typeof vi.fn>;
+    };
   },
 }));
 
@@ -127,6 +146,8 @@ describe("LibraryScreen", () => {
           series_index: null,
           cover_url: null,
           has_cover: false,
+          is_read: false,
+          is_archived: false,
           language: "en",
           rating: 8,
           last_modified: "2026-01-01T00:00:00Z",
@@ -140,6 +161,8 @@ describe("LibraryScreen", () => {
           series_index: null,
           cover_url: null,
           has_cover: false,
+          is_read: false,
+          is_archived: false,
           language: "en",
           rating: 9,
           last_modified: "2026-01-01T00:00:00Z",
@@ -150,7 +173,7 @@ describe("LibraryScreen", () => {
       page_size: 30,
     });
 
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<LibraryScreen />);
@@ -177,6 +200,8 @@ describe("LibraryScreen", () => {
           series_index: null,
           cover_url: null,
           has_cover: false,
+          is_read: false,
+          is_archived: false,
           language: "en",
           rating: 8,
           last_modified: "2026-01-01T00:00:00Z",
@@ -187,7 +212,7 @@ describe("LibraryScreen", () => {
       page_size: 30,
     });
 
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<LibraryScreen />);
@@ -212,7 +237,7 @@ describe("LibraryScreen", () => {
       page_size: 30,
     });
 
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<LibraryScreen />);

@@ -154,7 +154,7 @@ export default function ReaderEntryScreen() {
           database={database}
           bookId={bookId}
           title={title}
-          filePath={localPath}
+          filePath={localPath ?? ""}
           onBack={() => router.back()}
         />
       ) : null}

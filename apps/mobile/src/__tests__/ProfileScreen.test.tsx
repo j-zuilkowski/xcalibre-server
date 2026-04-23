@@ -1,5 +1,5 @@
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import * as SecureStore from "expo-secure-store";
 import ProfileScreen from "../app/(tabs)/profile";
 
@@ -65,11 +65,11 @@ async function flushPromises(): Promise<void> {
   });
 }
 
-function findByTestId(tree: TestRenderer.ReactTestRenderer, testID: string) {
+function findByTestId(tree: ReactTestRenderer, testID: string) {
   return tree.root.find((node) => node.props.testID === testID);
 }
 
-function allText(tree: TestRenderer.ReactTestRenderer): string[] {
+function allText(tree: ReactTestRenderer): string[] {
   return tree.root
     .findAll(() => true)
     .flatMap((node) => node.children.filter((child): child is string => typeof child === "string"));
@@ -94,7 +94,7 @@ describe("ProfileScreen", () => {
   });
 
   it("test_profile_shows_username", async () => {
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<ProfileScreen />);
@@ -106,7 +106,7 @@ describe("ProfileScreen", () => {
   });
 
   it("test_signout_clears_tokens_and_navigates", async () => {
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<ProfileScreen />);
@@ -125,7 +125,7 @@ describe("ProfileScreen", () => {
   });
 
   it("test_server_url_saves_to_secure_store", async () => {
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<ProfileScreen />);

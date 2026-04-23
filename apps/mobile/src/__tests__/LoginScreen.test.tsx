@@ -1,5 +1,5 @@
 import React from "react";
-import TestRenderer, { act } from "react-test-renderer";
+import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import LoginScreen from "../app/login";
 
 const { mockLogin, mockSetApiBaseUrl, mockGetApiBaseUrl, mockSaveTokens, mockReplace } = vi.hoisted(
@@ -36,11 +36,11 @@ async function flushPromises(): Promise<void> {
   });
 }
 
-function findByTestId(tree: TestRenderer.ReactTestRenderer, testID: string) {
+function findByTestId(tree: ReactTestRenderer, testID: string) {
   return tree.root.find((node) => node.props.testID === testID);
 }
 
-function allText(tree: TestRenderer.ReactTestRenderer): string[] {
+function allText(tree: ReactTestRenderer): string[] {
   return tree.root
     .findAll(() => true)
     .flatMap((node) => node.children.filter((child): child is string => typeof child === "string"));
@@ -73,7 +73,7 @@ describe("LoginScreen", () => {
       },
     });
 
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<LoginScreen />);
@@ -108,7 +108,7 @@ describe("LoginScreen", () => {
       message: "Unauthorized",
     });
 
-    let tree!: TestRenderer.ReactTestRenderer;
+    let tree!: ReactTestRenderer;
 
     await act(async () => {
       tree = TestRenderer.create(<LoginScreen />);
@@ -129,6 +129,6 @@ describe("LoginScreen", () => {
 
     await flushPromises();
 
-    expect(allText(tree)).toContain("Invalid email or password.");
+    expect(allText(tree)).toContain("Invalid credentials.");
   });
 });

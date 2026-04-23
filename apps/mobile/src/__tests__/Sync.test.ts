@@ -13,6 +13,8 @@ function makeBook(id: string, title: string, lastModified = "2026-01-01T00:00:00
     series_index: null,
     cover_url: null,
     has_cover: false,
+    is_read: false,
+    is_archived: false,
     language: "en",
     rating: 8,
     document_type: "novel",

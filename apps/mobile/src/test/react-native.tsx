@@ -14,6 +14,7 @@ export const View = createHost("View");
 export const Text = createHost("Text");
 export const ActivityIndicator = createHost("ActivityIndicator");
 export const ScrollView = createHost("ScrollView");
+export const Modal = createHost("Modal");
 
 export const TextInput = React.forwardRef<unknown, GenericProps>(({ children, ...props }, ref) => {
   return React.createElement("TextInput", { ...props, ref }, children);
@@ -112,6 +113,10 @@ export const Platform = {
   OS: "ios",
   select: <T,>(value: { ios?: T; android?: T; default?: T }): T | undefined =>
     value.ios ?? value.default ?? value.android,
+};
+
+export const Alert = {
+  alert: () => undefined,
 };
 
 export function unstable_batchedUpdates<T>(callback: () => T): T {
