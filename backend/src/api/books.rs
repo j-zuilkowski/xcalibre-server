@@ -983,27 +983,56 @@ async fn upload_book(
     };
 
     if let Some(raw_cover_bytes) = extracted_cover_source {
-        if let Some((cover_jpg, thumb_jpg)) = render_cover_variants(&raw_cover_bytes) {
+        if let Some(cover_variants) = render_cover_variants(&raw_cover_bytes) {
             let bucket = &book.id[..2];
             let cover_relative_path = format!("covers/{bucket}/{}.jpg", book.id);
             let thumb_relative_path = format!("covers/{bucket}/{}.thumb.jpg", book.id);
+            let cover_webp_relative_path = format!("covers/{bucket}/{}.webp", book.id);
+            let thumb_webp_relative_path = format!("covers/{bucket}/{}.thumb.webp", book.id);
+            let generated_cover_paths = [
+                cover_relative_path.as_str(),
+                thumb_relative_path.as_str(),
+                cover_webp_relative_path.as_str(),
+                thumb_webp_relative_path.as_str(),
+            ];
 
             state
                 .storage
-                .put(&cover_relative_path, bytes::Bytes::from(cover_jpg))
+                .put(
+                    &cover_relative_path,
+                    bytes::Bytes::from(cover_variants.cover_jpg),
+                )
                 .await
                 .map_err(|_| AppError::Internal)?;
             state
                 .storage
-                .put(&thumb_relative_path, bytes::Bytes::from(thumb_jpg))
+                .put(
+                    &thumb_relative_path,
+                    bytes::Bytes::from(cover_variants.thumb_jpg),
+                )
+                .await
+                .map_err(|_| AppError::Internal)?;
+            state
+                .storage
+                .put(
+                    &cover_webp_relative_path,
+                    bytes::Bytes::from(cover_variants.cover_webp),
+                )
+                .await
+                .map_err(|_| AppError::Internal)?;
+            state
+                .storage
+                .put(
+                    &thumb_webp_relative_path,
+                    bytes::Bytes::from(cover_variants.thumb_webp),
+                )
                 .await
                 .map_err(|_| AppError::Internal)?;
 
             if let Err(err) =
                 book_queries::set_book_cover_path(&state.db, &book.id, &cover_relative_path).await
             {
-                let _ = state.storage.delete(&cover_relative_path).await;
-                let _ = state.storage.delete(&thumb_relative_path).await;
+                delete_storage_paths(&state, &generated_cover_paths).await;
                 tracing::error!("failed to persist cover path for book {}: {err:#}", book.id);
                 return Err(AppError::Internal);
             }
@@ -1306,14 +1335,35 @@ async fn get_cover(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
-    let cover_content_type = mime_guess::from_path(&cover_path)
+
+    let wants_webp = request
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase().contains("image/webp"))
+        .unwrap_or(false);
+
+    let mut selected_cover_path = cover_path.clone();
+    if wants_webp {
+        if let Some(webp_cover_path) = cover_path
+            .strip_suffix(".jpg")
+            .map(|prefix| format!("{prefix}.webp"))
+        {
+            if storage_path_exists(&state, &webp_cover_path).await {
+                selected_cover_path = webp_cover_path;
+            }
+        }
+    }
+
+    let cover_content_type = mime_guess::from_path(&selected_cover_path)
         .first_or_octet_stream()
         .essence_str()
         .to_string();
+
     serve_storage_file(
         &state,
         request,
-        &cover_path,
+        &selected_cover_path,
         Some(cover_content_type.as_str()),
         None,
     )
@@ -3014,7 +3064,14 @@ fn extract_epub_cover_source(bytes: &[u8]) -> Option<Vec<u8>> {
     read_zip_bytes(&mut archive, &cover_path)
 }
 
-fn render_cover_variants(raw_cover: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+struct CoverVariants {
+    cover_jpg: Vec<u8>,
+    thumb_jpg: Vec<u8>,
+    cover_webp: Vec<u8>,
+    thumb_webp: Vec<u8>,
+}
+
+fn render_cover_variants(raw_cover: &[u8]) -> Option<CoverVariants> {
     let image = image::load_from_memory(raw_cover).ok()?;
     if image.width() == 0 || image.height() == 0 {
         return None;
@@ -3033,7 +3090,51 @@ fn render_cover_variants(raw_cover: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
         .write_to(&mut thumb_writer, image::ImageFormat::Jpeg)
         .ok()?;
 
-    Some((cover_writer.into_inner(), thumb_writer.into_inner()))
+    let mut cover_webp_writer = std::io::Cursor::new(Vec::new());
+    cover
+        .write_with_encoder(image::codecs::webp::WebPEncoder::new_lossless(
+            &mut cover_webp_writer,
+        ))
+        .ok()?;
+
+    let mut thumb_webp_writer = std::io::Cursor::new(Vec::new());
+    thumb
+        .write_with_encoder(image::codecs::webp::WebPEncoder::new_lossless(
+            &mut thumb_webp_writer,
+        ))
+        .ok()?;
+
+    Some(CoverVariants {
+        cover_jpg: cover_writer.into_inner(),
+        thumb_jpg: thumb_writer.into_inner(),
+        cover_webp: cover_webp_writer.into_inner(),
+        thumb_webp: thumb_webp_writer.into_inner(),
+    })
+}
+
+async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
+    let using_local_backend = state
+        .config
+        .storage
+        .backend
+        .trim()
+        .eq_ignore_ascii_case("local");
+
+    if using_local_backend {
+        return canonicalize_storage_file_path(state, relative_path).is_ok();
+    }
+
+    state
+        .storage
+        .get_range(relative_path, Some((0, 0)))
+        .await
+        .is_ok()
+}
+
+async fn delete_storage_paths(state: &AppState, paths: &[&str]) {
+    for path in paths {
+        let _ = state.storage.delete(path).await;
+    }
 }
 
 fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Option<String> {
