@@ -1,7 +1,7 @@
 # calibre-web Rewrite — UI/UX Design Specification
 
-_Status: Draft_
-_Last updated: 2026-04-17_
+_Status: Current_
+_Last updated: 2026-04-22_
 
 ---
 
@@ -316,7 +316,7 @@ If LLM is disabled or unreachable, all LLM surfaces are **grayed out with a tool
 
 ---
 
-## Mobile (Expo — Phase 2)
+## Mobile (Expo — Phase 6, Complete)
 
 The mobile app uses the same design language. Key adaptations:
 
@@ -377,6 +377,21 @@ A thin `teal-600` bar (3px) sits flush at the bottom of the cover image — visi
 │ Author     │
 └────────────┘
 ```
+
+---
+
+## Internationalization (Phase 10)
+
+All UI text is managed through `react-i18next`. Translation bundles are JSON files in `apps/web/src/locales/`.
+
+| Locale | Code | Status |
+|---|---|---|
+| English | `en` | Base — all keys defined |
+| French | `fr` | Starter translation |
+| German | `de` | Starter translation |
+| Spanish | `es` | Starter translation |
+
+User locale preference is stored in the DB and falls back to the browser's `Accept-Language` header on first visit. The locale picker is in the user profile settings.
 
 ---
 

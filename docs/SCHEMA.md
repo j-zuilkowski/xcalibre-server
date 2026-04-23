@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Database Schema
 
-_Status: Draft_
-_Last updated: 2026-04-20_
+_Status: Current_
+_Last updated: 2026-04-22_
 
 ---
 
@@ -19,24 +19,35 @@ _Last updated: 2026-04-20_
 ## Entity Relationship Overview
 
 ```
+libraries
+  └── books ──── book_authors ── authors
+  │      │
+  │      ├── book_tags ─── tags
+  │      ├── book_user_state ─ users
+  │      ├── download_history ─ users
+  │      ├── user_tag_restrictions ─ users
+  │      ├── formats
+  │      ├── identifiers
+  │      ├── series
+  │      └── custom_column_values ── custom_columns
+  │
 users ──────────── roles
   │
   ├── refresh_tokens
-  ├── reading_progress ── books ── book_authors ── authors
-  └── shelves                │
-        └── shelf_books      ├── book_tags ─── tags
-                             ├── book_user_state ─ users
-                             ├── download_history ─ users
-                             ├── formats
-                             ├── identifiers
-                             ├── series
-                             └── custom_column_values ── custom_columns
+  ├── api_tokens
+  ├── oauth_accounts
+  ├── kobo_devices ── kobo_reading_state ── books
+  ├── reading_progress ── books
+  └── shelves
+        └── shelf_books ── books
 
 llm_jobs ──────────────────── books (nullable)
 llm_eval_results
 migration_log
 audit_log ─────────────────── users (nullable)
 book_embeddings ────────────── books
+email_settings                 (singleton row)
+scheduled_tasks
 ```
 
 ---
@@ -73,15 +84,17 @@ CREATE TABLE roles (
 
 ```sql
 CREATE TABLE users (
-    id              TEXT PRIMARY KEY,
-    username        TEXT NOT NULL UNIQUE,
-    email           TEXT NOT NULL UNIQUE,
-    password_hash   TEXT NOT NULL,              -- argon2
-    role_id         TEXT NOT NULL REFERENCES roles(id),
-    is_active       INTEGER NOT NULL DEFAULT 1,
-    force_pw_reset  INTEGER NOT NULL DEFAULT 0, -- set on migration import
-    created_at      TEXT NOT NULL,
-    last_modified   TEXT NOT NULL
+    id                  TEXT PRIMARY KEY,
+    username            TEXT NOT NULL UNIQUE,
+    email               TEXT NOT NULL UNIQUE,
+    password_hash       TEXT NOT NULL,              -- argon2
+    role_id             TEXT NOT NULL REFERENCES roles(id),
+    is_active           INTEGER NOT NULL DEFAULT 1,
+    force_pw_reset      INTEGER NOT NULL DEFAULT 0, -- set on migration import
+    default_library_id  TEXT NOT NULL DEFAULT 'default'
+                        REFERENCES libraries(id),
+    created_at          TEXT NOT NULL,
+    last_modified       TEXT NOT NULL
 );
 
 CREATE INDEX idx_users_username ON users(username);
@@ -168,8 +181,11 @@ CREATE TABLE books (
     has_cover     INTEGER NOT NULL DEFAULT 0,
     cover_path    TEXT,                        -- bucketed: covers/{first2}/{uuid}.jpg
     document_type TEXT NOT NULL DEFAULT 'unknown'
-                  CHECK(document_type IN ('novel', 'textbook', 'reference', 'magazine', 'datasheet', 'comic', 'unknown')),
-    flags         TEXT,                        -- JSON: arbitrary feature flags
+                  CHECK(document_type IN ('novel', 'textbook', 'reference', 'magazine',
+                                          'datasheet', 'comic', 'audiobook', 'unknown')),
+    flags         TEXT,                        -- JSON object; known keys: {"publisher": "..."}
+    library_id    TEXT NOT NULL DEFAULT 'default'
+                  REFERENCES libraries(id),
     indexed_at    TEXT,                        -- NULL or < last_modified = needs Meilisearch reindex
     created_at    TEXT NOT NULL,
     last_modified TEXT NOT NULL
@@ -179,8 +195,15 @@ CREATE INDEX idx_books_sort_title  ON books(sort_title);
 CREATE INDEX idx_books_series      ON books(series_id);
 CREATE INDEX idx_books_pubdate     ON books(pubdate);
 CREATE INDEX idx_books_language    ON books(language);
+CREATE INDEX idx_books_library_id  ON books(library_id);
 CREATE INDEX idx_books_indexed_at  ON books(indexed_at);
 ```
+
+**`flags` column:** A JSON object. Do not add keys that need indexed filtering — use a dedicated column instead. Currently defined keys:
+
+| Key | Type | Usage |
+|---|---|---|
+| `publisher` | string | Book publisher; accessed via `json_extract(b.flags, '$.publisher')` in OPDS feeds and bulk filter queries |
 
 ---
 
@@ -218,6 +241,23 @@ CREATE TABLE download_history (
 
 CREATE INDEX idx_download_history_user ON download_history(user_id);
 CREATE INDEX idx_download_history_book ON download_history(book_id);
+```
+
+---
+
+### `user_tag_restrictions`
+
+Per-user allow/block tag controls applied at browse time.
+
+```sql
+CREATE TABLE user_tag_restrictions (
+    user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tag_id   TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    mode     TEXT NOT NULL CHECK (mode IN ('allow', 'block')),
+    PRIMARY KEY (user_id, tag_id)
+);
+
+CREATE INDEX idx_user_tag_restrictions_user ON user_tag_restrictions(user_id);
 ```
 
 ---
@@ -523,6 +563,147 @@ CREATE TABLE migration_log (
 
 ---
 
+### `libraries`
+
+Multi-library support. A `default` library row is seeded at migration time.
+
+```sql
+CREATE TABLE libraries (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    calibre_db_path TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+INSERT INTO libraries (id, name, calibre_db_path, created_at, updated_at)
+VALUES ('default', 'Default Library', '', datetime('now'), datetime('now'));
+```
+
+---
+
+### `api_tokens`
+
+Long-lived tokens for MCP server and Kobo device authentication. SHA256-hashed at rest.
+
+```sql
+CREATE TABLE api_tokens (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE,
+    token_hash   TEXT NOT NULL UNIQUE,          -- SHA256 of the raw token
+    created_by   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT
+);
+
+CREATE INDEX idx_api_tokens_created_by ON api_tokens(created_by);
+CREATE INDEX idx_api_tokens_hash       ON api_tokens(token_hash);
+```
+
+---
+
+### `email_settings`
+
+Singleton row (always `id = 'singleton'`) for admin-configurable SMTP settings.
+
+```sql
+CREATE TABLE email_settings (
+    id            TEXT PRIMARY KEY DEFAULT 'singleton',
+    smtp_host     TEXT NOT NULL DEFAULT '',
+    smtp_port     INTEGER NOT NULL DEFAULT 587,
+    smtp_user     TEXT NOT NULL DEFAULT '',
+    smtp_password TEXT NOT NULL DEFAULT '',
+    from_address  TEXT NOT NULL DEFAULT '',
+    use_tls       INTEGER NOT NULL DEFAULT 1,
+    updated_at    TEXT NOT NULL
+);
+```
+
+> **Note:** `smtp_host` is admin-configurable at runtime with no host-validation guard. Acceptable for single-admin self-hosted deployments; add validation if multi-admin roles are ever introduced.
+
+---
+
+### `oauth_accounts`
+
+Links a local user to one or more OAuth provider identities. Never auto-links by email — always requires an explicit OAuth login to create the mapping.
+
+```sql
+CREATE TABLE oauth_accounts (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider         TEXT NOT NULL,              -- "google" | "github"
+    provider_user_id TEXT NOT NULL,
+    email            TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    UNIQUE(provider, provider_user_id)
+);
+
+CREATE INDEX idx_oauth_accounts_user_id ON oauth_accounts(user_id);
+```
+
+---
+
+### `kobo_devices`
+
+Registered Kobo e-readers. Each device authenticates via a long-lived API token embedded in the URL path.
+
+```sql
+CREATE TABLE kobo_devices (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL UNIQUE,
+    device_name  TEXT NOT NULL DEFAULT 'Kobo',
+    sync_token   TEXT,                           -- delta sync cursor; cleared on device reassignment
+    last_sync_at TEXT,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX idx_kobo_devices_user_id   ON kobo_devices(user_id);
+CREATE INDEX idx_kobo_devices_device_id ON kobo_devices(device_id);
+```
+
+---
+
+### `kobo_reading_state`
+
+Reading position pushed from a Kobo device. `percent_read` is synced to `reading_progress.percentage` — `format_id` on the canonical progress record is never overwritten by a Kobo sync.
+
+```sql
+CREATE TABLE kobo_reading_state (
+    id            TEXT PRIMARY KEY,
+    device_id     TEXT NOT NULL REFERENCES kobo_devices(id) ON DELETE CASCADE,
+    book_id       TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    kobo_position TEXT,                          -- opaque Kobo position string
+    percent_read  REAL,
+    last_modified TEXT NOT NULL,
+    UNIQUE(device_id, book_id)
+);
+```
+
+---
+
+### `scheduled_tasks`
+
+Cron-scheduled background jobs. The scheduler runs inside the Axum process and polls `next_run_at` on startup.
+
+```sql
+CREATE TABLE scheduled_tasks (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    task_type   TEXT NOT NULL
+                CHECK(task_type IN ('classify_all', 'semantic_index_all', 'backup')),
+    cron_expr   TEXT NOT NULL,
+    enabled     INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+    last_run_at TEXT,
+    next_run_at TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_scheduled_tasks_due ON scheduled_tasks(enabled, next_run_at);
+```
+
+---
+
 ## SQLite vs MariaDB Notes
 
 | Concern | SQLite | MariaDB |
@@ -566,6 +747,11 @@ All foreign keys are indexed. Additional indexes on high-query-frequency columns
 | `reading_progress` | `user_id` | Per-user progress queries |
 | `llm_jobs` | `status` | Job queue polling |
 | `refresh_tokens` | `token_hash` | Auth token lookup on every request |
+| `api_tokens` | `token_hash` | MCP / Kobo token lookup |
+| `oauth_accounts` | `user_id` | OAuth provider lookup per user |
+| `kobo_devices` | `device_id` | Device lookup on every Kobo sync request |
+| `books` | `library_id` | Per-library browse and filtering |
+| `scheduled_tasks` | `enabled, next_run_at` | Scheduler poll — find due tasks |
 | `audit_log` | `entity, entity_id` | History view per book/author/etc. |
 | `audit_log` | `created_at` | Chronological admin audit feed |
 
@@ -589,6 +775,44 @@ covers/
 - Thumbnails stored alongside: `covers/ab/abcd1234-....thumb.jpg`
 
 ---
+
+## Table Count
+
+The schema has **25 tables** across 13 migration files:
+
+| # | Table | Migration |
+|---|---|---|
+| 1 | `roles` | 0001 |
+| 2 | `users` | 0001 |
+| 3 | `refresh_tokens` | 0001 |
+| 4 | `authors` | 0001 |
+| 5 | `series` | 0001 |
+| 6 | `tags` | 0001 |
+| 7 | `books` | 0001 |
+| 8 | `book_authors` | 0001 |
+| 9 | `book_tags` | 0001 |
+| 10 | `formats` | 0001 |
+| 11 | `identifiers` | 0001 |
+| 12 | `shelves` | 0001 |
+| 13 | `shelf_books` | 0001 |
+| 14 | `reading_progress` | 0001 |
+| 15 | `custom_columns` | 0001 |
+| 16 | `book_custom_values` | 0001 |
+| 17 | `llm_jobs` | 0001 |
+| 18 | `llm_eval_results` | 0001 |
+| 19 | `migration_log` | 0001 |
+| 20 | `audit_log` | 0001 |
+| 21 | `book_embeddings` | 0001 |
+| 22 | `api_tokens` | 0005 |
+| 23 | `email_settings` | 0006 |
+| 24 | `oauth_accounts` | 0007 |
+| 25 | `kobo_devices` | 0008 |
+| 26 | `kobo_reading_state` | 0008 |
+| 27 | `libraries` | 0009 |
+| 28 | `book_user_state` | 0010 |
+| 29 | `download_history` | 0011 |
+| 30 | `user_tag_restrictions` | 0012 |
+| 31 | `scheduled_tasks` | 0013 |
 
 ## Open Schema Questions
 

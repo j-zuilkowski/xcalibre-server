@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
-_Status: Draft_
-_Last updated: 2026-04-20_
+_Status: Current_
+_Last updated: 2026-04-22_
 
 ---
 
@@ -197,6 +197,8 @@ interface Role {
 | POST | `/auth/refresh` | No | — | Exchange refresh token for new access token |
 | GET | `/auth/me` | Yes | Any | Current user profile |
 | PATCH | `/auth/me/password` | Yes | Any | Change own password |
+| GET | `/auth/oauth/:provider` | No | — | Initiate OAuth flow (`google` or `github`) |
+| GET | `/auth/oauth/:provider/callback` | No | — | OAuth callback; creates local user on first login |
 
 #### `POST /auth/login`
 ```typescript
@@ -572,7 +574,7 @@ Role
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| POST | `/admin/migrate` | Yes | Admin | Run `calibre-migrate` |
+| POST | `/admin/migrate` | Yes | Admin | Run `autolibre-migrate` |
 | GET | `/admin/migrate/:id` | Yes | Admin | Migration run status |
 | GET | `/admin/migrate` | Yes | Admin | Migration history |
 
@@ -800,6 +802,297 @@ Content-Type: application/epub+zip
 ```
 
 Axum's `tower-http ServeFile` handles this natively.
+
+---
+
+### Per-User Book State
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/books/:id/state` | Yes | Any | Read/unread + archived state for current user |
+| PUT | `/books/:id/state` | Yes | Any | Update read/unread/archived state |
+
+#### `PUT /books/:id/state`
+```typescript
+// Request — all fields optional
+{ is_read?: boolean; is_archived?: boolean }
+
+// Response 200
+{ user_id: string; book_id: string; is_read: boolean; is_archived: boolean; updated_at: string }
+```
+
+---
+
+### Download History
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/users/me/downloads` | Yes | Any | Paginated download history for current user |
+
+#### `GET /users/me/downloads`
+```typescript
+// Query params
+{ page?: number; page_size?: number }
+
+// Response 200
+PaginatedResponse<{
+  id: string
+  book_id: string
+  book_title: string        // denormalized
+  format: string
+  downloaded_at: string
+}>
+```
+
+---
+
+### Per-User Tag Restrictions
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/users/me/tag-restrictions` | Yes | Any | List own tag allow/block rules |
+| PUT | `/users/me/tag-restrictions` | Yes | Any | Replace own tag restriction list |
+| GET | `/admin/users/:id/tag-restrictions` | Yes | Admin | List restrictions for any user |
+| PUT | `/admin/users/:id/tag-restrictions` | Yes | Admin | Replace restrictions for any user |
+
+#### `PUT /users/me/tag-restrictions`
+```typescript
+// Request
+{
+  restrictions: Array<{
+    tag_id: string
+    mode: 'allow' | 'block'
+  }>
+}
+
+// Response 200
+{ updated: number }
+```
+
+---
+
+### Libraries
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/admin/libraries` | Yes | Admin | List all libraries |
+| POST | `/admin/libraries` | Yes | Admin | Create library |
+| PATCH | `/admin/libraries/:id` | Yes | Admin | Update library name |
+| DELETE | `/admin/libraries/:id` | Yes | Admin | Delete library (only if empty) |
+| PATCH | `/auth/me/library` | Yes | Any | Switch own default library |
+
+#### `POST /admin/libraries`
+```typescript
+// Request
+{ name: string; calibre_db_path?: string }
+
+// Response 201
+{ id: string; name: string; calibre_db_path: string; created_at: string }
+```
+
+---
+
+### API Tokens
+
+Long-lived tokens for MCP server and Kobo device authentication. Returned plain-text once on creation — not retrievable again.
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/admin/api-tokens` | Yes | Admin | List tokens (names + last used, never raw token) |
+| POST | `/admin/api-tokens` | Yes | Admin | Create token |
+| DELETE | `/admin/api-tokens/:id` | Yes | Admin | Revoke token |
+
+#### `POST /admin/api-tokens`
+```typescript
+// Request
+{ name: string }
+
+// Response 201
+{ id: string; name: string; token: string; created_at: string }
+// `token` is the raw value — shown once, not stored
+```
+
+---
+
+### Kobo Sync
+
+Mounted at `/kobo/:token/` where `:token` is a long-lived API token. All paths match the reverse-engineered Kobo API.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/kobo/:token/v1/initialization` | Token | Device registration — reads `X-Kobo-DeviceId` header |
+| GET | `/kobo/:token/v1/library/sync` | Token | Incremental library sync with delta token |
+| GET | `/kobo/:token/v1/library/:book_id/metadata` | Token | Single book metadata |
+| POST | `/kobo/:token/v1/library/:book_id/state` | Token | Push reading state from device |
+| GET | `/kobo/:token/v1/user/profile` | Token | User profile (required by Kobo handshake) |
+| GET | `/kobo/:token/v1/library/tags` | Token | Shelves as Kobo collections |
+| POST | `/kobo/:token/v1/library/tags` | Token | Create shelf/collection |
+| DELETE | `/kobo/:token/v1/library/tags/:tag_id` | Token | Delete shelf/collection |
+
+Kobo reading state is synced to `reading_progress.percentage`. `format_id` on the canonical progress record is never overwritten by a Kobo sync.
+
+---
+
+### OPDS Catalog
+
+OPDS-PS 1.2 catalog. Browse endpoints return Atom/XML feeds. Download links require an API token embedded in the URL.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/opds` | No | Root catalog feed |
+| GET | `/opds/new` | No | Recently added books |
+| GET | `/opds/popular` | No | Highly rated books |
+| GET | `/opds/authors` | No | Author browse feed |
+| GET | `/opds/authors/:id/books` | No | Books by author |
+| GET | `/opds/series` | No | Series browse feed |
+| GET | `/opds/series/:id/books` | No | Books in series |
+| GET | `/opds/publishers` | No | Publisher browse feed |
+| GET | `/opds/publishers/:publisher/books` | No | Books by publisher |
+| GET | `/opds/languages` | No | Language browse feed |
+| GET | `/opds/languages/:lang/books` | No | Books in language |
+| GET | `/opds/ratings/:rating/books` | No | Books with this rating (0–10) |
+| GET | `/opds/books/:id` | No | Single book entry |
+| GET | `/opds/books/:id/formats/:format/download` | Token | Download (requires `?token=<api_token>`) |
+| GET | `/opds/search` | No | OpenSearch description |
+
+---
+
+### Email (Send-to-Kindle)
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| POST | `/books/:id/send` | Yes | `can_download` | Send book format via SMTP |
+| GET | `/admin/email-settings` | Yes | Admin | Get SMTP configuration |
+| PATCH | `/admin/email-settings` | Yes | Admin | Update SMTP configuration |
+
+#### `POST /books/:id/send`
+```typescript
+// Request
+{ format: string; to: string }
+
+// Response 202 Accepted
+{ message: string }
+
+// Response 503
+ApiError    // email not configured
+```
+
+#### `PATCH /admin/email-settings`
+```typescript
+// Request — all fields optional
+{
+  smtp_host?: string
+  smtp_port?: number
+  smtp_user?: string
+  smtp_password?: string
+  from_address?: string
+  use_tls?: boolean
+}
+
+// Response 200
+{ smtp_host: string; smtp_port: number; from_address: string; use_tls: boolean; updated_at: string }
+// smtp_password is never returned
+```
+
+---
+
+### Scheduled Tasks
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/admin/scheduled-tasks` | Yes | Admin | List all scheduled tasks |
+| POST | `/admin/scheduled-tasks` | Yes | Admin | Create scheduled task |
+| PATCH | `/admin/scheduled-tasks/:id` | Yes | Admin | Update cron expression or toggle enabled |
+| DELETE | `/admin/scheduled-tasks/:id` | Yes | Admin | Delete task |
+
+#### `POST /admin/scheduled-tasks`
+```typescript
+// Request
+{
+  name: string
+  task_type: 'classify_all' | 'semantic_index_all' | 'backup'
+  cron_expr: string          // standard 5-field cron e.g. "0 3 * * *"
+  enabled?: boolean          // default true
+}
+
+// Response 201
+{
+  id: string
+  name: string
+  task_type: string
+  cron_expr: string
+  enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  created_at: string
+}
+```
+
+---
+
+### Admin — System (Extended)
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/health` | No | — | Liveness check |
+| GET | `/admin/system` | Yes | Admin | System stats |
+| GET | `/admin/system/updates` | Yes | Admin | Compare running version against GitHub latest release |
+| GET | `/admin/audit` | Yes | Admin | Audit log (paginated) |
+
+#### `GET /admin/system/updates`
+```typescript
+// Response 200
+{
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  release_url: string | null
+}
+```
+
+---
+
+### i18n / Locale
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/locale` | No | — | List available locales |
+| PATCH | `/auth/me/locale` | Yes | Any | Set preferred locale |
+
+#### `GET /locale`
+```typescript
+// Response 200
+{
+  available: Array<{ code: string; name: string }>  // e.g. [{code:"en",name:"English"},...]
+  default: string
+}
+```
+
+---
+
+### Duplicate Book Merge (Admin)
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| POST | `/admin/books/merge` | Yes | Admin | Merge source book into target |
+
+#### `POST /admin/books/merge`
+```typescript
+// Request
+{
+  target_id: string          // book to keep
+  source_id: string          // book to absorb and delete
+  fields?: {
+    title?: boolean          // overwrite target title from source?
+    description?: boolean
+    tags?: boolean           // merge tag sets
+    identifiers?: boolean    // merge identifiers
+  }
+}
+
+// Response 200
+Book                         // updated target book
+```
 
 ---
 

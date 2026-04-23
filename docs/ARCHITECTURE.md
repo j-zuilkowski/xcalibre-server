@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Draft — decisions in progress_
-_Last updated: 2026-04-20_
+_Status: Active — Phase 10 Stage 7 Complete_
+_Last updated: 2026-04-22_
 
 ---
 
@@ -17,12 +17,18 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 |---|---|---|---|
 | 1 | Calibre DB: read-only first, migrate later | ✅ Decided | Migration tool is a first-class feature |
 | 2 | Multi-user support | ✅ Decided | Full auth layer required |
-| 3 | OPDS catalog support | ✅ Decided | Out of scope |
+| 3 | OPDS catalog support | ✅ Decided | In scope — Phase 9 Stage 1 (reversed from original "out of scope") |
 | 4 | Cover/thumbnail pipeline at ingest time | ✅ Decided | Not on-request |
 | 5 | SQLx migrations from day one | ✅ Decided | Never alter schema manually |
 | 6 | Primary UI target: web browser | ✅ Decided | Browser-based; Axum serves the SPA as static files |
-| 7 | Synology NAS deployment: migrate, not mount | ✅ Decided | `calibre-migrate` is a first-class CLI tool |
+| 7 | Synology NAS deployment: migrate, not mount | ✅ Decided | `autolibre-migrate` is a first-class CLI tool |
 | A | Database engine | ✅ Decided | SQLite (default) + MariaDB (optional) — same codebase, config-driven |
+| H | OAuth / SSO | ✅ Decided | Google + GitHub via `oauth2` crate; auto-creates local user on first login |
+| I | LDAP authentication | ✅ Decided | `ldap3` crate; falls back to local auth if LDAP unreachable |
+| J | Kobo sync | ✅ Decided | Reverse-engineered protocol; device registration + reading progress ↔ Kobo format |
+| K | Multi-library support | ✅ Decided | `library_id` on books; per-user default library; admin-managed |
+| L | Email / Send-to-Kindle | ✅ Decided | SMTP via `lettre`; format sent as-is (no conversion in v1) |
+| M | Metadata lookup | ✅ Decided | Open Library + Google Books (Goodreads deprecated 2020); never auto-applies |
 
 ---
 
@@ -63,22 +69,22 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | Reading progress (mobile sync) | ✅ Should | Already designed |
 | Shelves / reading lists | ✅ Should | Personal curation |
 | Bulk metadata edit | ✅ Should | Needed after bulk import |
-| Send to Kindle / email | ⏳ Phase 2 | Low priority for local-first |
-| Book conversion (Calibre engine) | ⏳ Revisit | Detect via `CALIBRE_BINARY` env var; enable only when present |
+| Send to Kindle / email | ✅ Phase 9 | SMTP via `lettre`; format sent as-is |
+| Book conversion (Calibre engine) | ❌ Out of scope | Handled by xcalibre — separate project |
 
 ### LLM Features
 
 | Feature | v1.0 | Notes |
 |---|---|---|
-| `calibre-migrate` CLI | ✅ Must | No one can switch without it |
+| `autolibre-migrate` CLI | ✅ Must | No one can switch without it |
 | Prompt eval framework | ✅ Must | Required if any LLM ships in v1 |
 | LLM classification + tagging | ✅ Should | Core differentiator |
 | Semantic search | ✅ Should | Core differentiator |
 | **Text extraction API** | ✅ Should | Foundational for agentic RAG — chapter-level EPUB/PDF text |
-| Metadata validation | ⏳ Phase 2 | Useful but not blocking |
-| Content quality check | ⏳ Phase 2 | Useful but not blocking |
-| Library organization rules | ⏳ Phase 2 | |
-| Derived works | ⏳ Phase 2 | Complex, niche |
+| Metadata validation | ✅ Should | Shipped Phase 5 — `GET /books/:id/validate` |
+| Content quality check | ✅ Should | Shipped Phase 5 — `GET /books/:id/quality` |
+| Library organization rules | ✅ Should | Shipped Phase 5 — `POST /organize` |
+| Derived works | ✅ Should | Shipped Phase 5 — `GET /books/:id/derive` |
 
 ### Platform
 
@@ -88,8 +94,8 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | Docker (amd64) | ✅ Must | |
 | Docker (arm64 / Pi) | ✅ Must | |
 | Synology NAS | ✅ Must | Docker Compose + migrate |
-| iOS app | ⏳ Phase 2 | |
-| Android app | ⏳ Phase 2 | |
+| iOS app | ✅ Must | Shipped Phase 6 — Expo EAS Build → App Store |
+| Android app | ✅ Must | Shipped Phase 6 — Expo EAS Build → Play Store / sideload |
 
 ---
 
@@ -157,7 +163,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 ## Repository Structure
 
 ```
-calibre-web-rs/
+autolibre/
 ├── Cargo.toml                  # Rust workspace root
 ├── package.json                # pnpm workspace root
 ├── turbo.json                  # Turborepo pipeline
@@ -175,7 +181,7 @@ calibre-web-rs/
 │   │   ├── db/                # sqlx models + queries
 │   │   ├── llm/               # LM Studio client, job queue
 │   │   ├── ingest/            # File parsing, cover extraction
-│   │   └── migrate/           # calibre-migrate CLI tool
+│   │   └── migrate/           # autolibre-migrate CLI tool
 │   └── migrations/            # sqlx migration files
 │
 ├── packages/
@@ -210,7 +216,7 @@ calibre-web-rs/
 | Target | Approach |
 |---|---|
 | Raspberry Pi / ARM NAS | Docker Compose — `linux/arm64` and `linux/arm/v7` builds |
-| Synology NAS | Docker Compose — run `calibre-migrate` once to import from Calibre |
+| Synology NAS | Docker Compose — run `autolibre-migrate` once to import from Calibre |
 | Mac / Windows / Linux | Docker or run Axum binary directly, open browser |
 | iOS | Expo EAS Build → App Store |
 | Android | Expo EAS Build → Play Store / sideload |
@@ -252,7 +258,10 @@ The `Secure` cookie flag is set automatically when `APP_BASE_URL` starts with `h
 - JWT access tokens (15 min TTL) + refresh tokens (30 day TTL, stored in DB)
 - Web: httpOnly cookies (not localStorage)
 - Mobile: Expo SecureStore
-- Roles: Admin, User (extensible — OIDC/LDAP noted for future, not in scope)
+- Roles: Admin, User
+- **OAuth/SSO**: Google + GitHub (`oauth2` crate); callback at `/auth/oauth/:provider/callback`; auto-creates local user on first login (email as username, random password); requires `[oauth.google]` / `[oauth.github]` in `config.toml`
+- **LDAP**: `ldap3` crate; bind DN + filter configurable in `config.toml`; tried after local auth fails; LDAP connection failure logs warning and falls through to local auth
+- **API tokens**: long-lived tokens for MCP and Kobo device auth; SHA256-hashed in DB
 - Upload permission is configurable per role — Admin always can; User upload is toggled in role config
 - **Account lockout** after N failed logins (default 10, configurable) — resets after 15 min
 - **Session list** in user profile — view and revoke active sessions
@@ -318,7 +327,7 @@ Lives at `/admin/*` in the same SPA. All routes server-side guarded by `Admin` r
 | Users | Create, edit, delete users; assign roles; force password reset; configure upload permission per role |
 | LLM Config | Edit endpoints, models, timeouts, system prompts per role |
 | Prompt Evals | Run eval suite, view model compatibility matrix, promote prompt versions |
-| Migration | Run `calibre-migrate`, view import log, re-run failed records |
+| Migration | Run `autolibre-migrate`, view import log, re-run failed records |
 | Jobs | LLM job queue — pending, running, failed, completed |
 | System | App version, DB stats, storage usage, Meilisearch status |
 
@@ -380,7 +389,7 @@ File received
 
 ## Agentic RAG Integration
 
-calibre-web-rs is designed to function as a **tool provider** for external agentic AI systems (LangGraph, smolagents, custom agents), in addition to its primary role as a library management UI.
+autolibre is designed to function as a **tool provider** for external agentic AI systems (LangGraph, smolagents, custom agents), in addition to its primary role as a library management UI.
 
 ### The Two-Tier Retrieval Model
 
@@ -425,7 +434,7 @@ PDF:  parse structure → extract text per page → group into logical sections 
 
 ### How Classification Enriches RAG
 
-The LLM features (Phase 5) represent calibre-web-rs calling the LLM. The agentic RAG surface represents an external agent calling calibre-web-rs. These are complementary:
+The LLM features (Phase 5) represent autolibre calling the LLM. The agentic RAG surface represents an external agent calling autolibre. These are complementary:
 
 - LLM classification enriches metadata → better structured retrieval tier for agents
 - Text extraction enables agents to retrieve actual book content for synthesis
@@ -601,7 +610,7 @@ semantic_search_relevance  │ ✅ PASS    │ ✅ PASS   │ ❌ FAIL │
 
 ---
 
-## Migration Tool (`calibre-migrate`)
+## Migration Tool (`autolibre-migrate`)
 
 First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and imports into the new schema.
 
@@ -635,7 +644,7 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 - [x] Docker build + docker-compose + Caddyfile
 
 ### Phase 2 — Migration ✅ Complete
-- [x] `calibre-migrate` CLI: books, authors, tags, covers
+- [x] `autolibre-migrate` CLI: books, authors, tags, covers
 - [x] Dry-run mode + idempotency
 - [x] Validation report output
 
@@ -664,34 +673,120 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 - [x] Frontend AI panel on BookDetailPage (Classify/Validate/Derive tabs)
 - [x] AdminJobsPage with real-time polling
 
-### Phase 6 — Mobile
-- [ ] Expo project setup + Expo Router + NativeWind
-- [ ] Auth screens + SecureStore token handling
-- [ ] Library browse (grid) + book detail screen
-- [ ] Offline: Expo SQLite sync + expo-file-system downloads
-- [ ] EPUB reader (foliojs-port) + PDF reader (expo-pdf)
-- [ ] Reading progress tracking + server sync
-- [ ] Expo EAS build configuration (iOS + Android)
+### Phase 6 — Mobile ✅ Complete
+- [x] Expo project setup + Expo Router + NativeWind
+- [x] Auth screens + SecureStore token handling
+- [x] Library browse (grid) + book detail screen
+- [x] Offline: Expo SQLite sync + expo-file-system downloads
+- [x] EPUB reader (foliojs-port) + PDF reader (expo-pdf)
+- [x] Reading progress tracking + server sync
+- [x] Expo EAS build configuration (iOS + Android)
 
-### Phase 7 — Hardening
-- [ ] Multi-architecture Docker builds (amd64, arm64, armv7)
-- [ ] Synology deployment documentation
-- [ ] Performance testing on Raspberry Pi 4/5
-- [ ] Security audit (OWASP top 10 review)
+### Phase 7 — Hardening ✅ Complete
+- [x] Multi-architecture Docker builds (amd64, arm64, armv7)
+- [x] Synology deployment documentation
+- [x] Performance testing / criterion benchmarks
+- [x] Security audit (OWASP top 10 — CORS, CSP, SSRF guard, audit log, Argon2id config)
 
-### Phase 8 — MCP Server
+### Phase 8 — MCP Server (Completed)
 Expose the library as a first-class tool provider for external agentic AI systems. The REST API built in Phases 1–5 is the foundation; Phase 8 adds an MCP transport layer on top of the already-stable routes.
 
-- [ ] Implement MCP server in Rust (stdio + SSE transports) alongside the existing Axum server
-- [ ] Expose agent tool surface as MCP tools:
+- [x] Implement MCP server in Rust (stdio + SSE transports) alongside the existing Axum server
+- [x] Expose agent tool surface as MCP tools:
   - `search_books(query, filters)` — wraps `GET /api/v1/books`
   - `get_book_metadata(book_id)` — wraps `GET /api/v1/books/:id`
   - `list_chapters(book_id)` — wraps `GET /api/v1/books/:id/chapters`
   - `get_book_text(book_id, chapter?)` — wraps `GET /api/v1/books/:id/text`
   - `semantic_search(query)` — wraps `GET /api/v1/search?mode=semantic`
-- [ ] Auth: MCP tools require a configured API token (separate from JWT — long-lived, admin-generated)
-- [ ] Register MCP server in `claude mcp add` for Claude Code + Claude Desktop integration
-- [ ] Documentation: how to connect LangGraph, smolagents, and Claude Desktop to the library
+- [x] Auth: MCP tools require a configured API token (separate from JWT — long-lived, admin-generated)
+- [x] Register MCP server in `claude mcp add` for Claude Code + Claude Desktop integration
+- [x] Documentation: how to connect LangGraph, smolagents, and Claude Desktop to the library
+
+### Phase 9 — Feature Parity (In Progress)
+Closes the gap between autolibre and calibre-web's full feature set. Four stages:
+
+#### Stage 1 — Quick Wins ✅ In Progress
+- [x] OPDS catalog (`/opds`) — OPDS-PS 1.2, browse unauthenticated, download token-gated
+- [x] Email / Send-to-Kindle (`POST /api/v1/books/:id/send`) — SMTP via `lettre`
+- [x] CBZ/CBR comic reader — page extraction server-side, `ComicReader.tsx`
+- [x] Bulk metadata edit (`PATCH /api/v1/books`) — tags/series/rating/language/publisher
+- [x] Shelves UI completion — `ShelvesPage.tsx` wired to backend; "Add to shelf" on book detail
+
+#### Stage 2 — Auth Integrations ✅ Complete
+- [x] OAuth/SSO — Google + GitHub (`oauth2` crate); `GET /auth/oauth/:provider` + callback
+- [x] LDAP authentication — `ldap3` crate; falls back to local auth on connection failure (503)
+- [x] Book metadata lookup — Open Library + Google Books fallback; `GET /api/v1/books/:id/metadata-lookup`
+- [x] Account takeover fix — OAuth callback checks `oauth_accounts` first; never auto-links to existing local accounts by email
+- [x] Credential redaction — custom `Debug` impls for `OauthProviderSection` and `LdapSection`
+
+#### Stage 3 — Kobo Sync ✅ Complete
+- [x] Device registration via `X-Kobo-DeviceId` header at `/kobo/:token/v1/initialization`
+- [x] Incremental library sync with delta tokens (`list_kobo_books_since` — single paginated query)
+- [x] Reading state push/pull (`kobo_reading_state` → `reading_progress`; `format_id` not overwritten on sync)
+- [x] Shelves ↔ Kobo collections bidirectional sync
+- [x] Admin Kobo devices page
+- [x] Device reassignment clears `sync_token` to prevent sync state leakage across users
+
+#### Stage 4 — Multi-Library ✅ Complete
+- [x] `libraries` table; `library_id` on `books`; `default_library_id` on `users`
+- [x] Admin library management API + UI
+- [x] Per-user library switcher in header
+- [x] `autolibre-migrate --library-id` flag
+
+### Phase 10 — Extended Features ✅ Complete
+
+#### Stage 1 — Per-User Book State
+- [x] `book_user_state` table: per-user `is_read` + `is_archived` flags
+- [x] `download_history` table: records every file download per user
+- [x] `GET /api/v1/books/:id/state` — read/unread + archived state
+- [x] `PUT /api/v1/books/:id/state` — mark read/unread/archived
+- [x] `GET /api/v1/users/me/downloads` — download history for current user
+- [x] Library grid badge for unread status
+
+#### Stage 2 — OPDS Extended Feeds
+- [x] OPDS browse feeds for author, series, publisher, language, and ratings
+- [x] `publisher` stored in `books.flags` JSON (`json_extract(b.flags, '$.publisher')`)
+- [x] Publisher feed: `/opds/publishers`, `/opds/publishers/:publisher/books`
+- [x] Language feed: `/opds/languages`, `/opds/languages/:lang/books`
+- [x] Ratings feed: `/opds/ratings/:rating/books`
+- [x] All feeds OPDS-PS 1.2 compliant; download links remain token-gated
+
+#### Stage 3 — Per-User Tag Restrictions + Proxy Auth
+- [x] `user_tag_restrictions` table: per-user allow/block tag filter at browse time
+- [x] `GET /api/v1/users/me/tag-restrictions` — list own restrictions
+- [x] `PUT /api/v1/users/me/tag-restrictions` — set restrictions (admin can set for any user)
+- [x] Proxy authentication: `X-Remote-User` header support; configurable trusted proxy list
+- [x] Proxy auth creates local user on first header match (same flow as OAuth)
+
+#### Stage 4 — Merge Duplicates + Custom Columns UI
+- [x] Shared client/types for merge and custom columns in `packages/shared`
+- [x] `POST /api/v1/admin/books/merge` — merge duplicate books (keep target, absorb formats/tags from source)
+- [x] Custom columns browser in Admin panel — view all `custom_columns` + per-book values
+- [x] Bulk edit extended: custom column values editable in bulk metadata edit
+
+#### Stage 5 — Extended Format Support + RAG Text Extraction
+- [x] DJVU reader — server-side page extraction, `DjvuReader.tsx`
+- [x] Audio streaming — `GET /api/v1/books/:id/formats/:format/stream` extended for MP3/M4B/OGG
+- [x] MOBI/AZW3 reader — server-side conversion to HTML for display
+- [x] RAG text extraction improved: DJVU + MOBI formats now extractable via `/books/:id/text`
+- [x] `document_type` extended: `audiobook` added to CHECK constraint
+
+#### Stage 6 — i18n Framework
+- [x] i18n framework added to web app — `react-i18next` + per-locale JSON bundles
+- [x] Starter translations: EN (base), FR, DE, ES
+- [x] `GET /api/v1/locale` — list available locales
+- [x] User locale preference stored in DB; falls back to browser `Accept-Language`
+- [x] Admin locale picker in profile settings
+
+#### Stage 7 — Scheduled Tasks + In-App Update Checker
+- [x] `scheduled_tasks` table: cron-scheduled background jobs (`classify_all`, `semantic_index_all`, `backup`)
+- [x] Scheduler runs inside the Axum process — polls `next_run_at` on startup, executes via existing job queue
+- [x] `GET /admin/scheduled-tasks` — list tasks with next/last run times
+- [x] `POST /admin/scheduled-tasks` — create task
+- [x] `PATCH /admin/scheduled-tasks/:id` — update cron expression or enable/disable
+- [x] `DELETE /admin/scheduled-tasks/:id` — delete task
+- [x] In-app update checker: `GET /admin/system/updates` — compares running version against GitHub releases API
+- [x] Admin dashboard banner when a newer release is available
 
 ---
 
@@ -702,4 +797,19 @@ Expose the library as a first-class tool provider for external agentic AI system
 - NativeWind must stay in sync with Tailwind version used in web app
 - All API responses include `Content-Type: application/json` and proper HTTP status codes
 - Meilisearch is optional — app degrades to SQLite FTS5 if unavailable (same pattern as LLM)
-- No telemetry, no analytics, no external calls except LM Studio endpoints
+- No telemetry, no analytics, no external calls except LM Studio endpoints and the GitHub releases API (update checker)
+
+### `books.flags` JSON Column
+
+`books.flags` is a `TEXT` column storing a JSON object. Known keys:
+
+| Key | Type | Description |
+|---|---|---|
+| `publisher` | string | Book publisher — used by OPDS publisher feed and `json_extract` filters |
+
+All known keys are accessed via `json_extract(b.flags, '$.key')` in SQL. Do not store keys that need to be indexed or filterable at scale — add a proper column instead.
+
+### SSRF Notes
+
+- **LLM endpoints** — validated at startup via `validate_llm_endpoint()` in `config.rs`. Logs a warning when the endpoint resolves to a private/loopback IP and `llm.allow_private_endpoints = false`. Intentionally non-blocking to support LAN-hosted LM Studio. LLM endpoints are config-file-only — not changeable at runtime via API, so runtime SSRF injection is not possible.
+- **SMTP settings** — stored in `email_settings` table and admin-configurable at runtime. The `smtp_host` field has no host-validation guard; a malicious admin could point it at an internal service. Acceptable risk for a self-hosted single-admin app, but worth noting if multi-admin deployments become common.
