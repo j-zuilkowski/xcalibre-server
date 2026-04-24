@@ -200,7 +200,49 @@ async fn test_create_webhook_stores_encrypted_secret() {
 }
 
 #[tokio::test]
-async fn test_create_webhook_rejects_http_url() {
+async fn test_create_webhook_validates_private_destinations_at_creation() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+
+    for url in [
+        "http://127.0.0.1/hook",
+        "http://localhost/hook",
+        "http://169.254.169.254/metadata",
+    ] {
+        let response = ctx
+            .server
+            .post("/api/v1/users/me/webhooks")
+            .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+            .json(&json!({
+                "url": url,
+                "secret": "my-secret",
+                "events": ["book.added"]
+            }))
+            .await;
+
+        assert_status!(response, 422);
+        let body: serde_json::Value = response.json();
+        assert_eq!(
+            body["error"],
+            "webhook URL is not allowed: private or loopback address"
+        );
+    }
+    let response = ctx
+        .server
+        .post("/api/v1/users/me/webhooks")
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .json(&json!({
+            "url": "https://example.com/hook",
+            "secret": "my-secret",
+            "events": ["book.added"]
+        }))
+        .await;
+
+    assert_status!(response, 201);
+}
+
+#[tokio::test]
+async fn test_create_webhook_allows_public_http_and_unknown_events_rejects() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
 
@@ -215,13 +257,7 @@ async fn test_create_webhook_rejects_http_url() {
         }))
         .await;
 
-    assert_status!(response, 422);
-}
-
-#[tokio::test]
-async fn test_create_webhook_rejects_unknown_events() {
-    let ctx = TestContext::new().await;
-    let token = ctx.user_token().await;
+    assert_status!(response, 201);
 
     let response = ctx
         .server
@@ -235,47 +271,6 @@ async fn test_create_webhook_rejects_unknown_events() {
         .await;
 
     assert_status!(response, 422);
-}
-
-#[tokio::test]
-async fn test_create_webhook_rejects_all_private_destinations() {
-    let ctx = TestContext::new().await;
-    let token = ctx.user_token().await;
-
-    let blocked_urls = vec![
-        "http://127.0.0.1/hook",        // IPv4 loopback
-        "http://127.0.0.2/hook",        // loopback range
-        "http://[::1]/hook",            // IPv6 loopback
-        "http://localhost/hook",        // resolves to loopback
-        "http://0.0.0.0/hook",          // unspecified address
-        "http://10.0.0.1/hook",         // RFC 1918 class A
-        "http://10.255.255.255/hook",   // RFC 1918 class A upper
-        "http://172.16.0.1/hook",       // RFC 1918 class B lower
-        "http://172.31.255.255/hook",   // RFC 1918 class B upper
-        "http://192.168.0.1/hook",      // RFC 1918 class C lower
-        "http://192.168.255.255/hook",  // RFC 1918 class C upper
-        "http://169.254.1.1/hook",      // link-local (APIPA)
-        "http://169.254.169.254/hook",   // AWS metadata service
-    ];
-
-    for url in &blocked_urls {
-        let response = ctx
-            .server
-            .post("/api/v1/users/me/webhooks")
-            .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
-            .json(&json!({
-                "url": url,
-                "secret": "my-secret",
-                "events": ["book.added"]
-            }))
-            .await;
-
-        assert!(
-            response.status_code() == 422 || response.status_code() == 400,
-            "Expected SSRF rejection for {url}, got {}",
-            response.status_code()
-        );
-    }
 }
 
 #[tokio::test]

@@ -9,9 +9,11 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::Sha256;
 use std::{
+    net::IpAddr,
     sync::{Mutex, OnceLock},
     time::Duration,
 };
+use thiserror::Error;
 use utoipa::ToSchema;
 
 const WEBHOOK_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,6 +35,27 @@ pub struct DeliveryRequest<'a> {
     jwt_secret: &'a str,
     timeout: Duration,
     require_https: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum WebhookTargetError {
+    #[error("invalid URL")]
+    InvalidUrl,
+    #[error("only http and https schemes are allowed")]
+    UnsupportedScheme,
+    #[error("URL must include a host")]
+    MissingHost,
+    #[error("private or loopback address")]
+    PrivateOrLoopbackAddress,
+}
+
+impl From<WebhookTargetError> for AppError {
+    fn from(err: WebhookTargetError) -> Self {
+        match err {
+            WebhookTargetError::PrivateOrLoopbackAddress => AppError::SsrfBlocked,
+            _ => AppError::Unprocessable,
+        }
+    }
 }
 
 impl<'a> DeliveryRequest<'a> {
@@ -246,27 +269,28 @@ pub async fn deliver_single_delivery(
     }
 }
 
-pub async fn validate_webhook_target(url: &str, require_https: bool) -> Result<(), AppError> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| AppError::Unprocessable)?;
+pub async fn validate_webhook_target(
+    url: &str,
+    allow_private_endpoints: bool,
+) -> Result<(), WebhookTargetError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| WebhookTargetError::InvalidUrl)?;
     match parsed.scheme() {
         "http" | "https" => {}
-        _ => return Err(AppError::Unprocessable),
-    }
-    if require_https && parsed.scheme() != "https" {
-        return Err(AppError::Unprocessable);
+        _ => return Err(WebhookTargetError::UnsupportedScheme),
     }
 
-    let host = parsed.host_str().ok_or(AppError::Unprocessable)?;
-    let port = parsed
-        .port_or_known_default()
-        .ok_or(AppError::Unprocessable)?;
-    let resolved = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| AppError::Unprocessable)?;
+    let host = parsed.host_str().ok_or(WebhookTargetError::MissingHost)?;
+    if allow_private_endpoints {
+        return Ok(());
+    }
 
-    for addr in resolved {
-        if is_private_or_loopback(addr.ip()) {
-            return Err(AppError::SsrfBlocked);
+    if host.eq_ignore_ascii_case("localhost") {
+        return Err(WebhookTargetError::PrivateOrLoopbackAddress);
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_or_loopback(ip) {
+            return Err(WebhookTargetError::PrivateOrLoopbackAddress);
         }
     }
 

@@ -5,10 +5,12 @@ use crate::{
 use axum::{
     extract::{Extension, Path, State},
     middleware,
+    response::IntoResponse,
     routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashSet;
 use utoipa::ToSchema;
 
@@ -107,14 +109,25 @@ pub(crate) async fn create_webhook(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Json(payload): Json<CreateWebhookRequest>,
-) -> Result<(axum::http::StatusCode, Json<WebhookResponse>), AppError> {
+) -> Result<axum::response::Response, AppError> {
     let url = payload.url.trim().to_string();
     let secret = payload.secret.trim().to_string();
     if url.is_empty() || secret.is_empty() {
         return Err(AppError::BadRequest);
     }
 
-    webhook_engine::validate_webhook_target(&url, true).await?;
+    if let Err(err) = webhook_engine::validate_webhook_target(
+        &url,
+        state.config.llm.allow_private_endpoints,
+    )
+    .await
+    {
+        let body = Json(json!({
+            "error": format!("webhook URL is not allowed: {err}")
+        }));
+        return Ok((axum::http::StatusCode::UNPROCESSABLE_ENTITY, body).into_response());
+    }
+
     let events = validate_events(&payload.events)?;
     let encrypted_secret =
         totp_auth::encrypt_webhook_secret(&secret, &state.config.auth.jwt_secret)?;
@@ -134,7 +147,8 @@ pub(crate) async fn create_webhook(
     Ok((
         axum::http::StatusCode::CREATED,
         Json(webhook_to_response(webhook)),
-    ))
+    )
+        .into_response())
 }
 
 #[utoipa::path(
@@ -171,7 +185,8 @@ pub(crate) async fn update_webhook(
         if url.is_empty() {
             return Err(AppError::BadRequest);
         }
-        webhook_engine::validate_webhook_target(&url, true).await?;
+        webhook_engine::validate_webhook_target(&url, state.config.llm.allow_private_endpoints)
+            .await?;
         changed = true;
         url
     } else {
