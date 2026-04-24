@@ -27,13 +27,21 @@ pub struct AccessTokenClaims {
     pub iat: usize,
     pub exp: usize,
     #[serde(default)]
+    pub jti: String,
+    #[serde(default)]
     pub totp_pending: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct AuthenticatedUser {
     pub user: crate::db::models::User,
-    pub api_token_scope: Option<TokenScope>,
+    pub kind: AuthKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum AuthKind {
+    Session,
+    Token(TokenScope),
 }
 
 #[derive(Clone, Debug)]
@@ -68,8 +76,8 @@ where
         if user.user.role.name != "admin" {
             return Err(AppError::Forbidden("forbidden".into()));
         }
-        if let Some(scope) = user.api_token_scope {
-            require_admin_scope(scope)?;
+        if let AuthKind::Token(scope) = &user.kind {
+            require_admin_scope(*scope)?;
         }
         Ok(RequireAdmin)
     }
@@ -85,6 +93,7 @@ pub fn issue_access_token(
         sub: user_id.to_string(),
         iat: now.timestamp() as usize,
         exp: (now + Duration::minutes(ttl_mins as i64)).timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
         totp_pending: false,
     };
 
@@ -119,6 +128,7 @@ pub fn issue_totp_pending_token(user_id: &str, jwt_secret: &str) -> Result<Strin
         sub: user_id.to_string(),
         iat: now.timestamp() as usize,
         exp: (now + Duration::minutes(TOTP_PENDING_TTL_MINS)).timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
         totp_pending: true,
     };
 
@@ -166,7 +176,7 @@ pub async fn require_auth(
         }
         req.extensions_mut().insert(AuthenticatedUser {
             user,
-            api_token_scope: None,
+            kind: AuthKind::Session,
         });
         return Ok(next.run(req).await);
     }
@@ -178,7 +188,7 @@ pub async fn require_auth(
             .map_err(|_| AppError::Internal)?
             .map(|user| AuthenticatedUser {
                 user,
-                api_token_scope: None,
+                kind: AuthKind::Session,
             }),
         Err(AppError::Unauthorized) => authenticate_api_token(&state, token, req.method()).await?,
         Err(err) => return Err(err),
@@ -320,7 +330,7 @@ async fn authenticate_api_token(
 
     Ok(Some(AuthenticatedUser {
         user,
-        api_token_scope: Some(api_token.scope),
+        kind: AuthKind::Token(api_token.scope),
     }))
 }
 
