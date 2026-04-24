@@ -298,6 +298,41 @@ export type ScheduledTaskPatchRequest = {
   cron_expr?: string;
 };
 
+export type WebhookEventName =
+  | "book.added"
+  | "book.deleted"
+  | "import.completed"
+  | "llm_job.completed"
+  | "user.registered";
+
+export type Webhook = {
+  id: string;
+  url: string;
+  events: WebhookEventName[];
+  enabled: boolean;
+  last_delivery_at: string | null;
+  last_error: string | null;
+  created_at: string;
+};
+
+export type WebhookCreateRequest = {
+  url: string;
+  secret: string;
+  events: WebhookEventName[];
+};
+
+export type WebhookUpdateRequest = {
+  url?: string;
+  events?: WebhookEventName[];
+  enabled?: boolean;
+};
+
+export type WebhookTestResponse = {
+  delivered: boolean;
+  response_status: number | null;
+  error: string | null;
+};
+
 export type UpdateCheckResponse = {
   current_version?: string;
   latest_version?: string;

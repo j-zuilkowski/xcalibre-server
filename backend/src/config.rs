@@ -671,7 +671,7 @@ pub async fn validate_llm_endpoint(
     Ok(())
 }
 
-fn is_private_or_loopback(ip: IpAddr) -> bool {
+pub(crate) fn is_private_or_loopback(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()

@@ -6,6 +6,7 @@ use crate::{
     },
     ingest::goodreads::{parse_goodreads_csv, parse_storygraph_csv, GoodreadsRow, StorygraphRow},
     middleware::auth::AuthenticatedUser,
+    webhooks as webhook_engine,
     AppError, AppState,
 };
 use axum::{
@@ -452,6 +453,7 @@ async fn run_import_task(
     job_id: &str,
     source: ImportSource,
 ) -> anyhow::Result<()> {
+    let started_at = std::time::Instant::now();
     import_log_queries::update_import_log(&state.db, job_id, "running", 0, 0, &[], None).await?;
 
     match source {
@@ -476,6 +478,25 @@ async fn run_import_task(
         Some(&Utc::now().to_rfc3339()),
     )
     .await?;
+
+    let total = log.total_rows.unwrap_or(log.matched + log.unmatched);
+    let _ = webhook_engine::enqueue_event(
+        &state.db,
+        "import.completed",
+        serde_json::json!({
+            "event": "import.completed",
+            "timestamp": Utc::now().to_rfc3339(),
+            "library_name": state.config.app.library_name.clone(),
+            "data": {
+                "job_id": job_id,
+                "total": total,
+                "succeeded": log.matched,
+                "failed": log.unmatched,
+                "duration_ms": started_at.elapsed().as_millis() as i64,
+            }
+        }),
+    )
+    .await;
     Ok(())
 }
 

@@ -36,6 +36,10 @@ import type {
   ScheduledTask,
   ScheduledTaskCreateRequest,
   ScheduledTaskPatchRequest,
+  Webhook,
+  WebhookCreateRequest,
+  WebhookTestResponse,
+  WebhookUpdateRequest,
   UpdateCheckResponse,
   ImportStatus,
   KoboDevice,
@@ -194,6 +198,39 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ password }),
     });
+  }
+
+  async listWebhooks(): Promise<Webhook[]> {
+    return this.requestJson<Webhook[]>("/api/v1/users/me/webhooks");
+  }
+
+  async createWebhook(request: WebhookCreateRequest): Promise<Webhook> {
+    return this.requestJson<Webhook>("/api/v1/users/me/webhooks", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async updateWebhook(id: string, request: WebhookUpdateRequest): Promise<Webhook> {
+    return this.requestJson<Webhook>(`/api/v1/users/me/webhooks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteWebhook(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/users/me/webhooks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async testWebhook(id: string): Promise<WebhookTestResponse> {
+    return this.requestJson<WebhookTestResponse>(
+      `/api/v1/users/me/webhooks/${encodeURIComponent(id)}/test`,
+      {
+        method: "POST",
+      },
+    );
   }
 
   async verifyTotp(token: string, code: string): Promise<AuthSession> {

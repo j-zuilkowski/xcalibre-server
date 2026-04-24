@@ -34,6 +34,11 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::api::books::upsert_reading_progress,
         crate::api::books::list_annotations,
         crate::api::books::create_annotation,
+        crate::api::webhooks::list_webhooks,
+        crate::api::webhooks::create_webhook,
+        crate::api::webhooks::update_webhook,
+        crate::api::webhooks::delete_webhook,
+        crate::api::webhooks::test_webhook,
         crate::api::search::search_books,
         crate::api::search::search_semantic,
         crate::api::shelves::list_shelves,
@@ -74,6 +79,11 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::db::queries::stats::UserStats,
         crate::db::queries::scheduled_tasks::ScheduledTask,
         crate::api::users::ImportJobResponse,
+        crate::api::webhooks::CreateWebhookRequest,
+        crate::api::webhooks::UpdateWebhookRequest,
+        crate::api::webhooks::WebhookResponse,
+        crate::api::webhooks::DeleteWebhookResponse,
+        crate::webhooks::DeliveryAttemptResult,
         crate::error::AppErrorResponse
     )),
     modifiers(&SecurityAddon),
@@ -86,6 +96,7 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "shelves", description = "Personal reading lists"),
         (name = "reader", description = "Reading progress and annotations"),
         (name = "users", description = "Current user profile operations"),
+        (name = "webhooks", description = "User webhook delivery"),
         (name = "health", description = "Service health checks")
     )
 )]

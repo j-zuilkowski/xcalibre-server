@@ -29,6 +29,8 @@ pub enum AppError {
     NotImplemented,
     #[error("service unavailable")]
     ServiceUnavailable,
+    #[error("webhook url must be a public endpoint")]
+    SsrfBlocked,
     #[error("internal error")]
     Internal,
 }
@@ -54,6 +56,7 @@ impl IntoResponse for AppError {
             }
             AppError::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"),
+            AppError::SsrfBlocked => (StatusCode::UNPROCESSABLE_ENTITY, "ssrf_blocked"),
             AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
         let body = Json(AppErrorResponse {

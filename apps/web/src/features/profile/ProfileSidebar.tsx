@@ -2,13 +2,14 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
 type ProfileSidebarProps = {
-  active: "profile" | "stats" | "import";
+  active: "profile" | "stats" | "import" | "webhooks";
 };
 
 const NAV_ITEMS = [
   { key: "profile" as const, to: "/profile", label: "nav.profile" },
   { key: "stats" as const, to: "/profile/stats", label: "nav.reading_stats" },
   { key: "import" as const, to: "/profile/import", label: "nav.import_history" },
+  { key: "webhooks" as const, to: "/profile/webhooks", label: "Webhooks" },
 ];
 
 export function ProfileSidebar({ active }: ProfileSidebarProps) {

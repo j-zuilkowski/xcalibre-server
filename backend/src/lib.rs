@@ -9,17 +9,35 @@ pub mod metrics;
 pub mod middleware;
 pub mod scheduler;
 pub mod search;
+pub mod webhooks;
 pub mod state;
 pub mod storage;
 pub mod storage_s3;
 
-pub use api::router as app;
+use axum::{routing::get, Router};
+
 pub use config::AppConfig;
 pub use db::models::*;
 pub use error::AppError;
 pub use state::AppState;
 
 pub type Result<T> = std::result::Result<T, AppError>;
+
+pub fn app(state: AppState) -> Router {
+    let (prometheus_layer, metrics_handle) = {
+        let bundle = crate::metrics::metrics_bundle();
+        (bundle.layer(), bundle.handle())
+    };
+    let api_router = api::router(state.clone());
+
+    Router::new()
+        .route(
+            "/metrics",
+            get(move || async move { metrics_handle.render() }),
+        )
+        .merge(api_router)
+        .layer(prometheus_layer)
+}
 
 pub async fn bootstrap() -> anyhow::Result<(AppState, tokio::net::TcpListener)> {
     init_tracing();

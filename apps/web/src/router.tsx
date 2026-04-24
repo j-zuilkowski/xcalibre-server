@@ -15,6 +15,7 @@ import { TagsPage } from "./features/admin/TagsPage";
 import { AuthorsPage } from "./features/admin/AuthorsPage";
 import { ImportPage as ProfileImportPage } from "./features/profile/ImportPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
+import { WebhooksPage } from "./features/profile/WebhooksPage";
 import { StatsPage } from "./features/profile/StatsPage";
 import { AuthorPage } from "./features/library/AuthorPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
@@ -74,6 +75,12 @@ const profileImportRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "profile/import",
   component: ProfileImportPage,
+});
+
+const profileWebhooksRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "profile/webhooks",
+  component: WebhooksPage,
 });
 
 const bookRoute = createRoute({
@@ -181,6 +188,7 @@ export const routeTree = rootRoute.addChildren([
     profileRoute,
     profileStatsRoute,
     profileImportRoute,
+    profileWebhooksRoute,
     bookRoute,
     authorRoute,
     readerRoute,

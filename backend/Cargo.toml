@@ -30,6 +30,7 @@ governor = "0.6"
 http = "1"
 hex = "0.4"
 hkdf = "0.12"
+hmac = "0.12"
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 jsonwebtoken = "9"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }

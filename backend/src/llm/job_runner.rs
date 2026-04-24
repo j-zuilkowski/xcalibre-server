@@ -3,7 +3,9 @@ use crate::{
     llm::classify::classify_book,
     metrics,
     state::AppState,
+    webhooks as webhook_engine,
 };
+use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -138,6 +140,14 @@ async fn process_semantic_job(state: AppState, job: llm_queries::SemanticIndexJo
         Ok(()) => {
             if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
                 tracing::error!(job_id = %job.id, error = %err, "failed to mark semantic job completed");
+            } else {
+                emit_llm_job_completed_event(
+                    &state,
+                    &job,
+                    Some(&book_id),
+                    Some(&document.title),
+                )
+                .await;
             }
         }
         Err(err) => {
@@ -195,6 +205,8 @@ async fn process_classify_job(state: AppState, job: llm_queries::SemanticIndexJo
 
     if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
         tracing::error!(job_id = %job.id, error = %err, "failed to mark classify job completed");
+    } else {
+        emit_llm_job_completed_event(&state, &job, Some(&book_id), Some(&book.title)).await;
     }
 }
 
@@ -233,11 +245,39 @@ async fn process_organize_job(state: AppState, job: llm_queries::SemanticIndexJo
 
     if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
         tracing::error!(job_id = %job.id, error = %err, "failed to mark organize job completed");
+    } else {
+        emit_llm_job_completed_event(&state, &job, None, None).await;
     }
 }
 
 async fn process_backup_job(state: AppState, job: llm_queries::SemanticIndexJob) {
     if let Err(err) = llm_queries::mark_job_completed(&state.db, &job.id).await {
         tracing::error!(job_id = %job.id, error = %err, "failed to mark backup job completed");
+    } else {
+        emit_llm_job_completed_event(&state, &job, None, None).await;
     }
+}
+
+async fn emit_llm_job_completed_event(
+    state: &AppState,
+    job: &llm_queries::SemanticIndexJob,
+    book_id: Option<&str>,
+    title: Option<&str>,
+) {
+    let _ = webhook_engine::enqueue_event(
+        &state.db,
+        "llm_job.completed",
+        serde_json::json!({
+            "event": "llm_job.completed",
+            "timestamp": Utc::now().to_rfc3339(),
+            "library_name": state.config.app.library_name.clone(),
+            "data": {
+                "job_id": job.id.clone(),
+                "type": job.job_type.clone(),
+                "book_id": book_id,
+                "title": title,
+            }
+        }),
+    )
+    .await;
 }

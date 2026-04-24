@@ -17,6 +17,7 @@ pub struct AppState {
     pub search: Arc<dyn crate::search::SearchBackend>,
     pub semantic_search: Option<Arc<crate::search::semantic::SemanticSearch>>,
     pub chat_client: Option<ChatClient>,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -43,6 +44,10 @@ impl AppState {
             other => anyhow::bail!("Unknown storage backend: {other}"),
         };
         let search = crate::search::build_search_backend(&config, db.clone()).await;
+        let http_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        crate::webhooks::set_webhook_jwt_secret(config.auth.jwt_secret.clone());
         let semantic_search = if config.llm.enabled {
             match EmbeddingClient::new(&config) {
                 Ok(client) => Some(Arc::new(crate::search::semantic::SemanticSearch::new(
@@ -70,6 +75,7 @@ impl AppState {
             search,
             semantic_search,
             chat_client,
+            http_client,
         })
     }
 }

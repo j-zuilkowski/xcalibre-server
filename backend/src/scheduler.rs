@@ -1,12 +1,14 @@
 use crate::{
     db::queries::{llm as llm_queries, scheduled_tasks as scheduled_task_queries},
     metrics, AppState,
+    webhooks as webhook_engine,
 };
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use std::{str::FromStr, time::Duration};
 
-const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
+const SCHEDULED_TASK_INTERVAL: Duration = Duration::from_secs(60);
+const WEBHOOK_DELIVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 pub fn spawn_scheduler(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -15,20 +17,34 @@ pub fn spawn_scheduler(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 pub async fn run_scheduler(state: AppState) {
-    let mut interval = tokio::time::interval_at(
-        tokio::time::Instant::now() + SCHEDULER_INTERVAL,
-        SCHEDULER_INTERVAL,
+    let mut scheduled_task_interval = tokio::time::interval_at(
+        tokio::time::Instant::now() + SCHEDULED_TASK_INTERVAL,
+        SCHEDULED_TASK_INTERVAL,
     );
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    scheduled_task_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut webhook_interval = tokio::time::interval_at(
+        tokio::time::Instant::now() + WEBHOOK_DELIVERY_INTERVAL,
+        WEBHOOK_DELIVERY_INTERVAL,
+    );
+    webhook_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     if let Err(err) = refresh_operational_metrics(&state).await {
         tracing::warn!(error = %err, "failed to refresh scheduler metrics");
     }
 
     loop {
-        interval.tick().await;
-        if let Err(err) = process_due_scheduled_tasks_once(&state).await {
-            tracing::error!(error = %err, "scheduled task scheduler iteration failed");
+        tokio::select! {
+            _ = scheduled_task_interval.tick() => {
+                if let Err(err) = process_due_scheduled_tasks_once(&state).await {
+                    tracing::error!(error = %err, "scheduled task scheduler iteration failed");
+                }
+            }
+            _ = webhook_interval.tick() => {
+                if let Err(err) = webhook_engine::deliver_pending(&state.db, &state.http_client).await {
+                    tracing::error!(error = %err, "webhook delivery scheduler iteration failed");
+                }
+            }
         }
         if let Err(err) = refresh_operational_metrics(&state).await {
             tracing::warn!(error = %err, "failed to refresh scheduler metrics");

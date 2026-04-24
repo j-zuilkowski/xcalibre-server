@@ -4,6 +4,7 @@ use crate::{
     middleware::auth::{
         issue_access_token, issue_totp_pending_token, AuthenticatedUser, TotpPendingUser,
     },
+    webhooks as webhook_engine,
     AppError, AppState,
 };
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
@@ -191,6 +192,22 @@ async fn register(
     )
     .await
     .map_err(|_| AppError::Internal)?;
+
+    let _ = webhook_engine::enqueue_event(
+        &state.db,
+        "user.registered",
+        json!({
+            "event": "user.registered",
+            "timestamp": Utc::now().to_rfc3339(),
+            "library_name": state.config.app.library_name.clone(),
+            "data": {
+                "id": user.id.clone(),
+                "username": user.username.clone(),
+                "role": user.role.name.clone(),
+            }
+        }),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(user)))
 }

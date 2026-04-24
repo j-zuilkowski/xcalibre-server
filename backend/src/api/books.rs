@@ -7,6 +7,7 @@ use crate::{
     llm::classify_type::{classify_document_type, DocumentType},
     metrics::ImportMetricsGuard,
     middleware::auth::AuthenticatedUser,
+    webhooks as webhook_engine,
     AppError, AppState,
 };
 use axum::{
@@ -1459,6 +1460,31 @@ pub(crate) async fn upload_book(
 
     enqueue_semantic_index_if_enabled(&state, &book.id).await;
     queue_book_index(state.search.clone(), book.clone());
+    let _ = webhook_engine::enqueue_event(
+        &state.db,
+        "book.added",
+        serde_json::json!({
+            "event": "book.added",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "library_name": state.config.app.library_name.clone(),
+            "data": {
+                "id": book.id.clone(),
+                "title": book.title.clone(),
+                "authors": book
+                    .authors
+                    .iter()
+                    .map(|author| author.name.clone())
+                    .collect::<Vec<_>>(),
+                "formats": book
+                    .formats
+                    .iter()
+                    .map(|format| format.format.clone())
+                    .collect::<Vec<_>>(),
+                "cover_url": book.cover_url.clone(),
+            }
+        }),
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(book)))
 }
 
@@ -1576,6 +1602,16 @@ pub(crate) async fn delete_book(
         return Err(AppError::Forbidden);
     }
 
+    let book_snapshot = book_queries::get_book_by_id(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?
+    .ok_or(AppError::NotFound)?;
+
     let Some(paths) = book_queries::delete_book_and_collect_paths(
         &state.db,
         &book_id,
@@ -1599,6 +1635,21 @@ pub(crate) async fn delete_book(
             return Err(AppError::Internal);
         }
     }
+
+    let _ = webhook_engine::enqueue_event(
+        &state.db,
+        "book.deleted",
+        serde_json::json!({
+            "event": "book.deleted",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "library_name": state.config.app.library_name.clone(),
+            "data": {
+                "id": book_snapshot.id,
+                "title": book_snapshot.title,
+            }
+        }),
+    )
+    .await;
 
     Ok(Json(
         serde_json::to_value(DeleteBookResponse { success: true })
