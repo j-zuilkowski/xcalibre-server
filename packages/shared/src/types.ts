@@ -26,6 +26,47 @@ export type AuthorRef = {
   sort_name: string;
 };
 
+export type AuthorProfile = {
+  bio: string | null;
+  photo_url: string | null;
+  born: string | null;
+  died: string | null;
+  website_url: string | null;
+  openlibrary_id: string | null;
+};
+
+export type AuthorDetail = {
+  id: string;
+  name: string;
+  sort_name: string;
+  profile: AuthorProfile | null;
+  book_count: number;
+  books: BookSummary[];
+  page: number;
+  page_size: number;
+};
+
+export type AdminAuthor = {
+  id: string;
+  name: string;
+  sort_name: string;
+  book_count: number;
+  has_profile: boolean;
+};
+
+export type AuthorProfilePatch = {
+  bio?: string | null;
+  born?: string | null;
+  died?: string | null;
+  website_url?: string | null;
+  openlibrary_id?: string | null;
+};
+
+export type MergeAuthorResponse = {
+  books_updated: number;
+  target_author: AuthorRef;
+};
+
 export type SeriesRef = {
   id: string;
   name: string;

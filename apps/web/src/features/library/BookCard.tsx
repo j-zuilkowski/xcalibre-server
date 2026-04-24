@@ -11,11 +11,18 @@ type BookCardProps = {
   score?: number;
 };
 
-function authorLabel(book: BookSummary, t: (key: string) => string): string {
+function authorLabel(book: BookSummary, t: (key: string) => string) {
   if (book.authors.length === 0) {
     return t("common.unknown_author");
   }
-  return book.authors.map((author) => author.name).join(", ");
+  return book.authors.map((author, index) => (
+    <span key={author.id}>
+      <a href={`/authors/${encodeURIComponent(author.id)}`} className="text-teal-700 hover:underline">
+        {author.name}
+      </a>
+      {index < book.authors.length - 1 ? ", " : null}
+    </span>
+  ));
 }
 
 function ReadIcon() {

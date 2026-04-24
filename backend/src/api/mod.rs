@@ -7,6 +7,7 @@ use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
 
 pub mod admin;
+pub mod authors;
 pub mod auth;
 pub mod books;
 pub mod docs;
@@ -21,21 +22,17 @@ pub mod users;
 pub fn router(state: crate::AppState) -> Router {
     let global_rate_limit_per_ip = state.config.limits.rate_limit_per_ip;
     let upload_max_bytes = state.config.limits.upload_max_bytes;
-    let prometheus_layer = crate::metrics::prometheus_layer();
-    let metrics_handle = crate::metrics::prometheus_handle();
     let auth_router = auth::router(state.clone());
     let web_dist_dir = web_dist_dir();
     let assets_dir = web_dist_dir.join("assets");
 
     Router::new()
         .route("/health", get(health::health_handler))
-        .route(
-            "/metrics",
-            get(move || async move { metrics_handle.render() }),
-        )
         .merge(docs::openapi_routes(state.clone()))
         .nest("/api/v1/auth", auth_router)
         .merge(admin::router(state.clone()))
+        .route("/authors/:bucket/:filename", get(authors::serve_author_photo))
+        .merge(authors::router(state.clone()))
         .merge(books::router(state.clone()))
         .merge(users::router(state.clone()))
         .nest("/kobo/:kobo_token/v1", kobo::router(state.clone()))
@@ -64,7 +61,6 @@ pub fn router(state: crate::AppState) -> Router {
         .layer(crate::middleware::security_headers::cors_layer(
             &state.config.app.base_url,
         ))
-        .layer(prometheus_layer)
         .with_state(state)
 }
 

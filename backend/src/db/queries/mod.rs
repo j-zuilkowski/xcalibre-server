@@ -1,4 +1,5 @@
 pub mod annotations;
+pub mod authors;
 pub mod api_tokens;
 pub mod auth;
 pub mod book_insert;

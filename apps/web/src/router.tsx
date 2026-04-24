@@ -12,9 +12,11 @@ import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
 import { TagsPage } from "./features/admin/TagsPage";
+import { AuthorsPage } from "./features/admin/AuthorsPage";
 import { ImportPage as ProfileImportPage } from "./features/profile/ImportPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
 import { StatsPage } from "./features/profile/StatsPage";
+import { AuthorPage } from "./features/library/AuthorPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -80,6 +82,12 @@ const bookRoute = createRoute({
   component: BookDetailPage,
 });
 
+const authorRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "authors/$id",
+  component: AuthorPage,
+});
+
 const readerRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "books/$id/read/$format",
@@ -108,6 +116,12 @@ const adminTagsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "tags",
   component: TagsPage,
+});
+
+const adminAuthorsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "authors",
+  component: AuthorsPage,
 });
 
 const adminImportRoute = createRoute({
@@ -168,11 +182,13 @@ export const routeTree = rootRoute.addChildren([
     profileStatsRoute,
     profileImportRoute,
     bookRoute,
+    authorRoute,
     readerRoute,
     adminRoute.addChildren([
       adminDashboardRoute,
       adminUsersRoute,
       adminTagsRoute,
+      adminAuthorsRoute,
       adminImportRoute,
       adminJobsRoute,
       adminScheduledTasksRoute,

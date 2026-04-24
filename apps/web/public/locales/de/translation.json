@@ -313,6 +313,7 @@
   "admin": {
     "add_custom_column": "Add custom column",
     "add_library": "Add library",
+    "authors": "Autoren",
     "all_job_types": "All job types",
     "all_llm_surfaces_disabled": "All LLM surfaces disabled.",
     "all_statuses": "All statuses",

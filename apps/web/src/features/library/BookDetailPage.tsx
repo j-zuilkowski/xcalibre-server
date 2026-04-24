@@ -63,12 +63,22 @@ function formatBytes(sizeBytes: number): string {
   return `${size.toFixed(decimals)} ${units[index]}`;
 }
 
-function getAuthorsLabel(book: Book, t: (key: string, options?: Record<string, unknown>) => string): string {
+function getAuthorsLabel(
+  book: { authors: Array<{ id: string; name: string }> },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): ReactNode {
   if (book.authors.length === 0) {
     return t("common.unknown_author");
   }
 
-  return book.authors.map((author) => author.name).join(", ");
+  return book.authors.map((author, index) => (
+    <span key={author.id}>
+      <a href={`/authors/${encodeURIComponent(author.id)}`} className="text-teal-700 hover:underline">
+        {author.name}
+      </a>
+      {index < book.authors.length - 1 ? ", " : null}
+    </span>
+  ));
 }
 
 function getReadFormat(formats: FormatRef[]): string | null {
@@ -1191,7 +1201,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       >
                         <span>{candidate.title}</span>
                         <span className="text-zinc-500">
-                          {candidate.authors.map((author) => author.name).join(", ")}
+                          {getAuthorsLabel(candidate, t)}
                         </span>
                       </button>
                     ))}
@@ -1207,7 +1217,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t("book.primary_keep")}</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-900">{book.title}</p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      {t("book.authors")}: {book.authors.map((author) => author.name).join(", ") || t("common.unknown")}
+                      {t("book.authors")}: {getAuthorsLabel(book, t)}
                     </p>
                     <p className="mt-1 text-sm text-zinc-700">
                       {t("book.formats")}: {book.formats.map((format) => format.format.toUpperCase()).join(", ") || t("common.none")}
@@ -1218,8 +1228,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{t("book.duplicate_remove")}</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-900">{selectedDuplicateBook.title}</p>
                     <p className="mt-1 text-sm text-zinc-700">
-                      {t("book.authors")}:{" "}
-                      {selectedDuplicateBook.authors.map((author) => author.name).join(", ") || t("common.unknown")}
+                      {t("book.authors")}: {getAuthorsLabel(selectedDuplicateBook, t)}
                     </p>
                     <p className="mt-1 text-sm text-zinc-700">
                       {t("book.formats")}:{" "}

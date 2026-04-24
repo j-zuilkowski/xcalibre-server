@@ -1,11 +1,14 @@
 import type {
   ApiError,
   AdminTag,
+  AdminAuthor,
   AdminTagWithCount,
   AdminJob,
   AdminUser,
   AdminUserCreateRequest,
   AdminUserUpdateRequest,
+  AuthorDetail,
+  AuthorProfilePatch,
   AuthProvidersResponse,
   BulkImportRequest,
   BulkImportResponse,
@@ -13,6 +16,7 @@ import type {
   BookAnnotation,
   BookChapters,
   MetadataLookupResponse,
+  MergeAuthorResponse,
   MergeTagResponse,
   BookSummary,
   BookText,
@@ -272,6 +276,51 @@ export class ApiClient {
 
   async getBook(id: string): Promise<Book> {
     return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(id)}`);
+  }
+
+  async getAuthor(
+    id: string,
+    params: { page?: number; page_size?: number } = {},
+  ): Promise<AuthorDetail> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (!isPresentParam(value)) {
+        continue;
+      }
+      search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<AuthorDetail>(`/api/v1/authors/${encodeURIComponent(id)}${suffix}`);
+  }
+
+  async patchAuthor(id: string, patch: AuthorProfilePatch): Promise<AuthorDetail> {
+    return this.requestJson<AuthorDetail>(`/api/v1/authors/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  async listAdminAuthors(params: {
+    q?: string;
+    page?: number;
+    page_size?: number;
+  } = {}): Promise<PaginatedResponse<AdminAuthor>> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (!isPresentParam(value)) {
+        continue;
+      }
+      search.set(key, String(value));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return this.requestJson<PaginatedResponse<AdminAuthor>>(`/api/v1/admin/authors${suffix}`);
+  }
+
+  async mergeAuthor(id: string, intoAuthorId: string): Promise<MergeAuthorResponse> {
+    return this.requestJson<MergeAuthorResponse>(`/api/v1/admin/authors/${encodeURIComponent(id)}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ into_author_id: intoAuthorId }),
+    });
   }
 
   async setBookReadState(id: string, isRead: boolean): Promise<void> {
