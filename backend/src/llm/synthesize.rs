@@ -52,6 +52,13 @@ pub async fn synthesize(
 ) -> anyhow::Result<SynthesisResult> {
     let query = query.trim().to_string();
     let format_key = format.trim().to_ascii_lowercase();
+    let custom_prompt = if format_key == "custom" {
+        custom_prompt
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    } else {
+        None
+    };
     let instruction = format_instruction(&format_key, custom_prompt)?;
     let sources = chunks
         .iter()
@@ -88,7 +95,7 @@ pub async fn synthesize(
         });
     };
 
-    let user_message = build_synthesis_prompt(&chunks, &instruction, &query);
+    let user_message = build_synthesis_prompt(&chunks, &instruction, &query, custom_prompt);
     let started = Instant::now();
     let output = match chat_client.complete(&user_message).await {
         Ok(content) => content.trim().to_string(),
@@ -125,11 +132,9 @@ pub fn format_instruction(format: &str, custom_prompt: Option<&str>) -> anyhow::
         "cross-reference" => Ok("Produce an indexed list of every location where the queried topic appears. Format: Book Title > Section > exact quote or description.".to_string()),
         "research-synthesis" => Ok("Produce a research synthesis: summarize the main findings per source, note agreements and contradictions, identify gaps. APA-style citations.".to_string()),
         "custom" => {
-            let prompt = custom_prompt
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+            let _ = custom_prompt
                 .ok_or_else(|| anyhow::anyhow!("custom_prompt is required when format = custom"))?;
-            Ok(prompt.to_string())
+            Ok("Follow the user instructions below.".to_string())
         }
         other => Err(anyhow::anyhow!("unsupported synthesize format: {other}")),
     }
@@ -139,6 +144,7 @@ fn build_synthesis_prompt(
     chunks: &[SynthesisChunk],
     format_instruction: &str,
     query: &str,
+    custom_prompt: Option<&str>,
 ) -> String {
     let source_blocks = chunks
         .iter()
@@ -160,13 +166,27 @@ fn build_synthesis_prompt(
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    format!(
+    let mut system = format!(
         "You are a technical synthesis assistant. {format_instruction}\n\
-         Query: {query}\n\n\
-         {INJECTION_NOTICE}\n\n\
+         Query: {query}\n\n"
+    );
+
+    if let Some(prompt) = custom_prompt {
+        // Fence user-supplied instructions so the model treats them as data rather than
+        // authoritative prompt text that can override the surrounding system guidance.
+        system.push_str(&format!(
+            "\n{INJECTION_NOTICE}\n{SOURCE_OPEN}\n[USER INSTRUCTIONS]\n{}\n{SOURCE_CLOSE}\n",
+            prompt
+        ));
+    }
+
+    system.push_str(&format!(
+        "\n{INJECTION_NOTICE}\n\
          {SOURCE_OPEN}\n\
          {source_blocks}\n\
          {SOURCE_CLOSE}\n\n\
-         Synthesize the above source material into the requested format. Cite sources by their [Source N] label where applicable.",
-    )
+         Synthesize the above source material into the requested format. Cite sources by their [Source N] label where applicable."
+    ));
+
+    system
 }
