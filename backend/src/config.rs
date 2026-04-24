@@ -449,7 +449,18 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
             anyhow::bail!("auth.proxy.header is required when auth.proxy.enabled is true");
         }
     }
+    if should_warn_http_base_url_without_https_only(config) {
+        tracing::warn!(
+            "SECURITY: base_url is HTTP and https_only is false. \
+             Session cookies will not have the Secure flag. \
+             Set server.https_only = true or use an HTTPS base_url in production."
+        );
+    }
     Ok(())
+}
+
+pub(crate) fn should_warn_http_base_url_without_https_only(config: &AppConfig) -> bool {
+    config.app.base_url.starts_with("http://") && !config.server.https_only
 }
 
 fn generate_jwt_secret() -> String {
@@ -755,4 +766,18 @@ fn warn_if_world_readable(path: &Path) -> anyhow::Result<()> {
 #[cfg(not(unix))]
 fn warn_if_world_readable(_path: &Path) -> anyhow::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_base_url_with_https_only_disabled_triggers_warning_condition() {
+        let mut config = AppConfig::default();
+        config.app.base_url = "http://myserver.com".to_string();
+        config.server.https_only = false;
+
+        assert!(should_warn_http_base_url_without_https_only(&config));
+    }
 }
