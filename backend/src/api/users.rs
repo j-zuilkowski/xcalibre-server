@@ -1,5 +1,5 @@
 use crate::{
-    db::queries::{auth as auth_queries, libraries as library_queries},
+    db::queries::{auth as auth_queries, libraries as library_queries, stats as stats_queries},
     middleware::auth::AuthenticatedUser,
     AppError, AppState,
 };
@@ -19,6 +19,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/api/v1/users/me", get(me).patch(patch_me))
+        .route("/api/v1/users/me/stats", get(me_stats))
         .route("/api/v1/libraries", get(list_libraries))
         .route("/api/v1/users/me/library", patch(update_default_library))
         .route_layer(auth_layer)
@@ -66,6 +67,32 @@ pub(crate) async fn me(
     Extension(auth_user): Extension<AuthenticatedUser>,
 ) -> Result<Json<crate::db::models::User>, AppError> {
     Ok(Json(auth_user.user))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/me/stats",
+    tag = "users",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Reading statistics", body = stats_queries::UserStats),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn me_stats(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<stats_queries::UserStats>, AppError> {
+    let stats = stats_queries::get_user_stats(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(stats))
 }
 
 #[utoipa::path(

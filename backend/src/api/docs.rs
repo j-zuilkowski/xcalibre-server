@@ -38,6 +38,7 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::api::shelves::add_book_to_shelf,
         crate::api::shelves::remove_book_from_shelf,
         crate::api::users::me,
+        crate::api::users::me_stats,
         crate::api::users::patch_me
     ),
     components(schemas(
@@ -55,6 +56,9 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::db::queries::annotations::Annotation,
         crate::db::queries::book_user_state::BookUserState,
         crate::db::queries::llm::JobRow,
+        crate::db::queries::stats::MonthlyCount,
+        crate::db::queries::stats::NamedCount,
+        crate::db::queries::stats::UserStats,
         crate::db::queries::scheduled_tasks::ScheduledTask,
         crate::error::AppErrorResponse
     )),

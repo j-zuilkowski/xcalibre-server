@@ -1,5 +1,5 @@
 use axum_prometheus::PrometheusMetricLayer;
-use metrics_exporter_prometheus::PrometheusHandle;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use sqlx::SqlitePool;
 use std::{sync::OnceLock, time::Instant};
 
@@ -19,7 +19,10 @@ pub struct MetricsBundle {
 
 impl MetricsBundle {
     fn new() -> Self {
-        let (layer, handle) = PrometheusMetricLayer::pair();
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::set_global_recorder(recorder).expect("Failed to set global recorder");
+        let layer = PrometheusMetricLayer::new();
         Self { layer, handle }
     }
 

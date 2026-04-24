@@ -305,6 +305,31 @@ export type BookText = {
   word_count: number;
 };
 
+export type StatCountItem = {
+  name: string;
+  count: number;
+};
+
+export type MonthlyBookCount = {
+  month: string;
+  count: number;
+};
+
+export type UserStats = {
+  total_books_read: number;
+  books_read_this_year: number;
+  books_read_this_month: number;
+  books_in_progress: number;
+  total_reading_sessions: number;
+  reading_streak_days: number;
+  longest_streak_days: number;
+  average_progress_per_session: number;
+  formats_read: Record<string, number>;
+  top_tags: StatCountItem[];
+  top_authors: StatCountItem[];
+  monthly_books: MonthlyBookCount[];
+};
+
 export type SystemStats = {
   version: string;
   db_engine: "sqlite" | "mariadb";

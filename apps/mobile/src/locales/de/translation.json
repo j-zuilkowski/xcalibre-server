@@ -56,6 +56,7 @@
     "admin_panel": "Admin",
     "downloads": "Downloads",
     "library": "Bibliothek",
+    "reading_stats": "Lese-Statistiken",
     "profile": "Profil",
     "search": "Suche",
     "shelves": "Regale"
@@ -103,6 +104,25 @@
     "loading_user": "Benutzer wird geladen...",
     "page_title": "Profil",
     "server_url": "Server-URL"
+  },
+  "stats": {
+    "average_progress": "Durchschnittlicher Fortschritt",
+    "books_read": "Gelesene Bücher",
+    "days": "{{value}} Tage",
+    "formats_breakdown": "Formatverteilung",
+    "formats_breakdown_subtitle": "Anteil der Bücher nach Format",
+    "in_progress": "In Bearbeitung",
+    "last_12_months": "Letzte 12 Monate",
+    "monthly_books": "Bücher pro Monat",
+    "page_title": "Lese-Statistiken",
+    "pp": "pp",
+    "streak": "Lesestreak",
+    "this_month": "Dieser Monat",
+    "this_year": "Dieses Jahr",
+    "top_authors": "Top-Autoren",
+    "top_tags": "Top-Tags",
+    "total_sessions": "Lesesitzungen",
+    "unable_to_load": "Lese-Statistiken konnten nicht geladen werden."
   },
   "library": {
     "author": "Autor",

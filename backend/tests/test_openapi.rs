@@ -34,6 +34,16 @@ async fn test_openapi_json_contains_books_path() {
 }
 
 #[tokio::test]
+async fn test_openapi_json_contains_user_stats_path() {
+    let ctx = TestContext::new().await;
+
+    let response = ctx.server.get("/api/docs/openapi.json").await;
+    assert_status!(response, 200);
+    let body: serde_json::Value = response.json();
+    assert!(body["paths"].get("/api/v1/users/me/stats").is_some());
+}
+
+#[tokio::test]
 async fn test_openapi_json_requires_no_auth() {
     let ctx = TestContext::new().await;
 

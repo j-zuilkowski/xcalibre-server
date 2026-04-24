@@ -149,6 +149,35 @@ describe("ApiClient", () => {
     );
   });
 
+  test("test_get_user_stats_uses_stats_endpoint", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.get("http://example.test/api/v1/users/me/stats", ({ request }) => {
+        requestSpy(request.url.toString());
+        return HttpResponse.json({
+          total_books_read: 0,
+          books_read_this_year: 0,
+          books_read_this_month: 0,
+          books_in_progress: 0,
+          total_reading_sessions: 0,
+          reading_streak_days: 0,
+          longest_streak_days: 0,
+          average_progress_per_session: 0,
+          formats_read: {},
+          top_tags: [],
+          top_authors: [],
+          monthly_books: [],
+        });
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.getUserStats();
+
+    expect(requestSpy).toHaveBeenCalledWith("http://example.test/api/v1/users/me/stats");
+  });
+
   test("test_search_builds_correct_url", async () => {
     const requestSpy = vi.fn();
 

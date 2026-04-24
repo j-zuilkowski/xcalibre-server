@@ -13,6 +13,7 @@ pub mod oauth;
 pub mod opds;
 pub mod scheduled_tasks;
 pub mod shelves;
+pub mod stats;
 pub mod tags;
 pub mod totp;
 pub mod user_tag_restrictions;

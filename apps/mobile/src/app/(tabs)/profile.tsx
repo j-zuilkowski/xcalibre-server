@@ -4,6 +4,8 @@ import Constants from "expo-constants";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
+import { Ionicons } from "@expo/vector-icons";
+import type { UserStats } from "@autolibre/shared";
 import { clearTokens } from "../../lib/auth";
 import { getApiBaseUrl, useApi, setApiBaseUrl } from "../../lib/api";
 
@@ -17,6 +19,11 @@ export default function ProfileTabScreen() {
   const meQuery = useQuery({
     queryKey: ["me"],
     queryFn: () => client.getMe(),
+  });
+
+  const statsQuery = useQuery<UserStats>({
+    queryKey: ["user-stats"],
+    queryFn: () => client.getUserStats(),
   });
 
   useEffect(() => {
@@ -62,6 +69,35 @@ export default function ProfileTabScreen() {
           <Text style={styles.userMeta}>{t("profile.loading_user")}</Text>
         )}
       </View>
+
+      <Pressable
+        testID="profile-stats-card"
+        style={({ pressed }) => [styles.statsCard, pressed ? styles.statsCardPressed : null]}
+        onPress={() => {
+          router.push("/stats");
+        }}
+      >
+        <Text style={styles.cardLabel}>{t("nav.reading_stats")}</Text>
+        <View style={styles.statsSummaryRow}>
+          <View style={styles.statsSummaryItem}>
+            <Ionicons name="book-outline" color="#14b8a6" size={18} />
+            <Text style={styles.statsSummaryValue}>{statsQuery.data?.total_books_read ?? 0}</Text>
+            <Text style={styles.statsSummaryLabel}>{t("stats.books_read")}</Text>
+          </View>
+          <View style={styles.statsSummaryItem}>
+            <Ionicons name="flame-outline" color="#14b8a6" size={18} />
+            <Text style={styles.statsSummaryValue}>
+              {t("stats.days", { value: statsQuery.data?.reading_streak_days ?? 0 })}
+            </Text>
+            <Text style={styles.statsSummaryLabel}>{t("stats.streak")}</Text>
+          </View>
+          <View style={styles.statsSummaryItem}>
+            <Ionicons name="time-outline" color="#14b8a6" size={18} />
+            <Text style={styles.statsSummaryValue}>{statsQuery.data?.books_in_progress ?? 0}</Text>
+            <Text style={styles.statsSummaryLabel}>{t("stats.in_progress")}</Text>
+          </View>
+        </View>
+      </Pressable>
 
       <View style={styles.card}>
         <Text style={styles.cardLabel}>{t("profile.server_url")}</Text>
@@ -131,6 +167,17 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 10,
   },
+  statsCard: {
+    borderRadius: 16,
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "rgba(20, 184, 166, 0.35)",
+    padding: 14,
+    gap: 10,
+  },
+  statsCardPressed: {
+    opacity: 0.82,
+  },
   cardLabel: {
     color: "#cbd5e1",
     fontSize: 12,
@@ -149,6 +196,31 @@ const styles = StyleSheet.create({
   userMeta: {
     color: "#94a3b8",
     fontSize: 13,
+  },
+  statsSummaryRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  statsSummaryItem: {
+    flex: 1,
+    borderRadius: 14,
+    backgroundColor: "rgba(15, 23, 42, 0.85)",
+    borderWidth: 1,
+    borderColor: "rgba(20, 184, 166, 0.18)",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    gap: 4,
+  },
+  statsSummaryValue: {
+    color: "#f8fafc",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  statsSummaryLabel: {
+    color: "#94a3b8",
+    fontSize: 11,
+    textAlign: "center",
   },
   input: {
     borderRadius: 12,

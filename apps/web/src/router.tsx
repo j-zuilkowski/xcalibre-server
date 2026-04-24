@@ -13,6 +13,7 @@ import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
 import { TagsPage } from "./features/admin/TagsPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
+import { StatsPage } from "./features/profile/StatsPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
 import { LibraryPage } from "./features/library/LibraryPage";
@@ -58,6 +59,12 @@ const profileRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "profile",
   component: ProfilePage,
+});
+
+const profileStatsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "profile/stats",
+  component: StatsPage,
 });
 
 const bookRoute = createRoute({
@@ -151,6 +158,7 @@ export const routeTree = rootRoute.addChildren([
     searchRoute,
     shelvesRoute,
     profileRoute,
+    profileStatsRoute,
     bookRoute,
     readerRoute,
     adminRoute.addChildren([

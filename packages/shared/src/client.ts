@@ -47,6 +47,7 @@ import type {
   CreateBookAnnotationRequest,
   PatchBookAnnotationRequest,
   SystemStats,
+  UserStats,
   Role,
   RefreshResponse,
   RegisterRequest,
@@ -156,6 +157,10 @@ export class ApiClient {
 
   async getMe(): Promise<User> {
     return this.me();
+  }
+
+  async getUserStats(): Promise<UserStats> {
+    return this.requestJson<UserStats>("/api/v1/users/me/stats");
   }
 
   async changePassword(current: string, next: string): Promise<void> {
