@@ -206,6 +206,7 @@ async fn test_create_webhook_validates_private_destinations_at_creation() {
 
     for url in [
         "http://127.0.0.1/hook",
+        "http://10.0.0.1/hook",
         "http://localhost/hook",
         "http://169.254.169.254/metadata",
     ] {
