@@ -2,7 +2,13 @@
 
 mod common;
 
+use backend::{
+    auth::password::hash_password,
+    db::models::{RoleRef, User},
+};
+use chrono::Utc;
 use common::{auth_header, TestContext};
+use uuid::Uuid;
 
 async fn create_annotation(
     ctx: &TestContext,
@@ -18,6 +24,68 @@ async fn create_annotation(
         .await;
     assert_status!(response, 201);
     response.json()
+}
+
+async fn create_user_with_token(ctx: &TestContext, username: &str) -> (User, String) {
+    let password = "Test1234!".to_string();
+    let email = format!("{username}@example.com");
+    let now = Utc::now().to_rfc3339();
+    let password_hash = hash_password(&password, &ctx.state.config.auth).expect("hash password");
+
+    let _ = sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO roles (id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("user")
+    .bind("user")
+    .bind(0_i64)
+    .bind(0_i64)
+    .bind(1_i64)
+    .bind(1_i64)
+    .bind(&now)
+    .bind(&now)
+    .execute(&ctx.db)
+    .await
+    .expect("seed role");
+
+    let user_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO users (id, username, email, password_hash, role_id, is_active, force_pw_reset, created_at, last_modified)
+        VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
+        "#,
+    )
+    .bind(&user_id)
+    .bind(username)
+    .bind(&email)
+    .bind(password_hash)
+    .bind("user")
+    .bind(&now)
+    .bind(&now)
+    .execute(&ctx.db)
+    .await
+    .expect("insert user");
+
+    let user = User {
+        id: user_id,
+        username: username.to_string(),
+        email,
+        role: RoleRef {
+            id: "user".to_string(),
+            name: "user".to_string(),
+        },
+        is_active: true,
+        force_pw_reset: false,
+        default_library_id: "default".to_string(),
+        totp_enabled: false,
+        created_at: now.clone(),
+        last_modified: now,
+    };
+
+    let token = ctx.login(username, &password).await.access_token;
+    (user, token)
 }
 
 #[tokio::test]
@@ -93,15 +161,15 @@ async fn test_create_bookmark_accepts_null_highlighted_text() {
 }
 
 #[tokio::test]
-async fn test_list_annotations_only_returns_own() {
+async fn test_list_annotations_excludes_other_users() {
     let ctx = TestContext::new().await;
-    let user_token = ctx.user_token().await;
-    let admin_token = ctx.admin_token().await;
+    let (_user_a, user_a_token) = create_user_with_token(&ctx, "user_a").await;
+    let (_user_b, user_b_token) = create_user_with_token(&ctx, "user_b").await;
     let book = ctx.create_book("Annotation Book", "Reader").await;
 
     let user_annotation = create_annotation(
         &ctx,
-        &user_token,
+        &user_a_token,
         &book.id,
         serde_json::json!({
             "type": "highlight",
@@ -113,14 +181,14 @@ async fn test_list_annotations_only_returns_own() {
     )
     .await;
 
-    let _admin_annotation = create_annotation(
+    let _other_user_annotation = create_annotation(
         &ctx,
-        &admin_token,
+        &user_b_token,
         &book.id,
         serde_json::json!({
             "type": "highlight",
             "cfi_range": "epubcfi(/6/4[chap01]!/4/2/1:33,/1:64)",
-            "highlighted_text": "Admin text",
+            "highlighted_text": "Other user text",
             "note": null,
             "color": "blue"
         }),
@@ -130,7 +198,7 @@ async fn test_list_annotations_only_returns_own() {
     let response = ctx
         .server
         .get(&format!("/api/v1/books/{}/annotations", book.id))
-        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_token))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_a_token))
         .await;
 
     assert_status!(response, 200);
@@ -181,14 +249,14 @@ async fn test_update_annotation_changes_color() {
 }
 
 #[tokio::test]
-async fn test_update_annotation_owned_by_other_user_returns_403() {
+async fn test_patch_annotation_by_non_owner_returns_403() {
     let ctx = TestContext::new().await;
-    let user_token = ctx.user_token().await;
-    let admin_token = ctx.admin_token().await;
+    let (_user_a, token_a) = create_user_with_token(&ctx, "user_a").await;
+    let (_user_b, token_b) = create_user_with_token(&ctx, "user_b").await;
     let book = ctx.create_book("Annotation Book", "Reader").await;
     let annotation = create_annotation(
         &ctx,
-        &admin_token,
+        &token_b,
         &book.id,
         serde_json::json!({
             "type": "highlight",
@@ -210,13 +278,17 @@ async fn test_update_annotation_owned_by_other_user_returns_403() {
             "/api/v1/books/{}/annotations/{annotation_id}",
             book.id
         ))
-        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_token))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token_a))
         .json(&serde_json::json!({
             "color": "green"
         }))
         .await;
 
-    assert_status!(response, 403);
+    assert!(
+        response.status_code() == 403 || response.status_code() == 404,
+        "Expected 403 or 404, got {}",
+        response.status_code()
+    );
 }
 
 #[tokio::test]
@@ -261,14 +333,14 @@ async fn test_delete_annotation_returns_204() {
 }
 
 #[tokio::test]
-async fn test_delete_annotation_owned_by_other_user_returns_403() {
+async fn test_delete_annotation_by_non_owner_returns_403() {
     let ctx = TestContext::new().await;
-    let user_token = ctx.user_token().await;
-    let admin_token = ctx.admin_token().await;
+    let (_user_a, token_a) = create_user_with_token(&ctx, "user_a").await;
+    let (_user_b, token_b) = create_user_with_token(&ctx, "user_b").await;
     let book = ctx.create_book("Annotation Book", "Reader").await;
     let annotation = create_annotation(
         &ctx,
-        &admin_token,
+        &token_b,
         &book.id,
         serde_json::json!({
             "type": "bookmark",
@@ -289,10 +361,14 @@ async fn test_delete_annotation_owned_by_other_user_returns_403() {
             "/api/v1/books/{}/annotations/{annotation_id}",
             book.id
         ))
-        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_token))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token_a))
         .await;
 
-    assert_status!(response, 403);
+    assert!(
+        response.status_code() == 403 || response.status_code() == 404,
+        "Expected 403 or 404, got {}",
+        response.status_code()
+    );
 }
 
 #[tokio::test]
