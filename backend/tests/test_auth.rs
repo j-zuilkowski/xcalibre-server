@@ -8,6 +8,110 @@ use common::{auth_header, TestContext, TEST_JWT_SECRET};
 use jsonwebtoken::{encode, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::Row;
+use backend::{auth::password::hash_password, db::queries::auth as auth_queries};
+use totp_rs::{Algorithm, Secret, TOTP};
+
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
+const TOTP_INVALID_CODE: &str = "000000";
+
+fn generate_code(secret_base32: &str, issuer: &str, account_name: &str) -> String {
+    let secret = Secret::Encoded(secret_base32.to_string());
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        secret.to_bytes().expect("secret bytes"),
+        Some(issuer.to_string()),
+        account_name.to_string(),
+    )
+    .expect("build totp");
+    totp.generate_current().expect("generate current code")
+}
+
+async fn enable_totp_and_get_pending_token(
+    ctx: &TestContext,
+    username: &str,
+    email: &str,
+    password: &str,
+) -> String {
+    let login = ctx.login(username, password).await;
+
+    let setup = ctx
+        .server
+        .get("/api/v1/auth/totp/setup")
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(&login.access_token),
+        )
+        .await;
+    assert_status!(setup, 200);
+    let setup_body: serde_json::Value = setup.json();
+    let secret_base32 = setup_body["secret_base32"]
+        .as_str()
+        .expect("secret")
+        .to_string();
+    let code = generate_code(&secret_base32, "autolibre", email);
+
+    let confirm = ctx
+        .server
+        .post("/api/v1/auth/totp/confirm")
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(&login.access_token),
+        )
+        .json(&serde_json::json!({ "code": code }))
+        .await;
+    assert_status!(confirm, 200);
+
+    let pending = ctx
+        .server
+        .post("/api/v1/auth/login")
+        .json(&serde_json::json!({
+            "username": username,
+            "password": password,
+        }))
+        .await;
+    assert_status!(pending, 200);
+    let pending_body: serde_json::Value = pending.json();
+    pending_body["totp_token"]
+        .as_str()
+        .expect("totp token")
+        .to_string()
+}
+
+async fn post_totp_verify(
+    ctx: &TestContext,
+    totp_token: &str,
+    ip: &str,
+    code: &str,
+    path: &str,
+) -> axum_test::TestResponse {
+    ctx.server
+        .post(path)
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(totp_token),
+        )
+        .add_header(
+            HeaderName::from_static(X_FORWARDED_FOR),
+            HeaderValue::from_str(ip).expect("valid ip"),
+        )
+        .json(&serde_json::json!({ "code": code }))
+        .await
+}
+
+async fn create_distinct_user(
+    ctx: &TestContext,
+    username: &str,
+    email: &str,
+    password: &str,
+) -> backend::db::models::User {
+    let password_hash = hash_password(password, &ctx.state.config.auth).expect("hash password");
+    auth_queries::create_user(&ctx.db, username, email, "user", &password_hash)
+        .await
+        .expect("insert user")
+}
 
 #[tokio::test]
 async fn test_register_first_user_becomes_admin() {
@@ -101,6 +205,93 @@ async fn test_login_sets_samesite_strict_cookie() {
     assert!(cookie.contains("SameSite=Strict"));
     assert!(cookie.contains("HttpOnly"));
     assert!(cookie.contains("Path=/api/v1/auth"));
+}
+
+#[tokio::test]
+async fn test_auth_totp_verify_rate_limits_same_ip_after_ten_requests() {
+    let ctx = TestContext::new().await;
+    let (user, password) = ctx.create_user().await;
+    let totp_token = enable_totp_and_get_pending_token(
+        &ctx,
+        &user.username,
+        &user.email,
+        &password,
+    )
+    .await;
+    let forwarded_ip = "198.51.100.10";
+
+    for _ in 0..10 {
+        let response = post_totp_verify(
+            &ctx,
+            &totp_token,
+            forwarded_ip,
+            TOTP_INVALID_CODE,
+            "/api/v1/auth/totp/verify",
+        )
+        .await;
+        assert_status!(response, 422);
+    }
+
+    let rate_limited = post_totp_verify(
+        &ctx,
+        &totp_token,
+        forwarded_ip,
+        TOTP_INVALID_CODE,
+        "/api/v1/auth/totp/verify",
+    )
+    .await;
+    assert_status!(rate_limited, 429);
+}
+
+#[tokio::test]
+async fn test_auth_totp_verify_rate_limit_isolated_per_ip() {
+    let ctx = TestContext::new().await;
+    let (first_user, first_password) = ctx.create_user().await;
+    let first_totp_token = enable_totp_and_get_pending_token(
+        &ctx,
+        &first_user.username,
+        &first_user.email,
+        &first_password,
+    )
+    .await;
+
+    for _ in 0..10 {
+        let response = post_totp_verify(
+            &ctx,
+            &first_totp_token,
+            "198.51.100.20",
+            TOTP_INVALID_CODE,
+            "/api/v1/auth/totp/verify",
+        )
+        .await;
+        assert_status!(response, 422);
+    }
+
+    let second_user = create_distinct_user(
+        &ctx,
+        "user2",
+        "user2@example.com",
+        "Test1234!",
+    )
+    .await;
+    let second_password = "Test1234!";
+    let second_totp_token = enable_totp_and_get_pending_token(
+        &ctx,
+        &second_user.username,
+        &second_user.email,
+        &second_password,
+    )
+    .await;
+
+    let different_ip_response = post_totp_verify(
+        &ctx,
+        &second_totp_token,
+        "198.51.100.21",
+        TOTP_INVALID_CODE,
+        "/api/v1/auth/totp/verify",
+    )
+    .await;
+    assert_status!(different_ip_response, 422);
 }
 
 #[tokio::test]

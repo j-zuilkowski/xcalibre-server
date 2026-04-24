@@ -57,7 +57,12 @@ pub fn router(state: AppState) -> Router<AppState> {
     let totp_pending = Router::new()
         .route("/totp/verify", post(totp_verify))
         .route("/totp/verify-backup", post(totp_verify_backup))
-        .layer(totp_pending_layer);
+        .layer(totp_pending_layer)
+        .layer(crate::middleware::security_headers::auth_rate_limit_layer())
+        .layer(middleware::from_fn_with_state(
+            crate::middleware::security_headers::auth_rate_limit_headers_config(),
+            crate::middleware::security_headers::apply_rate_limit_headers,
+        ));
 
     Router::new()
         .merge(public)
