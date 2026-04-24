@@ -15,6 +15,7 @@ const MIN_ARGON2_PARALLELISM: u32 = 4;
 #[serde(default)]
 pub struct AppConfig {
     pub app: AppSection,
+    pub server: ServerSection,
     pub storage: StorageSection,
     pub database: DatabaseSection,
     pub auth: AuthSection,
@@ -33,6 +34,12 @@ pub struct AppSection {
     pub base_url: String,
     pub storage_path: String,
     pub calibre_db_path: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerSection {
+    pub https_only: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -313,6 +320,7 @@ impl Default for AppConfig {
                 storage_path: "./storage".to_string(),
                 calibre_db_path: "./calibre/metadata.db".to_string(),
             },
+            server: ServerSection::default(),
             storage: StorageSection::default(),
             database: DatabaseSection {
                 url: "sqlite://library.db".to_string(),
@@ -464,6 +472,7 @@ fn write_config(path: &Path, config: &AppConfig) -> anyhow::Result<()> {
 
 fn apply_env_overrides(config: &mut AppConfig) {
     config.app.base_url = pick_env("APP_BASE_URL", &config.app.base_url);
+    config.server.https_only = pick_env_bool("APP_SERVER_HTTPS_ONLY", config.server.https_only);
     config.app.storage_path = pick_env("APP_STORAGE_PATH", &config.app.storage_path);
     config.app.calibre_db_path = pick_env("APP_CALIBRE_DB_PATH", &config.app.calibre_db_path);
     config.storage.backend = pick_env("APP_STORAGE_BACKEND", &config.storage.backend);
@@ -547,6 +556,7 @@ fn apply_env_overrides(config: &mut AppConfig) {
         pick_env_u32("APP_RATE_LIMIT_PER_IP", config.limits.rate_limit_per_ip);
 
     config.app.base_url = pick_env("BASE_URL", &config.app.base_url);
+    config.server.https_only = pick_env_bool("SERVER_HTTPS_ONLY", config.server.https_only);
     config.app.storage_path = pick_env("STORAGE_PATH", &config.app.storage_path);
     config.app.calibre_db_path = pick_env("CALIBRE_DB_PATH", &config.app.calibre_db_path);
     config.storage.backend = pick_env("STORAGE_BACKEND", &config.storage.backend);

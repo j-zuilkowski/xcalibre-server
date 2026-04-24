@@ -81,6 +81,29 @@ async fn test_login_success_returns_tokens() {
 }
 
 #[tokio::test]
+async fn test_login_sets_samesite_strict_cookie() {
+    let ctx = TestContext::new().await;
+    let (user, password) = ctx.create_user().await;
+
+    let response = ctx
+        .server
+        .post("/api/v1/auth/login")
+        .json(&serde_json::json!({
+            "username": user.username,
+            "password": password
+        }))
+        .await;
+
+    assert_status!(response, 200);
+    let set_cookie = response.header(axum::http::header::SET_COOKIE);
+    let cookie = set_cookie.to_str().expect("set-cookie header");
+    assert!(cookie.contains("refresh_token="));
+    assert!(cookie.contains("SameSite=Strict"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Path=/api/v1/auth"));
+}
+
+#[tokio::test]
 async fn test_login_wrong_password_returns_401() {
     let ctx = TestContext::new().await;
     let (user, _) = ctx.create_user().await;
@@ -233,6 +256,30 @@ async fn test_refresh_token_returns_new_pair() {
         body["refresh_token"].as_str().unwrap_or_default(),
         login.refresh_token
     );
+}
+
+#[tokio::test]
+async fn test_refresh_rotates_cookie_with_samesite_strict() {
+    let ctx = TestContext::new().await;
+    let (user, password) = ctx.create_user().await;
+    let login = ctx.login(&user.username, &password).await;
+
+    let response = ctx
+        .server
+        .post("/api/v1/auth/refresh")
+        .json(&serde_json::json!({
+            "refresh_token": login.refresh_token
+        }))
+        .await;
+
+    assert_status!(response, 200);
+    let set_cookie = response.header(axum::http::header::SET_COOKIE);
+    let cookie = set_cookie.to_str().expect("set-cookie header");
+    assert!(cookie.contains("refresh_token="));
+    assert!(cookie.contains("SameSite=Strict"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Path=/api/v1/auth"));
+    assert!(cookie.contains("Max-Age="));
 }
 
 #[tokio::test]
@@ -534,6 +581,7 @@ async fn test_login_sets_secure_refresh_cookie_when_base_url_is_https() {
     let cookie = set_cookie.to_str().expect("set-cookie header");
     assert!(cookie.contains("refresh_token="));
     assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Strict"));
     assert!(cookie.contains("Secure"));
 }
 

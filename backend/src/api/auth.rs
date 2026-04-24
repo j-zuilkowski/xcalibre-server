@@ -301,7 +301,7 @@ pub(crate) async fn login(
 
             return Ok((
                 refresh_cookie_headers(
-                    &state.config.app.base_url,
+                    &state.config,
                     &response.refresh_token,
                     state.config.auth.refresh_token_ttl_days,
                 )?,
@@ -336,7 +336,7 @@ pub(crate) async fn login(
                 record_login_success(&state, &user.id, username, client_ip.as_deref()).await;
                 return Ok((
                     refresh_cookie_headers(
-                        &state.config.app.base_url,
+                        &state.config,
                         &response.refresh_token,
                         state.config.auth.refresh_token_ttl_days,
                     )?,
@@ -498,7 +498,7 @@ async fn oauth_callback(
         .headers_mut()
         .insert(LOCATION, HeaderValue::from_static("/"));
     let refresh_cookie = refresh_cookie_value(
-        &state.config.app.base_url,
+        &state.config,
         &refresh_token,
         state.config.auth.refresh_token_ttl_days,
     );
@@ -553,7 +553,7 @@ pub(crate) async fn logout(
         .map_err(|_| AppError::Internal)?;
 
     Ok((
-        clear_refresh_cookie_headers(&state.config.app.base_url)?,
+        clear_refresh_cookie_headers(&state.config)?,
         Json(SuccessResponse { success: true }),
     ))
 }
@@ -624,7 +624,7 @@ pub(crate) async fn refresh(
 
     Ok((
         refresh_cookie_headers(
-            &state.config.app.base_url,
+            &state.config,
             &response.refresh_token,
             state.config.auth.refresh_token_ttl_days,
         )?,
@@ -960,7 +960,7 @@ pub(crate) async fn totp_verify(
     Ok((
         StatusCode::OK,
         refresh_cookie_headers(
-            &state.config.app.base_url,
+            &state.config,
             &response.refresh_token,
             state.config.auth.refresh_token_ttl_days,
         )?,
@@ -1059,7 +1059,7 @@ async fn totp_verify_backup(
     Ok((
         StatusCode::OK,
         refresh_cookie_headers(
-            &state.config.app.base_url,
+            &state.config,
             &response.refresh_token,
             state.config.auth.refresh_token_ttl_days,
         )?,
@@ -1274,11 +1274,15 @@ fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         })
 }
 
-fn refresh_cookie_value(base_url: &str, refresh_token: &str, refresh_ttl_days: u64) -> String {
-    let secure = base_url.trim().to_ascii_lowercase().starts_with("https://");
+fn refresh_cookie_value(
+    config: &crate::config::AppConfig,
+    refresh_token: &str,
+    refresh_ttl_days: u64,
+) -> String {
+    let secure = refresh_cookie_secure(config);
     let max_age = refresh_ttl_days.saturating_mul(24 * 60 * 60);
     let mut cookie = format!(
-        "refresh_token={refresh_token}; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age={max_age}"
+        "refresh_token={refresh_token}; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Max-Age={max_age}"
     );
     if secure {
         cookie.push_str("; Secure");
@@ -1442,16 +1446,16 @@ fn validate_registration(payload: &RegisterRequest) -> Result<(), AppError> {
 }
 
 fn refresh_cookie_headers(
-    base_url: &str,
+    config: &crate::config::AppConfig,
     refresh_token: &str,
     refresh_ttl_days: u64,
 ) -> Result<HeaderMap, AppError> {
     let mut headers = HeaderMap::new();
-    let secure = base_url.trim().to_ascii_lowercase().starts_with("https://");
+    let secure = refresh_cookie_secure(config);
     let max_age = refresh_ttl_days.saturating_mul(24 * 60 * 60);
 
     let mut cookie = format!(
-        "refresh_token={refresh_token}; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age={max_age}"
+        "refresh_token={refresh_token}; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Max-Age={max_age}"
     );
     if secure {
         cookie.push_str("; Secure");
@@ -1468,12 +1472,12 @@ fn refresh_cookie_headers(
     Ok(headers)
 }
 
-fn clear_refresh_cookie_headers(base_url: &str) -> Result<HeaderMap, AppError> {
+fn clear_refresh_cookie_headers(config: &crate::config::AppConfig) -> Result<HeaderMap, AppError> {
     let mut headers = HeaderMap::new();
-    let secure = base_url.trim().to_ascii_lowercase().starts_with("https://");
+    let secure = refresh_cookie_secure(config);
 
     let mut cookie =
-        "refresh_token=; Path=/api/v1/auth; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
+        "refresh_token=; Path=/api/v1/auth; HttpOnly; SameSite=Strict; Max-Age=0".to_string();
     if secure {
         cookie.push_str("; Secure");
     }
@@ -1483,6 +1487,16 @@ fn clear_refresh_cookie_headers(base_url: &str) -> Result<HeaderMap, AppError> {
         HeaderValue::from_str(&cookie).map_err(|_| AppError::Internal)?,
     );
     Ok(headers)
+}
+
+fn refresh_cookie_secure(config: &crate::config::AppConfig) -> bool {
+    config.server.https_only
+        || config
+            .app
+            .base_url
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("https://")
 }
 
 fn issuer_name(config: &crate::config::AppConfig) -> String {
