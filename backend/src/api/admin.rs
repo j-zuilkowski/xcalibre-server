@@ -1,7 +1,7 @@
 use crate::{
     auth::password::hash_password,
     db::queries::{
-        api_tokens as api_token_queries, auth as auth_queries, books as book_queries,
+        api_tokens as api_token_queries, auth as auth_queries,
         email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
         llm as llm_queries, scheduled_tasks as scheduled_task_queries, tags as tag_queries,
         totp as totp_queries, user_tag_restrictions as restriction_queries,
@@ -33,8 +33,9 @@ use tokio::sync::RwLock;
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
+    let require_admin_layer = middleware::from_extractor::<crate::middleware::auth::RequireAdmin>();
 
-    Router::new()
+    let admin_routes = Router::new()
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/jobs/:id", get(get_job).delete(delete_job))
         .route(
@@ -87,7 +88,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/api/v1/admin/tokens", post(create_token).get(list_tokens))
         .route("/api/v1/admin/tokens/:id", delete(delete_token))
-        .route_layer(auth_layer)
+        .route_layer(require_admin_layer);
+
+    Router::new().merge(admin_routes).route_layer(auth_layer)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1340,13 +1343,8 @@ fn normalize_scheduled_task_type(task_type: &str) -> Option<&'static str> {
 }
 
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
-    let perms = book_queries::role_permissions_for_user(&state.db, user_id)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::Unauthorized)?;
-    if !perms.is_admin() {
-        return Err(AppError::Forbidden);
-    }
+    let _ = (state, user_id);
+    // Admin authorization is enforced by RequireAdmin at the router layer.
     Ok(())
 }
 

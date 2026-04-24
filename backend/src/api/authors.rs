@@ -26,15 +26,23 @@ use utoipa::{IntoParams, ToSchema};
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
+    let require_admin_layer = middleware::from_extractor::<crate::middleware::auth::RequireAdmin>();
 
-    Router::new()
+    let public_routes = Router::new()
         .route(
             "/api/v1/authors/:id/photo",
             post(upload_author_photo).get(get_author_photo),
         )
-        .route("/api/v1/authors/:id", get(get_author).patch(patch_author))
+        .route("/api/v1/authors/:id", get(get_author).patch(patch_author));
+
+    let admin_routes = Router::new()
         .route("/api/v1/admin/authors", get(list_admin_authors))
         .route("/api/v1/admin/authors/:id/merge", post(merge_author))
+        .route_layer(require_admin_layer);
+
+    Router::new()
+        .merge(public_routes)
+        .merge(admin_routes)
         .route_layer(auth_layer)
 }
 
@@ -205,27 +213,14 @@ pub(crate) async fn patch_author(
 )]
 pub(crate) async fn list_admin_authors(
     State(state): State<AppState>,
-    Extension(auth_user): Extension<AuthenticatedUser>,
     Query(query): Query<ListAuthorsQuery>,
 ) -> Result<Json<PaginatedResponse<crate::db::queries::authors::AdminAuthor>>, AppError> {
-    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::Unauthorized)?;
-    if !perms.is_admin() {
-        return Err(AppError::Forbidden);
-    }
-
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
-    let (items, total, page, page_size) = author_queries::list_admin_authors(
-        &state.db,
-        query.q.as_deref(),
-        page,
-        page_size,
-    )
-    .await
-    .map_err(|_| AppError::Internal)?;
+    let (items, total, page, page_size) =
+        author_queries::list_admin_authors(&state.db, query.q.as_deref(), page, page_size)
+            .await
+            .map_err(|_| AppError::Internal)?;
 
     Ok(Json(PaginatedResponse {
         items,
@@ -255,18 +250,9 @@ pub(crate) async fn list_admin_authors(
 )]
 pub(crate) async fn merge_author(
     State(state): State<AppState>,
-    Extension(auth_user): Extension<AuthenticatedUser>,
     Path(source_id): Path<String>,
     Json(payload): Json<MergeAuthorRequest>,
 ) -> Result<Json<MergeAuthorResponse>, AppError> {
-    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::Unauthorized)?;
-    if !perms.is_admin() {
-        return Err(AppError::Forbidden);
-    }
-
     let source_id = source_id.trim().to_string();
     let target_id = payload.into_author_id.trim().to_string();
     if source_id.is_empty() || target_id.is_empty() {
@@ -338,7 +324,8 @@ pub(crate) async fn upload_author_photo(
         return Err(AppError::NotFound);
     };
 
-    let uploaded = parse_author_photo_upload(multipart, state.config.limits.upload_max_bytes).await?;
+    let uploaded =
+        parse_author_photo_upload(multipart, state.config.limits.upload_max_bytes).await?;
     let Some(variants) = render_author_photo_variants(&uploaded.bytes) else {
         return Err(AppError::Unprocessable);
     };
@@ -359,10 +346,7 @@ pub(crate) async fn upload_author_photo(
 
     state
         .storage
-        .put(
-            &photo_relative_path,
-            Bytes::from(variants.photo_jpg),
-        )
+        .put(&photo_relative_path, Bytes::from(variants.photo_jpg))
         .await
         .map_err(|_| AppError::Internal)?;
     if let Err(err) = state
@@ -393,7 +377,9 @@ pub(crate) async fn upload_author_photo(
         return Err(AppError::Internal);
     }
 
-    if let Err(err) = author_queries::set_author_photo_path(&state.db, &author_id, &photo_relative_path).await {
+    if let Err(err) =
+        author_queries::set_author_photo_path(&state.db, &author_id, &photo_relative_path).await
+    {
         delete_storage_paths(&state, &generated_paths).await;
         tracing::error!(error = %err, author_id = %author_id, "failed to persist author photo path");
         return Err(AppError::Internal);
@@ -461,7 +447,8 @@ pub(crate) async fn get_author_photo(
         .map(|value| value.to_ascii_lowercase().contains("image/webp"))
         .unwrap_or(false);
 
-    let selected_path = select_author_photo_variant(&state, &photo_path, wants_thumb, wants_webp).await?;
+    let selected_path =
+        select_author_photo_variant(&state, &photo_path, wants_thumb, wants_webp).await?;
     let bytes = state
         .storage
         .get_bytes(&selected_path)
@@ -475,10 +462,9 @@ pub(crate) async fn get_author_photo(
     };
 
     let mut response = axum::response::Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     Ok(response)
 }
 
@@ -633,26 +619,25 @@ async fn delete_storage_paths(state: &AppState, paths: &[&str]) {
 fn placeholder_author_photo_response(author_name: &str) -> axum::response::Response {
     let svg = author_placeholder_svg(author_name);
     let mut response = axum::response::Response::new(Body::from(svg));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("image/svg+xml"),
+    );
     response
 }
 
 fn author_placeholder_svg(author_name: &str) -> String {
     const COLORS: [&str; 8] = [
-        "#27272a",
-        "#3f3f46",
-        "#52525b",
-        "#1f2937",
-        "#134e4a",
-        "#0f766e",
-        "#155e75",
-        "#374151",
+        "#27272a", "#3f3f46", "#52525b", "#1f2937", "#134e4a", "#0f766e", "#155e75", "#374151",
     ];
 
     let trimmed = author_name.trim();
-    let first_letter = trimmed.chars().next().unwrap_or('?').to_uppercase().to_string();
+    let first_letter = trimmed
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
     let color = COLORS[hash_author_name(trimmed.as_bytes()) % COLORS.len()];
 
     format!(

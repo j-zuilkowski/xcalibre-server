@@ -3,11 +3,13 @@ use crate::{
     AppError, AppState,
 };
 use axum::{
-    extract::{ConnectInfo, Request, State},
+    extract::{ConnectInfo, FromRequestParts, Request, State},
     http::{header::AUTHORIZATION, HeaderName},
+    http::request::Parts,
     middleware::Next,
     response::Response,
 };
+use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ipnet::IpNet;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
@@ -33,6 +35,36 @@ pub struct AuthenticatedUser {
 #[derive(Clone, Debug)]
 pub struct TotpPendingUser {
     pub user: crate::db::models::User,
+}
+
+/// Zero-size extractor that rejects non-admin callers with 403.
+/// Usage: add `_admin: RequireAdmin` to handler signature, or apply the
+/// `require_admin` Router layer at registration time.
+#[derive(Clone, Debug)]
+pub struct RequireAdmin;
+
+#[async_trait]
+impl<S> FromRequestParts<S> for RequireAdmin
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = state;
+        let user = parts
+            .extensions
+            .get::<AuthenticatedUser>()
+            .cloned()
+            .ok_or(AppError::Unauthorized)?;
+        if user.user.role.name != "admin" {
+            return Err(AppError::Forbidden);
+        }
+        Ok(RequireAdmin)
+    }
 }
 
 pub fn issue_access_token(
