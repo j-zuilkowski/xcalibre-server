@@ -993,35 +993,12 @@ async fn totp_verify_backup(
         return Err(AppError::Unauthorized);
     }
 
-    let code = payload.code.trim();
-    if code.len() != 8 || !code.chars().all(|ch| ch.is_ascii_alphanumeric()) {
-        auth_queries::mark_failed_login(
-            &state.db,
-            &user,
-            state.config.auth.max_login_attempts,
-            state.config.auth.lockout_duration_mins,
-        )
-        .await
-        .map_err(|_| AppError::Internal)?;
-        record_login_failure(
-            &state,
-            Some(&totp_user.user.id),
-            &totp_user.user.username,
-            "invalid_backup_code",
-            None,
-        )
-        .await;
-        return Ok((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            HeaderMap::new(),
-            Json(json!({
-                "error": "invalid_backup_code"
-            })),
-        ));
-    }
-
+    let code = payload.code.trim().to_owned();
     let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
-    let code_hash = hash_totp_backup_code(code);
+    let code_is_valid = is_valid_backup_code(&code);
+    let code_hash = hash_totp_backup_code(&code);
+    // Keep the lookup inside the transaction for both malformed and well-formed
+    // inputs so the DB round-trip timing does not reveal code format.
     let Some(backup_code) =
         totp_queries::find_unused_backup_code_in_tx(&mut tx, &totp_user.user.id, &code_hash)
             .await
@@ -1045,7 +1022,11 @@ async fn totp_verify_backup(
         )
         .await;
         return Ok((
-            StatusCode::UNPROCESSABLE_ENTITY,
+            if code_is_valid {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::BAD_REQUEST
+            },
             HeaderMap::new(),
             Json(json!({
                 "error": "invalid_backup_code"
@@ -1516,6 +1497,10 @@ fn issuer_name(config: &crate::config::AppConfig) -> String {
 fn hash_totp_backup_code(code: &str) -> String {
     let digest = Sha256::digest(code.as_bytes());
     hex::encode(digest)
+}
+
+fn is_valid_backup_code(code: &str) -> bool {
+    code.len() == 8 && code.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {

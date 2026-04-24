@@ -508,7 +508,7 @@ async fn test_verify_backup_code_marks_used() {
 }
 
 #[tokio::test]
-async fn test_verify_used_backup_code_returns_422() {
+async fn test_verify_backup_code_format_and_lookup_failures_hit_db() {
     let ctx = TestContext::new().await;
     let (user, password) = ctx.create_user().await;
     let login = ctx.login(&user.username, &password).await;
@@ -540,7 +540,7 @@ async fn test_verify_used_backup_code_returns_422() {
         .expect("backup code")
         .to_string();
 
-    let first_login = ctx
+    let totp_login = ctx
         .server
         .post("/api/v1/auth/login")
         .json(&serde_json::json!({
@@ -548,45 +548,57 @@ async fn test_verify_used_backup_code_returns_422() {
             "password": password,
         }))
         .await;
-    let first_login_body: Value = first_login.json();
-    let first_totp_token = first_login_body["totp_token"].as_str().expect("totp token");
+    let totp_login_body: Value = totp_login.json();
+    let totp_token = totp_login_body["totp_token"].as_str().expect("totp token");
 
-    let first = ctx
+    let row = sqlx::query("SELECT login_attempts FROM users WHERE id = ?")
+        .bind(&user.id)
+        .fetch_one(&ctx.db)
+        .await
+        .expect("query user");
+    let initial_attempts: i64 = row.get("login_attempts");
+    assert_eq!(initial_attempts, 0);
+
+    let malformed = ctx
         .server
         .post("/api/v1/auth/totp/verify-backup")
-        .add_header(
-            axum::http::header::AUTHORIZATION,
-            auth_header(first_totp_token),
-        )
-        .json(&serde_json::json!({ "code": backup_code }))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(totp_token))
+        .json(&serde_json::json!({ "code": "AB12" }))
         .await;
-    assert_status!(first, 200);
-
-    let second_login = ctx
-        .server
-        .post("/api/v1/auth/login")
-        .json(&serde_json::json!({
-            "username": user.username,
-            "password": password,
-        }))
-        .await;
-    let second_login_body: Value = second_login.json();
-    let second_totp_token = second_login_body["totp_token"]
-        .as_str()
-        .expect("totp token");
-
-    let second = ctx
-        .server
-        .post("/api/v1/auth/totp/verify-backup")
-        .add_header(
-            axum::http::header::AUTHORIZATION,
-            auth_header(second_totp_token),
-        )
-        .json(&serde_json::json!({ "code": backup_code }))
-        .await;
-    assert_status!(second, 422);
-    let body: Value = second.json();
+    assert_status!(malformed, 400);
+    let body: Value = malformed.json();
     assert_eq!(body["error"], "invalid_backup_code");
+
+    let row = sqlx::query("SELECT login_attempts FROM users WHERE id = ?")
+        .bind(&user.id)
+        .fetch_one(&ctx.db)
+        .await
+        .expect("query user");
+    let attempts_after_malformed: i64 = row.get("login_attempts");
+    assert_eq!(attempts_after_malformed, 1);
+
+    let wrong_code = format!(
+        "{}{}",
+        &backup_code[..7],
+        if &backup_code[7..8] == "0" { "1" } else { "0" }
+    );
+    let response = ctx
+        .server
+        .post("/api/v1/auth/totp/verify-backup")
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(totp_token))
+        .json(&serde_json::json!({ "code": wrong_code }))
+        .await;
+    assert_status!(response, 401);
+    let body: Value = response.json();
+    assert_eq!(body["error"], "invalid_backup_code");
+
+    let row = sqlx::query("SELECT login_attempts FROM users WHERE id = ?")
+        .bind(&user.id)
+        .fetch_one(&ctx.db)
+        .await
+        .expect("query user");
+    let attempts_after_wrong_code: i64 = row.get("login_attempts");
+    assert_eq!(attempts_after_wrong_code, 2);
 }
 
 #[tokio::test]
