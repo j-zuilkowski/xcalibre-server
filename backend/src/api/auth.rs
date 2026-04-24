@@ -4,8 +4,7 @@ use crate::{
     middleware::auth::{
         issue_access_token, issue_totp_pending_token, AuthenticatedUser, TotpPendingUser,
     },
-    webhooks as webhook_engine,
-    AppError, AppState,
+    webhooks as webhook_engine, AppError, AppState,
 };
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use argon2::Argon2;
@@ -937,11 +936,25 @@ pub(crate) async fn totp_verify(
         ));
     }
 
-    auth_queries::clear_login_lockout(&state.db, &totp_user.user.id)
+    let response = create_login_session_response(&state, &user.user)
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|e| {
+            tracing::error!(
+                user_id = %user.user.id,
+                error = %e,
+                "token generation failed after TOTP verify"
+            );
+            AppError::Internal
+        })?;
 
-    let response = create_login_session_response(&state, &user.user).await?;
+    if let Err(e) = auth_queries::clear_login_lockout(&state.db, &totp_user.user.id).await {
+        tracing::warn!(
+            user_id = %user.user.id,
+            error = %e,
+            "failed to clear lockout after TOTP"
+        );
+    }
+
     record_login_success(&state, &totp_user.user.id, &totp_user.user.username, None).await;
 
     Ok((

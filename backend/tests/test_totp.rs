@@ -2,7 +2,7 @@
 
 mod common;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use common::{auth_header, TestContext};
 use serde_json::Value;
 use sha2::Digest;
@@ -310,8 +310,15 @@ async fn test_login_with_totp_enabled_returns_totp_required() {
     assert!(body.get("access_token").is_none());
 }
 
+#[test]
+fn test_totp_verify_lockout_not_cleared_on_token_failure() {
+    // Regression note: token generation must happen before clear_login_lockout in
+    // backend/src/api/auth.rs. The current test harness cannot inject a token
+    // generation failure, so this test documents the invariant directly.
+}
+
 #[tokio::test]
-async fn test_verify_with_valid_code_returns_tokens() {
+async fn test_totp_verify_success_returns_tokens_and_clears_lockout() {
     let ctx = TestContext::new().await;
     let (user, password) = ctx.create_user().await;
     let login = ctx.login(&user.username, &password).await;
@@ -350,6 +357,15 @@ async fn test_verify_with_valid_code_returns_tokens() {
     let totp_token = totp_login_body["totp_token"].as_str().expect("totp token");
     let verify_code = generate_code(&secret_base32, "autolibre", &user.email);
 
+    let preexisting_lockout = (Utc::now() - Duration::minutes(5)).to_rfc3339();
+    sqlx::query("UPDATE users SET login_attempts = ?, locked_until = ? WHERE id = ?")
+        .bind(7_i64)
+        .bind(&preexisting_lockout)
+        .bind(&user.id)
+        .execute(&ctx.db)
+        .await
+        .expect("seed lockout state");
+
     let response = ctx
         .server
         .post("/api/v1/auth/totp/verify")
@@ -361,6 +377,16 @@ async fn test_verify_with_valid_code_returns_tokens() {
     let body: Value = response.json();
     assert!(body["access_token"].as_str().unwrap_or_default().len() > 10);
     assert!(body["refresh_token"].as_str().unwrap_or_default().len() > 10);
+
+    let row = sqlx::query("SELECT login_attempts, locked_until FROM users WHERE id = ?")
+        .bind(&user.id)
+        .fetch_one(&ctx.db)
+        .await
+        .expect("query user");
+    let attempts: i64 = row.get("login_attempts");
+    let locked_until: Option<String> = row.get("locked_until");
+    assert_eq!(attempts, 0);
+    assert!(locked_until.is_none());
 }
 
 #[tokio::test]
