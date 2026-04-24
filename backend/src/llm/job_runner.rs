@@ -1,6 +1,7 @@
 use crate::{
     db::queries::{books as book_queries, llm as llm_queries},
     llm::classify::classify_book,
+    metrics,
     state::AppState,
 };
 use std::{sync::Arc, time::Duration};
@@ -16,7 +17,7 @@ pub fn spawn_semantic_job_runner(state: AppState) -> tokio::task::JoinHandle<()>
 }
 
 pub async fn reset_orphaned_semantic_jobs(state: &AppState) -> anyhow::Result<()> {
-    sqlx::query(
+    let reset = sqlx::query(
         r#"
         UPDATE llm_jobs
         SET status = 'pending', started_at = NULL, error_text = 'reset after server restart'
@@ -25,6 +26,9 @@ pub async fn reset_orphaned_semantic_jobs(state: &AppState) -> anyhow::Result<()
     )
     .execute(&state.db)
     .await?;
+    let rows = reset.rows_affected();
+    metrics::decrement_llm_jobs_running(rows);
+    metrics::increment_llm_jobs_queued_by(rows);
 
     Ok(())
 }

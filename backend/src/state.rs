@@ -2,6 +2,7 @@ use crate::{
     config::AppConfig,
     db::queries::libraries as library_queries,
     llm::{chat::ChatClient, embeddings::EmbeddingClient},
+    metrics,
     storage::StorageBackend,
     storage_s3::S3Storage,
 };
@@ -20,6 +21,8 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(db: SqlitePool, config: AppConfig) -> anyhow::Result<Self> {
+        let _ = metrics::metrics_bundle();
+
         if let Err(err) =
             library_queries::sync_default_library_path(&db, &config.app.calibre_db_path).await
         {
@@ -55,6 +58,11 @@ impl AppState {
             None
         };
         let chat_client = ChatClient::new(&config);
+
+        metrics::set_db_pool_size(db.size() as u64);
+        if let Err(err) = metrics::refresh_database_size_metrics(&db).await {
+            tracing::warn!(error = %err, "failed to refresh startup metrics");
+        }
         Ok(Self {
             db,
             config,

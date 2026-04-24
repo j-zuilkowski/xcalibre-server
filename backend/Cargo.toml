@@ -16,6 +16,7 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = "1"
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 axum = { version = "0.7", features = ["macros", "multipart", "json"] }
+axum-prometheus = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
 bytes = "1"
@@ -56,6 +57,8 @@ tower-http = { version = "0.5", features = ["cors", "fs", "set-header", "trace"]
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
 uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
 validator = { version = "0.20", features = ["derive"] }
 roxmltree = "0.20"

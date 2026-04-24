@@ -5,6 +5,7 @@ pub mod db;
 pub mod error;
 pub mod ingest;
 pub mod llm;
+pub mod metrics;
 pub mod middleware;
 pub mod scheduler;
 pub mod search;
@@ -22,6 +23,7 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 pub async fn bootstrap() -> anyhow::Result<(AppState, tokio::net::TcpListener)> {
     init_tracing();
+    let _ = crate::metrics::metrics_bundle();
 
     let config = config::load_config().await?;
     let db = db::connect_sqlite_pool(&config.database.url, 5).await?;

@@ -1,4 +1,4 @@
-use crate::llm::classify::TagSuggestion;
+use crate::{llm::classify::TagSuggestion, metrics};
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -51,6 +51,9 @@ pub async fn enqueue_semantic_index_job(db: &SqlitePool, book_id: &str) -> anyho
     .bind(book_id)
     .execute(db)
     .await?;
+    if result.rows_affected() > 0 {
+        metrics::increment_llm_jobs_queued();
+    }
 
     Ok(result.rows_affected() > 0)
 }
@@ -80,6 +83,9 @@ pub async fn enqueue_classify_job(db: &SqlitePool, book_id: &str) -> anyhow::Res
     .bind(book_id)
     .execute(db)
     .await?;
+    if result.rows_affected() > 0 {
+        metrics::increment_llm_jobs_queued();
+    }
 
     Ok(result.rows_affected() > 0)
 }
@@ -116,6 +122,7 @@ pub async fn enqueue_organize_job(db: &SqlitePool) -> anyhow::Result<String> {
     .bind(now)
     .execute(db)
     .await?;
+    metrics::increment_llm_jobs_queued();
 
     Ok(id)
 }
@@ -152,6 +159,7 @@ pub async fn enqueue_backup_job(db: &SqlitePool) -> anyhow::Result<String> {
     .bind(now)
     .execute(db)
     .await?;
+    metrics::increment_llm_jobs_queued();
 
     Ok(id)
 }
@@ -201,11 +209,17 @@ pub async fn claim_next_pending_job(db: &SqlitePool) -> anyhow::Result<Option<Se
     .fetch_optional(db)
     .await?;
 
-    Ok(row.map(|row| SemanticIndexJob {
-        id: row.get("id"),
-        job_type: row.get("job_type"),
-        book_id: row.get("book_id"),
-    }))
+    if let Some(row) = row {
+        metrics::decrement_llm_jobs_queued(1);
+        metrics::increment_llm_jobs_running();
+        Ok(Some(SemanticIndexJob {
+            id: row.get("id"),
+            job_type: row.get("job_type"),
+            book_id: row.get("book_id"),
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 pub async fn claim_next_semantic_index_job(
@@ -235,11 +249,17 @@ pub async fn claim_next_semantic_index_job(
     .fetch_optional(db)
     .await?;
 
-    Ok(row.map(|row| SemanticIndexJob {
-        id: row.get("id"),
-        job_type: row.get("job_type"),
-        book_id: row.get("book_id"),
-    }))
+    if let Some(row) = row {
+        metrics::decrement_llm_jobs_queued(1);
+        metrics::increment_llm_jobs_running();
+        Ok(Some(SemanticIndexJob {
+            id: row.get("id"),
+            job_type: row.get("job_type"),
+            book_id: row.get("book_id"),
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 pub async fn mark_semantic_job_completed(db: &SqlitePool, job_id: &str) -> anyhow::Result<()> {
@@ -248,7 +268,7 @@ pub async fn mark_semantic_job_completed(db: &SqlitePool, job_id: &str) -> anyho
 
 pub async fn mark_job_completed(db: &SqlitePool, job_id: &str) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         r#"
         UPDATE llm_jobs
         SET status = 'completed',
@@ -260,7 +280,9 @@ pub async fn mark_job_completed(db: &SqlitePool, job_id: &str) -> anyhow::Result
     .bind(now)
     .bind(job_id)
     .execute(db)
-    .await?;
+    .await?
+    .rows_affected();
+    metrics::decrement_llm_jobs_running(updated);
 
     Ok(())
 }
@@ -279,7 +301,7 @@ pub async fn mark_job_failed(
     error_text: &str,
 ) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         r#"
         UPDATE llm_jobs
         SET status = 'failed',
@@ -292,7 +314,10 @@ pub async fn mark_job_failed(
     .bind(error_text)
     .bind(job_id)
     .execute(db)
-    .await?;
+    .await?
+    .rows_affected();
+    metrics::decrement_llm_jobs_running(updated);
+    metrics::increment_llm_jobs_failed(updated);
 
     Ok(())
 }
@@ -302,7 +327,7 @@ pub async fn mark_running_semantic_jobs_for_book_completed(
     book_id: &str,
 ) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         r#"
         UPDATE llm_jobs
         SET status = 'completed',
@@ -316,7 +341,9 @@ pub async fn mark_running_semantic_jobs_for_book_completed(
     .bind(now)
     .bind(book_id)
     .execute(db)
-    .await?;
+    .await?
+    .rows_affected();
+    metrics::decrement_llm_jobs_running(updated);
 
     Ok(())
 }
@@ -327,7 +354,7 @@ pub async fn mark_running_semantic_jobs_for_book_failed(
     error_text: &str,
 ) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         r#"
         UPDATE llm_jobs
         SET status = 'failed',
@@ -342,7 +369,10 @@ pub async fn mark_running_semantic_jobs_for_book_failed(
     .bind(error_text)
     .bind(book_id)
     .execute(db)
-    .await?;
+    .await?
+    .rows_affected();
+    metrics::decrement_llm_jobs_running(updated);
+    metrics::increment_llm_jobs_failed(updated);
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::{
     db::queries::{llm as llm_queries, scheduled_tasks as scheduled_task_queries},
-    AppState,
+    metrics, AppState,
 };
 use chrono::{DateTime, Utc};
 use cron::Schedule;
@@ -21,10 +21,17 @@ pub async fn run_scheduler(state: AppState) {
     );
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    if let Err(err) = refresh_operational_metrics(&state).await {
+        tracing::warn!(error = %err, "failed to refresh scheduler metrics");
+    }
+
     loop {
         interval.tick().await;
         if let Err(err) = process_due_scheduled_tasks_once(&state).await {
             tracing::error!(error = %err, "scheduled task scheduler iteration failed");
+        }
+        if let Err(err) = refresh_operational_metrics(&state).await {
+            tracing::warn!(error = %err, "failed to refresh scheduler metrics");
         }
     }
 }
@@ -146,6 +153,23 @@ async fn run_scheduled_task(
     let next_run_at = next_run_at_for_cron(&task.cron_expr, Utc::now())?;
     scheduled_task_queries::mark_scheduled_task_ran(&state.db, &task.id, &now, &next_run_at)
         .await?;
+    Ok(())
+}
+
+async fn refresh_operational_metrics(state: &AppState) -> anyhow::Result<()> {
+    metrics::refresh_database_size_metrics(&state.db).await?;
+
+    let unindexed_books: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(1)
+        FROM books
+        WHERE indexed_at IS NULL
+        "#,
+    )
+    .fetch_one(&state.db)
+    .await?;
+    metrics::set_search_index_lag(unindexed_books.max(0) as u64);
+
     Ok(())
 }
 

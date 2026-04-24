@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: calibre-web-rs:dev
+    image: autolibre:dev
     ports: ["8083:8083"]
     volumes:
       - ../config.toml:/app/config.toml:ro
@@ -21,6 +21,18 @@ services:
     volumes:
       - meili_data:/meili_data
     ports: ["7700:7700"]
+
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #   ports: ["9090:9090"]
+  #
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #   ports: ["3000:3000"]
 
   # caddy: # uncomment for HTTPS reverse proxy
   #   image: caddy:2-alpine

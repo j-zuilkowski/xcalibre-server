@@ -92,6 +92,23 @@ caddy:
     - caddy_data:/data
 ```
 
+The `/metrics` endpoint is unauthenticated and should never be exposed publicly. Block it at the reverse proxy or restrict it to internal networks only:
+
+```caddy
+@metrics path /metrics
+respond @metrics 403
+```
+
+Or, if the proxy is exposed to a wider network, allow only RFC1918 sources:
+
+```caddy
+@metrics {
+    path /metrics
+    not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+}
+respond @metrics 403
+```
+
 Nginx equivalent:
 
 ```nginx

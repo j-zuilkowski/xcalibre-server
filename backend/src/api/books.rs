@@ -5,6 +5,7 @@ use crate::{
     },
     ingest::{mobi_util, text as ingest_text},
     llm::classify_type::{classify_document_type, DocumentType},
+    metrics::ImportMetricsGuard,
     middleware::auth::AuthenticatedUser,
     AppError, AppState,
 };
@@ -1289,6 +1290,8 @@ pub(crate) async fn upload_book(
     if !perms.can_upload {
         return Err(AppError::Forbidden);
     }
+
+    let _import_metrics = ImportMetricsGuard::new();
 
     let parsed_upload =
         parse_upload_multipart(multipart, state.config.limits.upload_max_bytes).await?;
