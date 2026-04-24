@@ -9,12 +9,13 @@ pub mod metrics;
 pub mod middleware;
 pub mod scheduler;
 pub mod search;
-pub mod webhooks;
 pub mod state;
 pub mod storage;
 pub mod storage_s3;
+pub mod webhooks;
 
 use axum::{routing::get, Router};
+use std::net::SocketAddr;
 
 pub use config::AppConfig;
 pub use db::models::*;
@@ -73,7 +74,11 @@ pub async fn run() -> anyhow::Result<()> {
             }
         }
     });
-    axum::serve(listener, app(state)).await?;
+    axum::serve(
+        listener,
+        app(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

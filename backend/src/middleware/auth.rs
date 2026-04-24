@@ -3,15 +3,17 @@ use crate::{
     AppError, AppState,
 };
 use axum::{
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header::AUTHORIZATION, HeaderName},
     middleware::Next,
     response::Response,
 };
 use chrono::{Duration, Utc};
+use ipnet::IpNet;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::net::{IpAddr, SocketAddr};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,7 +114,13 @@ pub async fn require_auth(
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    if let Some(user) = authenticate_proxy_user(&state, req.headers()).await? {
+    let remote_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect_info| connect_info.0.ip())
+        .or_else(|| req.extensions().get::<SocketAddr>().map(SocketAddr::ip));
+
+    if let Some(user) = authenticate_proxy_user(&state, req.headers(), remote_ip).await? {
         if !user.is_active {
             return Err(AppError::Unauthorized);
         }
@@ -160,8 +168,16 @@ pub async fn require_totp_pending(
 async fn authenticate_proxy_user(
     state: &AppState,
     headers: &axum::http::HeaderMap,
+    remote_ip: Option<IpAddr>,
 ) -> Result<Option<crate::db::models::User>, AppError> {
     if !state.config.auth.proxy.enabled {
+        return Ok(None);
+    }
+
+    let trusted = remote_ip
+        .map(|ip| is_trusted_proxy(ip, &state.config.auth.proxy.trusted_cidrs))
+        .unwrap_or(false);
+    if !trusted {
         return Ok(None);
     }
 
@@ -253,6 +269,18 @@ fn proxy_email(headers: &axum::http::HeaderMap, header_name: &str) -> String {
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim().to_string())
         .unwrap_or_default()
+}
+
+pub fn is_trusted_proxy(remote_ip: IpAddr, trusted_cidrs: &[String]) -> bool {
+    if trusted_cidrs.is_empty() {
+        return true;
+    }
+
+    trusted_cidrs.iter().any(|cidr| {
+        cidr.parse::<IpNet>()
+            .map(|net| net.contains(&remote_ip))
+            .unwrap_or(false)
+    })
 }
 
 fn generate_random_password() -> String {

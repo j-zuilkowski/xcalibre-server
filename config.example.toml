@@ -13,6 +13,12 @@ refresh_token_ttl_days = 30
 max_login_attempts = 10
 lockout_duration_mins = 15
 
+[auth.proxy]
+enabled = false
+header = "x-remote-user"
+# Restrict to requests from the reverse proxy only.
+# trusted_cidrs = ["127.0.0.1/32", "::1/128", "10.0.0.0/8"]
+
 [llm]
 enabled = false
 

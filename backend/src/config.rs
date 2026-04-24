@@ -114,6 +114,7 @@ pub struct ProxyAuthSection {
     pub enabled: bool,
     pub header: String,
     pub email_header: String,
+    pub trusted_cidrs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -234,8 +235,9 @@ impl Default for ProxyAuthSection {
     fn default() -> Self {
         Self {
             enabled: false,
-            header: "X-Remote-User".to_string(),
+            header: "x-remote-user".to_string(),
             email_header: "X-Remote-Email".to_string(),
+            trusted_cidrs: vec!["127.0.0.1/32".to_string(), "::1/128".to_string()],
         }
     }
 }
@@ -426,8 +428,15 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
     {
         anyhow::bail!("ldap.uid_attr and ldap.email_attr are required when ldap.enabled is true");
     }
-    if config.auth.proxy.enabled && config.auth.proxy.header.trim().is_empty() {
-        anyhow::bail!("auth.proxy.header is required when auth.proxy.enabled is true");
+    if config.auth.proxy.enabled {
+        if config.auth.proxy.trusted_cidrs.is_empty() {
+            tracing::warn!(
+                "auth.proxy.enabled = true but trusted_cidrs is empty - ANY client can authenticate via X-Remote-User. Set auth.proxy.trusted_cidrs to restrict to your proxy IP."
+            );
+        }
+        if config.auth.proxy.header.trim().is_empty() {
+            anyhow::bail!("auth.proxy.header is required when auth.proxy.enabled is true");
+        }
     }
     Ok(())
 }
