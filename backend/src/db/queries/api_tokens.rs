@@ -4,6 +4,8 @@ use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
+use crate::auth::TokenScope;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ApiToken {
     pub id: String,
@@ -12,6 +14,7 @@ pub struct ApiToken {
     pub created_at: String,
     pub last_used_at: Option<String>,
     pub expires_at: Option<i64>,
+    pub scope: TokenScope,
 }
 
 pub async fn create_token(
@@ -20,14 +23,15 @@ pub async fn create_token(
     token_hash: &str,
     created_by: &str,
     expires_at: Option<i64>,
+    scope: TokenScope,
 ) -> anyhow::Result<ApiToken> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     sqlx::query(
         r#"
-        INSERT INTO api_tokens (id, name, token_hash, created_by, created_at, last_used_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?)
+        INSERT INTO api_tokens (id, name, token_hash, created_by, created_at, last_used_at, expires_at, scope)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
         "#,
     )
     .bind(&id)
@@ -36,6 +40,7 @@ pub async fn create_token(
     .bind(created_by)
     .bind(&now)
     .bind(expires_at)
+    .bind(scope.as_str())
     .execute(db)
     .await?;
 
@@ -47,7 +52,7 @@ pub async fn create_token(
 pub async fn find_by_hash(db: &SqlitePool, token_hash: &str) -> anyhow::Result<Option<ApiToken>> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at, expires_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at, scope
         FROM api_tokens
         WHERE token_hash = ?
         "#,
@@ -78,7 +83,7 @@ pub async fn touch_last_used(db: &SqlitePool, id: &str) -> anyhow::Result<()> {
 pub async fn list_tokens(db: &SqlitePool, created_by: &str) -> anyhow::Result<Vec<ApiToken>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at, expires_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at, scope
         FROM api_tokens
         WHERE created_by = ?
         ORDER BY created_at DESC, id DESC
@@ -112,7 +117,7 @@ pub async fn delete_token(db: &SqlitePool, id: &str, created_by: &str) -> anyhow
 async fn find_by_id(db: &SqlitePool, id: &str) -> anyhow::Result<Option<ApiToken>> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at, expires_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at, scope
         FROM api_tokens
         WHERE id = ?
         "#,
@@ -136,5 +141,15 @@ fn row_to_api_token(row: Option<sqlx::sqlite::SqliteRow>) -> anyhow::Result<Opti
         created_at: row.get("created_at"),
         last_used_at: row.get("last_used_at"),
         expires_at: row.get("expires_at"),
+        scope: parse_scope(&row.get::<String, _>("scope"))?,
     }))
+}
+
+fn parse_scope(scope: &str) -> anyhow::Result<TokenScope> {
+    match scope {
+        "read" => Ok(TokenScope::Read),
+        "write" => Ok(TokenScope::Write),
+        "admin" => Ok(TokenScope::Admin),
+        other => anyhow::bail!("invalid api token scope: {other}"),
+    }
 }

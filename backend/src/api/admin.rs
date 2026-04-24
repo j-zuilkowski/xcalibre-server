@@ -1,5 +1,6 @@
 use crate::{
     auth::password::hash_password,
+    auth::TokenScope,
     db::queries::{
         api_tokens as api_token_queries, auth as auth_queries, email_settings as email_queries,
         kobo as kobo_queries, libraries as library_queries, llm as llm_queries,
@@ -106,6 +107,8 @@ struct CreateTokenRequest {
     name: String,
     #[serde(default)]
     expires_in_days: Option<u64>,
+    #[serde(default)]
+    scope: TokenScope,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -151,6 +154,7 @@ struct CreateTokenResponse {
     name: String,
     token: String,
     created_at: String,
+    scope: TokenScope,
 }
 
 #[derive(Debug, Serialize)]
@@ -896,11 +900,13 @@ async fn create_token(
     let CreateTokenRequest {
         name,
         expires_in_days,
+        scope,
     } = payload;
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::BadRequest);
     }
+    validate_token_scope_request(&auth_user.user, scope)?;
 
     let plain_token = generate_plain_token();
     let token_hash = hash_token(&plain_token);
@@ -911,6 +917,7 @@ async fn create_token(
         &token_hash,
         &auth_user.user.id,
         expires_at,
+        scope,
     )
     .await
     .map_err(|_| AppError::Internal)?;
@@ -922,6 +929,7 @@ async fn create_token(
             name: token.name,
             token: plain_token,
             created_at: token.created_at,
+            scope: token.scope,
         }),
     ))
 }
@@ -1358,6 +1366,16 @@ fn normalize_scheduled_task_type(task_type: &str) -> Option<&'static str> {
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let _ = (state, user_id);
     // Admin authorization is enforced by RequireAdmin at the router layer.
+    Ok(())
+}
+
+pub fn validate_token_scope_request(
+    user: &crate::db::models::User,
+    scope: TokenScope,
+) -> Result<(), AppError> {
+    if scope == TokenScope::Admin && user.role.name != "admin" {
+        return Err(AppError::Unprocessable);
+    }
     Ok(())
 }
 

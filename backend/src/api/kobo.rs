@@ -308,7 +308,7 @@ async fn ensure_can_download(state: &AppState, user_id: &str) -> Result<(), AppE
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_download {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }

@@ -849,7 +849,7 @@ async fn patch_annotation(
     }
 
     if existing.user_id != auth_user.user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let color = match payload.color {
@@ -905,7 +905,7 @@ async fn delete_annotation(
     }
 
     if existing.user_id != auth_user.user.id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let deleted =
@@ -1324,7 +1324,7 @@ pub(crate) async fn upload_book(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_upload {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let _import_metrics = ImportMetricsGuard::new();
@@ -1554,7 +1554,7 @@ pub(crate) async fn patch_book(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_edit {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let patch = book_queries::PatchBookInput {
@@ -1635,7 +1635,7 @@ pub(crate) async fn delete_book(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.is_admin() {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let book_snapshot = book_queries::get_book_by_id(
@@ -2233,7 +2233,7 @@ async fn get_comic_pages(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_download {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let comic =
@@ -2264,7 +2264,7 @@ async fn get_comic_page(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_download {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let comic =
@@ -2292,7 +2292,7 @@ async fn bulk_edit_books(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.is_admin() {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     if payload.book_ids.is_empty() {
         return Err(AppError::BadRequest);
@@ -2937,7 +2937,7 @@ async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_edit {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }
@@ -2948,7 +2948,7 @@ async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.is_admin() {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }
@@ -2959,7 +2959,7 @@ async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_download {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }

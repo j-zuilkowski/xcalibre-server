@@ -1,4 +1,5 @@
 use crate::{
+    auth::{require_admin_scope, require_write_scope, TokenScope},
     db::queries::{api_tokens as api_token_queries, auth as auth_queries},
     AppError, AppState,
 };
@@ -32,6 +33,7 @@ pub struct AccessTokenClaims {
 #[derive(Clone, Debug)]
 pub struct AuthenticatedUser {
     pub user: crate::db::models::User,
+    pub api_token_scope: Option<TokenScope>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +66,10 @@ where
             .cloned()
             .ok_or(AppError::Unauthorized)?;
         if user.user.role.name != "admin" {
-            return Err(AppError::Forbidden);
+            return Err(AppError::Forbidden("forbidden".into()));
+        }
+        if let Some(scope) = user.api_token_scope {
+            require_admin_scope(scope)?;
         }
         Ok(RequireAdmin)
     }
@@ -101,7 +106,7 @@ pub fn validate_access_token(token: &str, jwt_secret: &str) -> Result<AccessToke
     .map_err(|_| AppError::Unauthorized)
     .and_then(|claims| {
         if claims.totp_pending {
-            Err(AppError::Forbidden)
+            Err(AppError::Forbidden("forbidden".into()))
         } else {
             Ok(claims)
         }
@@ -140,7 +145,7 @@ pub fn validate_totp_pending_token(
     if claims.totp_pending {
         Ok(claims)
     } else {
-        Err(AppError::Forbidden)
+        Err(AppError::Forbidden("forbidden".into()))
     }
 }
 
@@ -159,7 +164,10 @@ pub async fn require_auth(
         if !user.is_active {
             return Err(AppError::Unauthorized);
         }
-        req.extensions_mut().insert(AuthenticatedUser { user });
+        req.extensions_mut().insert(AuthenticatedUser {
+            user,
+            api_token_scope: None,
+        });
         return Ok(next.run(req).await);
     }
 
@@ -167,17 +175,21 @@ pub async fn require_auth(
     let user = match validate_access_token(token, &state.config.auth.jwt_secret) {
         Ok(claims) => auth_queries::find_user_by_id(&state.db, &claims.sub)
             .await
-            .map_err(|_| AppError::Internal)?,
-        Err(AppError::Unauthorized) => authenticate_api_token(&state, token).await?,
+            .map_err(|_| AppError::Internal)?
+            .map(|user| AuthenticatedUser {
+                user,
+                api_token_scope: None,
+            }),
+        Err(AppError::Unauthorized) => authenticate_api_token(&state, token, req.method()).await?,
         Err(err) => return Err(err),
     }
     .ok_or(AppError::Unauthorized)?;
 
-    if !user.is_active {
+    if !user.user.is_active {
         return Err(AppError::Unauthorized);
     }
 
-    req.extensions_mut().insert(AuthenticatedUser { user });
+    req.extensions_mut().insert(user);
     Ok(next.run(req).await)
 }
 
@@ -269,7 +281,8 @@ async fn authenticate_proxy_user(
 async fn authenticate_api_token(
     state: &AppState,
     token: &str,
-) -> Result<Option<crate::db::models::User>, AppError> {
+    method: &axum::http::Method,
+) -> Result<Option<AuthenticatedUser>, AppError> {
     let token_hash = hex_sha256(token);
     let Some(api_token) = api_token_queries::find_by_hash(&state.db, &token_hash)
         .await
@@ -284,10 +297,6 @@ async fn authenticate_api_token(
         }
     }
 
-    api_token_queries::touch_last_used(&state.db, &api_token.id)
-        .await
-        .map_err(|_| AppError::Internal)?;
-
     let user = auth_queries::find_user_by_id(&state.db, &api_token.created_by)
         .await
         .map_err(|_| AppError::Internal)?
@@ -297,7 +306,22 @@ async fn authenticate_api_token(
         return Err(AppError::Unauthorized);
     }
 
-    Ok(Some(user))
+    if api_token.scope == TokenScope::Admin && user.role.name != "admin" {
+        return Err(AppError::Unauthorized);
+    }
+
+    if *method != axum::http::Method::GET {
+        require_write_scope(api_token.scope)?;
+    }
+
+    api_token_queries::touch_last_used(&state.db, &api_token.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(Some(AuthenticatedUser {
+        user,
+        api_token_scope: Some(api_token.scope),
+    }))
 }
 
 fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {

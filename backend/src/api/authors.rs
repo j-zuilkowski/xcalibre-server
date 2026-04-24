@@ -167,7 +167,7 @@ pub(crate) async fn patch_author(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_edit {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let author_id = author_id.trim().to_string();
@@ -309,7 +309,7 @@ pub(crate) async fn upload_author_photo(
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_edit {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     let author_id = author_id.trim().to_string();

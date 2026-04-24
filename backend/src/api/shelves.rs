@@ -276,7 +276,7 @@ async fn ensure_owner(state: &AppState, user_id: &str, shelf_id: &str) -> Result
     };
 
     if shelf.user_id != user_id {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
 
     Ok(())

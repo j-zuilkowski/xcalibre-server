@@ -339,7 +339,7 @@ async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.can_edit {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }
@@ -350,7 +350,7 @@ async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
     if !perms.is_admin() {
-        return Err(AppError::Forbidden);
+        return Err(AppError::Forbidden("forbidden".into()));
     }
     Ok(())
 }
