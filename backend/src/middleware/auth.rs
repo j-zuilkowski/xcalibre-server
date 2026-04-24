@@ -37,9 +37,12 @@ pub struct TotpPendingUser {
     pub user: crate::db::models::User,
 }
 
-/// Zero-size extractor that rejects non-admin callers with 403.
-/// Usage: add `_admin: RequireAdmin` to handler signature, or apply the
-/// `require_admin` Router layer at registration time.
+/// Zero-size extractor that enforces admin-role authorization.
+/// Requires the `require_auth` middleware to have run first (inserts
+/// `AuthenticatedUser` into extensions). Returns 401 if unauthenticated,
+/// 403 if authenticated but non-admin. Apply at the router layer via
+/// `middleware::from_extractor::<RequireAdmin>()` so all routes in a
+/// subtree are covered without per-handler annotations.
 #[derive(Clone, Debug)]
 pub struct RequireAdmin;
 

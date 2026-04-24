@@ -6,7 +6,7 @@ use crate::{
         llm as llm_queries, scheduled_tasks as scheduled_task_queries, tags as tag_queries,
         totp as totp_queries, user_tag_restrictions as restriction_queries,
     },
-    middleware::auth::AuthenticatedUser,
+    middleware::auth::{AuthenticatedUser, RequireAdmin},
     scheduler, AppError, AppState,
 };
 use axum::{
@@ -555,7 +555,10 @@ async fn list_jobs(
     }))
 }
 
-async fn list_roles(State(state): State<AppState>) -> Result<Json<Vec<RoleResponse>>, AppError> {
+async fn list_roles(
+    _admin: RequireAdmin,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RoleResponse>>, AppError> {
     let rows = sqlx::query(
         r#"
         SELECT id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified
