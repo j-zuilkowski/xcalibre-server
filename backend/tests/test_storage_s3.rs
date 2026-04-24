@@ -52,7 +52,7 @@ async fn test_local_storage_get_range_returns_partial_bytes() {
         .expect("write file");
 
     let result = storage
-        .get_range("books/range.bin", Some((0, 511)))
+        .get_range("books/range.bin", Some((0, 511)), None)
         .await
         .expect("read range");
 
@@ -75,7 +75,7 @@ async fn test_local_storage_get_range_open_end() {
         .expect("write file");
 
     let result = storage
-        .get_range("books/open-end.bin", Some((50, u64::MAX)))
+        .get_range("books/open-end.bin", Some((50, u64::MAX)), None)
         .await
         .expect("read open-end range");
 
@@ -98,7 +98,7 @@ async fn test_local_storage_get_range_none_returns_full() {
         .expect("write file");
 
     let result = storage
-        .get_range("books/full.bin", None)
+        .get_range("books/full.bin", None, None)
         .await
         .expect("read full range");
 
@@ -254,7 +254,7 @@ async fn test_s3_get_range_passes_range_header() {
         .expect("put object");
 
     let result = storage
-        .get_range(&key, Some((0, 1023)))
+        .get_range(&key, Some((0, 1023)), None)
         .await
         .expect("range get object");
     assert_eq!(result.bytes.len(), 1024);

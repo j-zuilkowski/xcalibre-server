@@ -3329,6 +3329,7 @@ async fn serve_storage_file(
     if using_local_backend {
         let full_path = canonicalize_storage_file_path(state, relative_path)?;
         if let Some(range_str) = range_header.as_deref() {
+            // Single-syscall intent: fetch file size once here and pass it through.
             let file_size = match tokio::fs::metadata(&full_path).await {
                 Ok(metadata) => metadata.len(),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -3342,7 +3343,7 @@ async fn serve_storage_file(
 
             let result = state
                 .storage
-                .get_range(relative_path, Some(range))
+                .get_range(relative_path, Some(range), Some(file_size))
                 .await
                 .map_err(map_storage_read_error)?;
 
@@ -3393,7 +3394,7 @@ async fn serve_storage_file(
 
         let result = state
             .storage
-            .get_range(relative_path, Some(range))
+            .get_range(relative_path, Some(range), Some(file_size))
             .await
             .map_err(map_storage_read_error)?;
 
@@ -3417,7 +3418,7 @@ async fn serve_storage_file(
     } else {
         let result = state
             .storage
-            .get_range(relative_path, None)
+            .get_range(relative_path, None, None)
             .await
             .map_err(map_storage_read_error)?;
 
@@ -3902,7 +3903,7 @@ async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
 
     state
         .storage
-        .get_range(relative_path, Some((0, 0)))
+        .get_range(relative_path, Some((0, 0)), None)
         .await
         .is_ok()
 }

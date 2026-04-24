@@ -67,9 +67,10 @@ pub trait StorageBackend: Send + Sync {
         &self,
         relative_path: &str,
         range: Option<(u64, u64)>,
+        total_length: Option<u64>,
     ) -> anyhow::Result<GetRangeResult>;
     async fn get_bytes(&self, relative_path: &str) -> anyhow::Result<Bytes> {
-        Ok(self.get_range(relative_path, None).await?.bytes)
+        Ok(self.get_range(relative_path, None, None).await?.bytes)
     }
     fn resolve(&self, relative_path: &str) -> anyhow::Result<PathBuf>;
 }
@@ -123,12 +124,18 @@ impl StorageBackend for LocalFsStorage {
         &self,
         relative_path: &str,
         range: Option<(u64, u64)>,
+        total_length: Option<u64>,
     ) -> anyhow::Result<GetRangeResult> {
         let full_path = self.resolve(relative_path)?;
-        let metadata = tokio::fs::metadata(&full_path)
-            .await
-            .with_context(|| format!("read file metadata {}", full_path.display()))?;
-        let total_length = metadata.len();
+        let total_length = match total_length {
+            Some(total_length) => total_length,
+            None => {
+                let metadata = tokio::fs::metadata(&full_path)
+                    .await
+                    .with_context(|| format!("read file metadata {}", full_path.display()))?;
+                metadata.len()
+            }
+        };
 
         match range {
             None => {

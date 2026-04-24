@@ -570,7 +570,7 @@ async fn select_author_photo_variant(
 async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
     state
         .storage
-        .get_range(relative_path, Some((0, 0)))
+        .get_range(relative_path, Some((0, 0)), None)
         .await
         .is_ok()
 }

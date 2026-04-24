@@ -142,6 +142,7 @@ impl StorageBackend for S3Storage {
         &self,
         relative_path: &str,
         range: Option<(u64, u64)>,
+        _total_length: Option<u64>,
     ) -> anyhow::Result<GetRangeResult> {
         let key = self.s3_key(relative_path)?;
         let mut request = self.client.get_object().bucket(&self.bucket).key(&key);
