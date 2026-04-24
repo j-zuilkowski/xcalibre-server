@@ -5,6 +5,26 @@
 - A domain name pointing at your server (for TLS)
 - 1GB RAM minimum; 4GB recommended for Meilisearch
 
+## Key Rotation
+
+This release changes the HKDF salts used to derive the AES-256-GCM keys for
+TOTP secrets and webhook secrets. Fresh installs can deploy normally.
+
+If you already have encrypted TOTP or webhook data in production, run a one-time
+rotation before or during the rollout:
+
+1. Back up the database and stop the app.
+2. Read every non-null `users.totp_secret` value and every `webhooks.secret`
+   value.
+3. Decrypt each value with the legacy key derivation path that used `salt=None`.
+4. Re-encrypt TOTP secrets with the new TOTP salt and webhook secrets with the
+   new webhook salt.
+5. Write the updated ciphertext back to the same rows.
+6. Start the new release after the data has been rewritten.
+
+If you do not have any existing TOTP or webhook secrets, you can skip this
+rotation.
+
 ## Tier 1: Single Instance (SQLite) — Recommended for < 5 users
 
 This is the standard self-hosted deployment. One container, SQLite DB, local filesystem or S3 for book files. Easiest to operate.

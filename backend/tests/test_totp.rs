@@ -24,6 +24,29 @@ fn generate_code(secret_base32: &str, issuer: &str, account_name: &str) -> Strin
     totp.generate_current().expect("generate current code")
 }
 
+#[test]
+fn test_totp_key_derivation_is_stable() {
+    let jwt_secret = "test-jwt-secret-for-totp-derivation";
+    let key_one = backend::auth::totp::derive_key(jwt_secret, backend::auth::totp::TOTP_HKDF_SALT)
+        .expect("derive key");
+    let key_two = backend::auth::totp::derive_key(jwt_secret, backend::auth::totp::TOTP_HKDF_SALT)
+        .expect("derive key");
+
+    assert_eq!(key_one, key_two);
+}
+
+#[test]
+fn test_totp_and_webhook_keys_are_distinct() {
+    let jwt_secret = "test-jwt-secret-for-totp-derivation";
+    let totp_key = backend::auth::totp::derive_key(jwt_secret, backend::auth::totp::TOTP_HKDF_SALT)
+        .expect("derive totp key");
+    let webhook_key =
+        backend::auth::totp::derive_key(jwt_secret, backend::auth::totp::WEBHOOK_HKDF_SALT)
+            .expect("derive webhook key");
+
+    assert_ne!(totp_key, webhook_key);
+}
+
 async fn setup_totp_for_user(
     ctx: &TestContext,
     username: &str,

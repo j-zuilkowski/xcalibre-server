@@ -10,7 +10,12 @@ use std::{
     },
 };
 
-use axum::{extract::State, http::{HeaderMap, StatusCode}, routing::post, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::post,
+    Router,
+};
 use backend::{
     app, auth::totp as totp_auth, config::AppConfig, db::queries::webhooks as webhook_queries,
     webhooks as webhook_engine, AppState,
@@ -19,10 +24,10 @@ use common::{auth_header, test_db, TestContext, TEST_JWT_SECRET};
 use hmac::{Hmac, Mac};
 use serde_json::json;
 use sha2::Sha256;
+use sqlx::Row;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use sqlx::Row;
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
@@ -55,7 +60,11 @@ async fn hook_handler(
     body: String,
 ) -> StatusCode {
     state.calls.fetch_add(1, Ordering::SeqCst);
-    state.requests.lock().await.push(CapturedRequest { headers, body });
+    state
+        .requests
+        .lock()
+        .await
+        .push(CapturedRequest { headers, body });
 
     if state.always_fail {
         return StatusCode::INTERNAL_SERVER_ERROR;
@@ -68,7 +77,10 @@ async fn hook_handler(
     StatusCode::OK
 }
 
-async fn start_hook_server(fail_first: bool, always_fail: bool) -> (reqwest::Client, Arc<Mutex<Vec<CapturedRequest>>>) {
+async fn start_hook_server(
+    fail_first: bool,
+    always_fail: bool,
+) -> (reqwest::Client, Arc<Mutex<Vec<CapturedRequest>>>) {
     let state = HookServerState::new(fail_first, always_fail);
     let requests = state.requests.clone();
     let app = Router::new()
@@ -80,9 +92,7 @@ async fn start_hook_server(fail_first: bool, always_fail: bool) -> (reqwest::Cli
         .expect("bind hook server");
     let addr = listener.local_addr().expect("hook server addr");
     tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("hook server");
+        axum::serve(listener, app).await.expect("hook server");
     });
 
     let client = reqwest::Client::builder()
@@ -124,7 +134,8 @@ async fn insert_webhook(
     events: &[&str],
     enabled: bool,
 ) -> String {
-    let encrypted_secret = totp_auth::encrypt_secret(secret, ctx.jwt_secret()).expect("encrypt secret");
+    let encrypted_secret =
+        totp_auth::encrypt_webhook_secret(secret, ctx.jwt_secret()).expect("encrypt secret");
     let events_json = serde_json::to_string(&events).expect("serialize events");
     let webhook = webhook_queries::create_webhook(
         &ctx.db,
@@ -182,7 +193,8 @@ async fn test_create_webhook_stores_encrypted_secret() {
     let stored_secret: String = row.get("secret");
     assert_ne!(stored_secret, "my-secret");
 
-    let decrypted = totp_auth::decrypt_secret(&stored_secret, ctx.jwt_secret()).expect("decrypt");
+    let decrypted =
+        totp_auth::decrypt_webhook_secret(&stored_secret, ctx.jwt_secret()).expect("decrypt");
     assert_eq!(decrypted, "my-secret");
 }
 
@@ -249,10 +261,24 @@ async fn test_create_webhook_rejects_private_ip_ssrf() {
 async fn test_enqueue_event_creates_delivery_for_subscribed_webhooks() {
     let ctx = TestContext::new().await;
     let (user, _) = ctx.create_user().await;
-    let _enabled =
-        insert_webhook(&ctx, &user.id, "https://example.com/one", "secret-a", &["book.added"], true).await;
-    let _other =
-        insert_webhook(&ctx, &user.id, "https://example.com/two", "secret-b", &["book.deleted"], true).await;
+    let _enabled = insert_webhook(
+        &ctx,
+        &user.id,
+        "https://example.com/one",
+        "secret-a",
+        &["book.added"],
+        true,
+    )
+    .await;
+    let _other = insert_webhook(
+        &ctx,
+        &user.id,
+        "https://example.com/two",
+        "secret-b",
+        &["book.deleted"],
+        true,
+    )
+    .await;
 
     webhook_engine::enqueue_event(&ctx.db, "book.added", payload_for_event("book.added"))
         .await
@@ -269,8 +295,15 @@ async fn test_enqueue_event_creates_delivery_for_subscribed_webhooks() {
 async fn test_enqueue_event_skips_disabled_webhooks() {
     let ctx = TestContext::new().await;
     let (user, _) = ctx.create_user().await;
-    let _disabled =
-        insert_webhook(&ctx, &user.id, "https://example.com/one", "secret-a", &["book.added"], false).await;
+    let _disabled = insert_webhook(
+        &ctx,
+        &user.id,
+        "https://example.com/one",
+        "secret-a",
+        &["book.added"],
+        false,
+    )
+    .await;
 
     webhook_engine::enqueue_event(&ctx.db, "book.added", payload_for_event("book.added"))
         .await
@@ -289,8 +322,15 @@ async fn test_delivery_sends_correct_hmac_signature() {
     let ctx = custom_context(http_client).await;
     let (user, _) = ctx.create_user().await;
     let secret = "super-secret";
-    let _webhook_id =
-        insert_webhook(&ctx, &user.id, "http://example.com/hook", secret, &["book.added"], true).await;
+    let _webhook_id = insert_webhook(
+        &ctx,
+        &user.id,
+        "http://example.com/hook",
+        secret,
+        &["book.added"],
+        true,
+    )
+    .await;
     let payload = payload_for_event("book.added");
 
     webhook_engine::enqueue_event(&ctx.db, "book.added", payload.clone())
@@ -331,7 +371,15 @@ async fn test_delivery_retries_on_failure() {
     let (http_client, _requests) = start_hook_server(true, false).await;
     let ctx = custom_context(http_client).await;
     let (user, _) = ctx.create_user().await;
-    let webhook_id = insert_webhook(&ctx, &user.id, "http://example.com/hook", "retry-secret", &["book.added"], true).await;
+    let webhook_id = insert_webhook(
+        &ctx,
+        &user.id,
+        "http://example.com/hook",
+        "retry-secret",
+        &["book.added"],
+        true,
+    )
+    .await;
 
     webhook_engine::enqueue_event(&ctx.db, "book.added", payload_for_event("book.added"))
         .await
@@ -341,11 +389,13 @@ async fn test_delivery_retries_on_failure() {
         .await
         .expect("first delivery");
 
-    let row = sqlx::query("SELECT status, attempts, next_attempt_at FROM webhook_deliveries WHERE webhook_id = ?")
-        .bind(&webhook_id)
-        .fetch_one(&ctx.db)
-        .await
-        .expect("delivery row");
+    let row = sqlx::query(
+        "SELECT status, attempts, next_attempt_at FROM webhook_deliveries WHERE webhook_id = ?",
+    )
+    .bind(&webhook_id)
+    .fetch_one(&ctx.db)
+    .await
+    .expect("delivery row");
     assert_eq!(row.get::<String, _>("status"), "pending");
     assert_eq!(row.get::<i64, _>("attempts"), 1);
 
@@ -374,7 +424,15 @@ async fn test_delivery_marks_failed_after_3_attempts() {
     let (http_client, _requests) = start_hook_server(false, true).await;
     let ctx = custom_context(http_client).await;
     let (user, _) = ctx.create_user().await;
-    let webhook_id = insert_webhook(&ctx, &user.id, "http://example.com/hook", "fail-secret", &["book.added"], true).await;
+    let webhook_id = insert_webhook(
+        &ctx,
+        &user.id,
+        "http://example.com/hook",
+        "fail-secret",
+        &["book.added"],
+        true,
+    )
+    .await;
 
     webhook_engine::enqueue_event(&ctx.db, "book.added", payload_for_event("book.added"))
         .await
@@ -409,7 +467,15 @@ async fn test_test_endpoint_fires_ping_synchronously() {
     let (http_client, requests) = start_hook_server(false, false).await;
     let ctx = custom_context(http_client).await;
     let (user, password) = ctx.create_user().await;
-    let webhook_id = insert_webhook(&ctx, &user.id, "http://example.com/hook", "ping-secret", &["book.added"], true).await;
+    let webhook_id = insert_webhook(
+        &ctx,
+        &user.id,
+        "http://example.com/hook",
+        "ping-secret",
+        &["book.added"],
+        true,
+    )
+    .await;
     let token = ctx.login(&user.username, &password).await.access_token;
 
     let response = ctx

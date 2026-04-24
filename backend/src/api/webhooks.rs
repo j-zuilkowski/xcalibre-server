@@ -1,9 +1,6 @@
 use crate::{
-    auth::totp as totp_auth,
-    db::queries::webhooks as webhook_queries,
-    middleware::auth::AuthenticatedUser,
-    webhooks as webhook_engine,
-    AppError, AppState,
+    auth::totp as totp_auth, db::queries::webhooks as webhook_queries,
+    middleware::auth::AuthenticatedUser, webhooks as webhook_engine, AppError, AppState,
 };
 use axum::{
     extract::{Extension, Path, State},
@@ -20,7 +17,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
 
     Router::new()
-        .route("/api/v1/users/me/webhooks", get(list_webhooks).post(create_webhook))
+        .route(
+            "/api/v1/users/me/webhooks",
+            get(list_webhooks).post(create_webhook),
+        )
         .route(
             "/api/v1/users/me/webhooks/:id",
             patch(update_webhook).delete(delete_webhook),
@@ -116,7 +116,8 @@ pub(crate) async fn create_webhook(
 
     webhook_engine::validate_webhook_target(&url, true).await?;
     let events = validate_events(&payload.events)?;
-    let encrypted_secret = totp_auth::encrypt_secret(&secret, &state.config.auth.jwt_secret)?;
+    let encrypted_secret =
+        totp_auth::encrypt_webhook_secret(&secret, &state.config.auth.jwt_secret)?;
     let events_json = serde_json::to_string(&events).map_err(|_| AppError::Internal)?;
 
     let webhook = webhook_queries::create_webhook(
@@ -130,7 +131,10 @@ pub(crate) async fn create_webhook(
     .await
     .map_err(|_| AppError::Internal)?;
 
-    Ok((axum::http::StatusCode::CREATED, Json(webhook_to_response(webhook))))
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(webhook_to_response(webhook)),
+    ))
 }
 
 #[utoipa::path(
@@ -153,9 +157,10 @@ pub(crate) async fn update_webhook(
     Path(webhook_id): Path<String>,
     Json(payload): Json<UpdateWebhookRequest>,
 ) -> Result<Json<WebhookResponse>, AppError> {
-    let Some(existing) = webhook_queries::get_webhook_by_id(&state.db, &auth_user.user.id, &webhook_id)
-        .await
-        .map_err(|_| AppError::Internal)?
+    let Some(existing) =
+        webhook_queries::get_webhook_by_id(&state.db, &auth_user.user.id, &webhook_id)
+            .await
+            .map_err(|_| AppError::Internal)?
     else {
         return Err(AppError::NotFound);
     };
@@ -252,9 +257,10 @@ pub(crate) async fn test_webhook(
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(webhook_id): Path<String>,
 ) -> Result<Json<webhook_engine::DeliveryAttemptResult>, AppError> {
-    let Some(webhook) = webhook_queries::get_webhook_by_id(&state.db, &auth_user.user.id, &webhook_id)
-        .await
-        .map_err(|_| AppError::Internal)?
+    let Some(webhook) =
+        webhook_queries::get_webhook_by_id(&state.db, &auth_user.user.id, &webhook_id)
+            .await
+            .map_err(|_| AppError::Internal)?
     else {
         return Err(AppError::NotFound);
     };

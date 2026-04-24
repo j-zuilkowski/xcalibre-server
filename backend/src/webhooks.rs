@@ -1,8 +1,6 @@
 use crate::{
-    auth::totp as totp_auth,
-    config::is_private_or_loopback,
-    db::queries::webhooks as webhook_queries,
-    AppError,
+    auth::totp as totp_auth, config::is_private_or_loopback,
+    db::queries::webhooks as webhook_queries, AppError,
 };
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -10,7 +8,10 @@ use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::Sha256;
-use std::{sync::{Mutex, OnceLock}, time::Duration};
+use std::{
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 use utoipa::ToSchema;
 
 const WEBHOOK_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -53,10 +54,7 @@ pub async fn enqueue_event(
     Ok(webhooks.len())
 }
 
-pub async fn deliver_pending(
-    db: &sqlx::SqlitePool,
-    http_client: &Client,
-) -> anyhow::Result<usize> {
+pub async fn deliver_pending(db: &sqlx::SqlitePool, http_client: &Client) -> anyhow::Result<usize> {
     let now = Utc::now().to_rfc3339();
     let pending = webhook_queries::list_pending_deliveries(db, &now, 50).await?;
     let jwt_secret = webhook_jwt_secret()?;
@@ -87,7 +85,8 @@ pub async fn deliver_pending(
                         i64::from(result.response_status.unwrap_or(200)),
                     )
                     .await?;
-                    webhook_queries::mark_webhook_delivery_success(db, &delivery.webhook_id).await?;
+                    webhook_queries::mark_webhook_delivery_success(db, &delivery.webhook_id)
+                        .await?;
                 } else {
                     let attempts = delivery.attempts + 1;
                     let error = result
@@ -115,8 +114,13 @@ pub async fn deliver_pending(
                     webhook_queries::mark_delivery_failed(db, &delivery.id, &error).await?;
                 } else {
                     let next_attempt_at = retry_deadline_for_attempt(attempts);
-                    webhook_queries::mark_delivery_retry(db, &delivery.id, &error, &next_attempt_at)
-                        .await?;
+                    webhook_queries::mark_delivery_retry(
+                        db,
+                        &delivery.id,
+                        &error,
+                        &next_attempt_at,
+                    )
+                    .await?;
                 }
             }
         }
@@ -156,7 +160,7 @@ async fn deliver_single_delivery(
 ) -> Result<DeliveryAttemptResult, AppError> {
     validate_webhook_target(url, request.require_https).await?;
 
-    let secret = totp_auth::decrypt_secret(encrypted_secret, request.jwt_secret)?;
+    let secret = totp_auth::decrypt_webhook_secret(encrypted_secret, request.jwt_secret)?;
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| AppError::Internal)?;
     mac.update(payload_json.as_bytes());
@@ -167,10 +171,7 @@ async fn deliver_single_delivery(
         .post(url)
         .timeout(request.timeout)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(
-            "X-Autolibre-Signature",
-            format!("sha256={signature}"),
-        )
+        .header("X-Autolibre-Signature", format!("sha256={signature}"))
         .header("X-Autolibre-Event", event)
         .body(payload_json.to_string())
         .send()
@@ -219,7 +220,9 @@ pub async fn validate_webhook_target(url: &str, require_https: bool) -> Result<(
     }
 
     let host = parsed.host_str().ok_or(AppError::Unprocessable)?;
-    let port = parsed.port_or_known_default().ok_or(AppError::Unprocessable)?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or(AppError::Unprocessable)?;
     let resolved = tokio::net::lookup_host((host, port))
         .await
         .map_err(|_| AppError::Unprocessable)?;
