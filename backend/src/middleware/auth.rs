@@ -308,7 +308,7 @@ fn proxy_email(headers: &axum::http::HeaderMap, header_name: &str) -> String {
 
 pub fn is_trusted_proxy(remote_ip: IpAddr, trusted_cidrs: &[String]) -> bool {
     if trusted_cidrs.is_empty() {
-        return true;
+        return false;
     }
 
     trusted_cidrs.iter().any(|cidr| {
@@ -316,6 +316,18 @@ pub fn is_trusted_proxy(remote_ip: IpAddr, trusted_cidrs: &[String]) -> bool {
             .map(|net| net.contains(&remote_ip))
             .unwrap_or(false)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_trusted_proxy;
+    use std::net::IpAddr;
+
+    #[test]
+    fn empty_cidr_list_denies_all() {
+        let ip: IpAddr = "127.0.0.1".parse().expect("loopback ip");
+        assert!(!is_trusted_proxy(ip, &[]));
+    }
 }
 
 fn generate_random_password() -> String {

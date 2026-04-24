@@ -57,11 +57,15 @@ async fn proxy_context(mut config: AppConfig, remote_ip: IpAddr) -> ProxyContext
 }
 
 fn proxy_config() -> AppConfig {
+    proxy_config_with_cidrs(vec!["127.0.0.1/32".to_string()])
+}
+
+fn proxy_config_with_cidrs(trusted_cidrs: Vec<String>) -> AppConfig {
     let mut config = AppConfig::default();
     config.auth.proxy.enabled = true;
     config.auth.proxy.header = "x-remote-user".to_string();
     config.auth.proxy.email_header = "X-Remote-Email".to_string();
-    config.auth.proxy.trusted_cidrs = vec!["127.0.0.1/32".to_string()];
+    config.auth.proxy.trusted_cidrs = trusted_cidrs;
     config
 }
 
@@ -83,11 +87,8 @@ async fn test_proxy_auth_disabled_ignores_header() {
 
 #[tokio::test]
 async fn test_proxy_auth_accepted_from_trusted_ip() {
-    let ctx = proxy_context(
-        proxy_config(),
-        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
-    )
-    .await;
+    let ctx = proxy_context(proxy_config(), "127.0.0.1".parse::<IpAddr>().expect("loopback ip"))
+        .await;
 
     let response = ctx
         .server
@@ -117,12 +118,11 @@ async fn test_proxy_auth_accepted_from_trusted_ip() {
 
 #[tokio::test]
 async fn test_proxy_auth_rejected_from_untrusted_ip() {
-    let mut config = AppConfig::default();
-    config.auth.proxy.enabled = true;
-    config.auth.proxy.header = "x-remote-user".to_string();
-    config.auth.proxy.email_header = "X-Remote-Email".to_string();
-    config.auth.proxy.trusted_cidrs = vec!["10.0.0.0/8".to_string()];
-    let ctx = proxy_context(config, "127.0.0.1".parse::<IpAddr>().expect("loopback ip")).await;
+    let ctx = proxy_context(
+        proxy_config_with_cidrs(vec!["10.0.0.0/8".to_string()]),
+        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
+    )
+    .await;
 
     let response = ctx
         .server
@@ -136,6 +136,26 @@ async fn test_proxy_auth_rejected_from_untrusted_ip() {
     assert_status!(response, 401);
 }
 
+#[tokio::test]
+async fn test_proxy_auth_ignored_with_empty_trusted_cidrs() {
+    let ctx = proxy_context(
+        proxy_config_with_cidrs(Vec::new()),
+        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
+    )
+    .await;
+
+    let response = ctx
+        .server
+        .get("/api/v1/auth/me")
+        .add_header(
+            HeaderName::from_static("x-remote-user"),
+            HeaderValue::from_static("proxy-user"),
+        )
+        .await;
+
+    assert_status!(response, 401);
+}
+
 #[test]
 fn test_is_trusted_proxy_cidr_matching() {
     let loopback = "127.0.0.1".parse::<IpAddr>().expect("loopback ip");
@@ -143,6 +163,7 @@ fn test_is_trusted_proxy_cidr_matching() {
     let public = "192.168.1.1".parse::<IpAddr>().expect("public ip");
     let ipv6_loopback = "::1".parse::<IpAddr>().expect("ipv6 loopback");
 
+    assert!(!is_trusted_proxy(loopback, &[]));
     assert!(is_trusted_proxy(loopback, &["127.0.0.1/32".to_string()]));
     assert!(is_trusted_proxy(private, &["10.0.0.0/8".to_string()]));
     assert!(!is_trusted_proxy(public, &["10.0.0.0/8".to_string()]));

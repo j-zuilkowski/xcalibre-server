@@ -442,7 +442,7 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
     if config.auth.proxy.enabled {
         if config.auth.proxy.trusted_cidrs.is_empty() {
             tracing::warn!(
-                "auth.proxy.enabled = true but trusted_cidrs is empty - ANY client can authenticate via X-Remote-User. Set auth.proxy.trusted_cidrs to restrict to your proxy IP."
+                "auth.proxy.enabled = true but trusted_cidrs is empty - proxy auth is disabled until trusted_cidrs is configured."
             );
         }
         if config.auth.proxy.header.trim().is_empty() {
