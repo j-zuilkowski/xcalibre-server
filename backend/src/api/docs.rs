@@ -39,7 +39,10 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::api::shelves::remove_book_from_shelf,
         crate::api::users::me,
         crate::api::users::me_stats,
-        crate::api::users::patch_me
+        crate::api::users::patch_me,
+        crate::api::users::import_goodreads,
+        crate::api::users::import_storygraph,
+        crate::api::users::get_import_status
     ),
     components(schemas(
         crate::db::models::Book,
@@ -55,11 +58,14 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::db::models::ReadingProgress,
         crate::db::queries::annotations::Annotation,
         crate::db::queries::book_user_state::BookUserState,
+        crate::db::queries::import_logs::ImportErrorEntry,
+        crate::db::queries::import_logs::ImportLogRow,
         crate::db::queries::llm::JobRow,
         crate::db::queries::stats::MonthlyCount,
         crate::db::queries::stats::NamedCount,
         crate::db::queries::stats::UserStats,
         crate::db::queries::scheduled_tasks::ScheduledTask,
+        crate::api::users::ImportJobResponse,
         crate::error::AppErrorResponse
     )),
     modifiers(&SecurityAddon),

@@ -6,6 +6,7 @@ pub mod book_user_state;
 pub mod books;
 pub mod download_history;
 pub mod email_settings;
+pub mod import_logs;
 pub mod kobo;
 pub mod libraries;
 pub mod llm;

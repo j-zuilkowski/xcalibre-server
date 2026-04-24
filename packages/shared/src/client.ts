@@ -44,6 +44,8 @@ import type {
   TagLookupItem,
   ReadingProgress,
   ReadingProgressPatch,
+  ReadingImportJob,
+  ReadingImportResponse,
   CreateBookAnnotationRequest,
   PatchBookAnnotationRequest,
   SystemStats,
@@ -699,6 +701,28 @@ export class ApiClient {
 
   async getImportStatus(id: string): Promise<ImportStatus> {
     return this.requestJson<ImportStatus>(`/api/v1/admin/import/${encodeURIComponent(id)}`);
+  }
+
+  async startGoodreadsImport(file: File): Promise<ReadingImportResponse> {
+    const form = new FormData();
+    form.append("file", file);
+    return this.requestJson<ReadingImportResponse>("/api/v1/users/me/import/goodreads", {
+      method: "POST",
+      body: form,
+    });
+  }
+
+  async startStorygraphImport(file: File): Promise<ReadingImportResponse> {
+    const form = new FormData();
+    form.append("file", file);
+    return this.requestJson<ReadingImportResponse>("/api/v1/users/me/import/storygraph", {
+      method: "POST",
+      body: form,
+    });
+  }
+
+  async getReadingImportStatus(id: string): Promise<ReadingImportJob> {
+    return this.requestJson<ReadingImportJob>(`/api/v1/users/me/import/${encodeURIComponent(id)}`);
   }
 
   async listShelves(): Promise<Shelf[]> {

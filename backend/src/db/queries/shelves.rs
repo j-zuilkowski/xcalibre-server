@@ -83,6 +83,41 @@ pub async fn create_shelf(
         .context("created shelf not found")
 }
 
+pub async fn find_shelf_id_by_name(
+    db: &SqlitePool,
+    user_id: &str,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    let row = sqlx::query_scalar(
+        r#"
+        SELECT id
+        FROM shelves
+        WHERE user_id = ?
+          AND lower(trim(name)) = lower(trim(?))
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .bind(name)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn get_or_create_shelf_id(
+    db: &SqlitePool,
+    user_id: &str,
+    name: &str,
+) -> anyhow::Result<String> {
+    if let Some(id) = find_shelf_id_by_name(db, user_id, name).await? {
+        return Ok(id);
+    }
+
+    let shelf = create_shelf(db, user_id, name, false).await?;
+    Ok(shelf.id)
+}
+
 pub async fn delete_shelf(db: &SqlitePool, shelf_id: &str, user_id: &str) -> anyhow::Result<bool> {
     let result = sqlx::query(
         r#"

@@ -1388,6 +1388,43 @@ pub async fn set_book_cover_path(
     Ok(())
 }
 
+pub async fn find_book_ids_by_title_and_author_like(
+    db: &SqlitePool,
+    title: &str,
+    author: &str,
+) -> anyhow::Result<Vec<String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT b.id
+        FROM books b
+        WHERE (
+            lower(b.title) LIKE '%' || lower(?) || '%'
+            OR lower(b.sort_title) LIKE '%' || lower(?) || '%'
+        )
+          AND EXISTS (
+              SELECT 1
+              FROM book_authors ba
+              INNER JOIN authors a ON a.id = ba.author_id
+              WHERE ba.book_id = b.id
+                AND (
+                    lower(a.name) LIKE '%' || lower(?) || '%'
+                    OR lower(a.sort_name) LIKE '%' || lower(?) || '%'
+                )
+          )
+        ORDER BY b.title ASC, b.id ASC
+        LIMIT 2
+        "#,
+    )
+    .bind(title)
+    .bind(title)
+    .bind(author)
+    .bind(author)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows.into_iter().map(|row| row.get("id")).collect())
+}
+
 async fn load_book_authors(db: &SqlitePool, book_id: &str) -> anyhow::Result<Vec<AuthorRef>> {
     let rows = sqlx::query(
         r#"

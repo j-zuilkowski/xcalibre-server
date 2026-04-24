@@ -1,3 +1,6 @@
 [workspace]
-members = ["backend", "calibre-migrate"]
+members = ["backend", "autolibre-migrate", "autolibre-mcp"]
 resolver = "2"
+
+[patch.crates-io]
+csv = { path = "vendor/csv" }

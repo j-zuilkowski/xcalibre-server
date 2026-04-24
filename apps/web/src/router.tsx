@@ -4,7 +4,7 @@ import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { RegisterPage } from "./features/auth/RegisterPage";
 import { AdminLayout } from "./features/admin/AdminLayout";
 import { DashboardPage } from "./features/admin/DashboardPage";
-import { ImportPage } from "./features/admin/ImportPage";
+import { ImportPage as AdminImportPage } from "./features/admin/ImportPage";
 import { AdminJobsPage } from "./features/admin/AdminJobsPage";
 import { KoboDevicesPage } from "./features/admin/KoboDevicesPage";
 import { LibrariesPage } from "./features/admin/LibrariesPage";
@@ -12,6 +12,7 @@ import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
 import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
 import { TagsPage } from "./features/admin/TagsPage";
+import { ImportPage as ProfileImportPage } from "./features/profile/ImportPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
 import { StatsPage } from "./features/profile/StatsPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
@@ -67,6 +68,12 @@ const profileStatsRoute = createRoute({
   component: StatsPage,
 });
 
+const profileImportRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "profile/import",
+  component: ProfileImportPage,
+});
+
 const bookRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "books/$id",
@@ -106,7 +113,7 @@ const adminTagsRoute = createRoute({
 const adminImportRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "import",
-  component: ImportPage,
+  component: AdminImportPage,
 });
 
 const adminJobsRoute = createRoute({
@@ -159,6 +166,7 @@ export const routeTree = rootRoute.addChildren([
     shelvesRoute,
     profileRoute,
     profileStatsRoute,
+    profileImportRoute,
     bookRoute,
     readerRoute,
     adminRoute.addChildren([

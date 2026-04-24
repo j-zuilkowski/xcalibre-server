@@ -6,16 +6,12 @@ use axum::http::header;
 use backend::config::AppConfig;
 use common::{auth_header, TestContext};
 use sqlx::Row;
-use wiremock::{
-    matchers::{body_partial_json, method, path},
-    Mock, MockServer, ResponseTemplate,
-};
 
 const TAG_NAME: &str = "Science Fiction";
 
 #[tokio::test]
 async fn test_classify_inserts_pending_tags() {
-    let (ctx, token, book, _mock_server) = setup_classify_context().await;
+    let (ctx, token, book) = setup_classify_context().await;
 
     let response = ctx
         .server
@@ -49,7 +45,7 @@ async fn test_classify_inserts_pending_tags() {
 
 #[tokio::test]
 async fn test_confirm_tags_marks_confirmed() {
-    let (ctx, token, book, _mock_server) = setup_classify_context().await;
+    let (ctx, token, book) = setup_classify_context().await;
     classify_book_once(&ctx, &token, &book.id).await;
 
     let response = ctx
@@ -84,7 +80,7 @@ async fn test_confirm_tags_marks_confirmed() {
 
 #[tokio::test]
 async fn test_reject_tags_removes_row() {
-    let (ctx, token, book, _mock_server) = setup_classify_context().await;
+    let (ctx, token, book) = setup_classify_context().await;
     classify_book_once(&ctx, &token, &book.id).await;
 
     let response = ctx
@@ -133,27 +129,10 @@ async fn test_classify_returns_503_when_disabled() {
     assert_eq!(body["error"], "llm_unavailable");
 }
 
-async fn setup_classify_context() -> (TestContext, String, backend::db::models::Book, MockServer) {
-    let mock_server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(body_partial_json(
-            serde_json::json!({ "model": "test-chat-model" }),
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "{\"tags\":[{\"name\":\"Science Fiction\",\"confidence\":0.92}]}"
-                }
-            }]
-        })))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
+async fn setup_classify_context() -> (TestContext, String, backend::db::models::Book) {
     let mut config = AppConfig::default();
     config.llm.enabled = true;
-    config.llm.librarian.endpoint = mock_server.uri();
+    config.llm.librarian.endpoint = "mock://classify".to_string();
     config.llm.librarian.model = "test-chat-model".to_string();
     config.llm.librarian.system_prompt = "You classify books into tags.".to_string();
 
@@ -161,7 +140,7 @@ async fn setup_classify_context() -> (TestContext, String, backend::db::models::
     let token = ctx.admin_token().await;
     let book = ctx.create_book("Dune", "Frank Herbert").await;
 
-    (ctx, token, book, mock_server)
+    (ctx, token, book)
 }
 
 async fn classify_book_once(ctx: &TestContext, token: &str, book_id: &str) {

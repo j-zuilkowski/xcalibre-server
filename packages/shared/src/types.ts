@@ -373,6 +373,32 @@ export type BulkImportResponse = {
   job_id: string;
 };
 
+export type ReadingImportSource = "goodreads" | "storygraph";
+
+export type ReadingImportError = {
+  row: number;
+  title: string;
+  author: string;
+  reason: string;
+};
+
+export type ReadingImportJob = {
+  id: string;
+  filename: string;
+  source: ReadingImportSource;
+  status: "pending" | "running" | "complete" | "failed";
+  total_rows: number | null;
+  matched: number;
+  unmatched: number;
+  errors: ReadingImportError[];
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type ReadingImportResponse = {
+  job_id: string;
+};
+
 export type Shelf = {
   id: string;
   name: string;

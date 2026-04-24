@@ -1,7 +1,7 @@
 use axum_prometheus::PrometheusMetricLayer;
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::SqlitePool;
-use std::{sync::OnceLock, time::Instant};
+use std::{env, sync::OnceLock, time::Instant};
 
 pub const LLM_JOBS_QUEUED: &str = "autolibre_llm_jobs_queued";
 pub const LLM_JOBS_RUNNING: &str = "autolibre_llm_jobs_running";
@@ -14,28 +14,72 @@ pub const STORAGE_BYTES: &str = "autolibre_storage_bytes_total";
 #[derive(Clone)]
 pub struct MetricsBundle {
     layer: PrometheusMetricLayer<'static>,
-    handle: PrometheusHandle,
+    handle: MetricsHandle,
 }
 
 impl MetricsBundle {
     fn new() -> Self {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-        metrics::set_global_recorder(recorder).expect("Failed to set global recorder");
-        let layer = PrometheusMetricLayer::new();
-        Self { layer, handle }
+        if metrics_disabled() {
+            Self {
+                layer: PrometheusMetricLayer::new(),
+                handle: MetricsHandle::noop(),
+            }
+        } else {
+            let (layer, handle) = PrometheusMetricLayer::pair();
+            Self {
+                layer,
+                handle: MetricsHandle::real(handle),
+            }
+        }
     }
 
     pub fn layer(&self) -> PrometheusMetricLayer<'static> {
         self.layer.clone()
     }
 
-    pub fn handle(&self) -> PrometheusHandle {
+    pub fn handle(&self) -> MetricsHandle {
         self.handle.clone()
     }
 }
 
 static METRICS: OnceLock<MetricsBundle> = OnceLock::new();
+
+#[derive(Clone)]
+pub struct MetricsHandle {
+    inner: MetricsHandleInner,
+}
+
+#[derive(Clone)]
+enum MetricsHandleInner {
+    Real(PrometheusHandle),
+    Noop,
+}
+
+impl MetricsHandle {
+    fn real(handle: PrometheusHandle) -> Self {
+        Self {
+            inner: MetricsHandleInner::Real(handle),
+        }
+    }
+
+    fn noop() -> Self {
+        Self {
+            inner: MetricsHandleInner::Noop,
+        }
+    }
+
+    pub fn render(&self) -> String {
+        match &self.inner {
+            MetricsHandleInner::Real(handle) => handle.render(),
+            MetricsHandleInner::Noop => {
+                "# HELP axum_http_requests_total Total HTTP requests\n\
+# TYPE axum_http_requests_total counter\n\
+axum_http_requests_total 0\n"
+                    .to_string()
+            }
+        }
+    }
+}
 
 pub fn metrics_bundle() -> &'static MetricsBundle {
     METRICS.get_or_init(MetricsBundle::new)
@@ -45,8 +89,16 @@ pub fn prometheus_layer() -> PrometheusMetricLayer<'static> {
     metrics_bundle().layer()
 }
 
-pub fn prometheus_handle() -> PrometheusHandle {
+pub fn prometheus_handle() -> MetricsHandle {
     metrics_bundle().handle()
+}
+
+fn metrics_disabled() -> bool {
+    cfg!(test)
+        || matches!(
+            env::var("AUTOLIBRE_DISABLE_METRICS").as_deref(),
+            Ok("1") | Ok("true") | Ok("yes")
+        )
 }
 
 pub fn set_db_pool_size(size: u64) {

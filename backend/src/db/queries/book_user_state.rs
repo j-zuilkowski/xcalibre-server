@@ -45,12 +45,31 @@ pub async fn set_read(
     is_read: bool,
 ) -> anyhow::Result<()> {
     let current = get_state(db, user_id, book_id).await?;
-    upsert_state(
+    upsert_state_at(
         db,
         user_id,
         book_id,
         is_read,
         current.map(|state| state.is_archived).unwrap_or(false),
+        None,
+    )
+    .await
+}
+
+pub async fn set_read_at(
+    db: &SqlitePool,
+    user_id: &str,
+    book_id: &str,
+    read_at: &str,
+) -> anyhow::Result<()> {
+    let current = get_state(db, user_id, book_id).await?;
+    upsert_state_at(
+        db,
+        user_id,
+        book_id,
+        true,
+        current.map(|state| state.is_archived).unwrap_or(false),
+        Some(read_at),
     )
     .await
 }
@@ -62,24 +81,28 @@ pub async fn set_archived(
     is_archived: bool,
 ) -> anyhow::Result<()> {
     let current = get_state(db, user_id, book_id).await?;
-    upsert_state(
+    upsert_state_at(
         db,
         user_id,
         book_id,
         current.map(|state| state.is_read).unwrap_or(false),
         is_archived,
+        None,
     )
     .await
 }
 
-async fn upsert_state(
+async fn upsert_state_at(
     db: &SqlitePool,
     user_id: &str,
     book_id: &str,
     is_read: bool,
     is_archived: bool,
+    updated_at: Option<&str>,
 ) -> anyhow::Result<()> {
-    let now = Utc::now().to_rfc3339();
+    let now = updated_at
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
     sqlx::query(
         r#"
         INSERT INTO book_user_state (user_id, book_id, is_read, is_archived, updated_at)

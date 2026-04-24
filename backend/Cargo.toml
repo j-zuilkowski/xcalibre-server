@@ -20,6 +20,7 @@ axum-prometheus = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
 base64 = "0.22"
 bytes = "1"
+csv = "1"
 chrono = { version = "0.4", features = ["serde"] }
 config = "0.14"
 cron = "0.12"

@@ -53,6 +53,7 @@ impl TestContext {
     pub async fn new_with_config(mut config: AppConfig) -> Self {
         let storage = tempfile::tempdir().expect("tempdir");
         let db = test_db().await;
+        std::env::set_var("AUTOLIBRE_DISABLE_METRICS", "1");
         config.app.storage_path = storage.path().to_string_lossy().to_string();
         if config.auth.jwt_secret.trim().is_empty() {
             config.auth.jwt_secret = TEST_JWT_SECRET.to_string();

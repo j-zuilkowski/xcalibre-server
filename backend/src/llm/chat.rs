@@ -81,6 +81,10 @@ impl ChatClient {
             anyhow::bail!("chat endpoint/model is not configured");
         }
 
+        if let Some(response) = mock_completion_response(&self.endpoint, user_message) {
+            return Ok(response);
+        }
+
         let url = chat_completions_url(&self.endpoint);
         let response = self
             .http
@@ -134,4 +138,34 @@ fn chat_completions_url(endpoint: &str) -> String {
     } else {
         format!("{trimmed}/v1/chat/completions")
     }
+}
+
+fn mock_completion_response(endpoint: &str, user_message: &str) -> Option<String> {
+    if !endpoint.starts_with("mock://") {
+        return None;
+    }
+
+    if user_message.contains("Classify this book.") {
+        return Some(
+            serde_json::json!({
+                "tags": [{
+                    "name": "Science Fiction",
+                    "confidence": 0.92
+                }]
+            })
+            .to_string(),
+        );
+    }
+
+    if user_message.contains("Validate this metadata") {
+        return Some(
+            serde_json::json!({
+                "severity": "ok",
+                "issues": []
+            })
+            .to_string(),
+        );
+    }
+
+    Some(String::new())
 }

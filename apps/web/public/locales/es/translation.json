@@ -54,10 +54,11 @@
   },
   "nav": {
     "admin_panel": "Admin",
-    "downloads": "Descargas",
-    "library": "Biblioteca",
-    "reading_stats": "Estadísticas de lectura",
-    "profile": "Perfil",
+  "downloads": "Descargas",
+  "library": "Biblioteca",
+  "import_history": "Historial de importación",
+  "reading_stats": "Estadísticas de lectura",
+  "profile": "Perfil",
     "search": "Buscar",
     "shelves": "Estantes"
   },
