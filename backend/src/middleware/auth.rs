@@ -279,6 +279,17 @@ async fn authenticate_proxy_user(
     }
 
     let email = proxy_email(headers, &state.config.auth.proxy.email_header);
+    if email.trim().is_empty() {
+        tracing::error!(
+            username = %username,
+            email_header = %state.config.auth.proxy.email_header,
+            "proxy auth user provisioning failed: no email provided by proxy. \
+             Configure auth.proxy.email_header in config.toml."
+        );
+        return Err(AppError::UnauthorizedMessage(
+            "proxy auth requires a valid email from the proxy".into(),
+        ));
+    }
     let password = generate_random_password();
     let password_hash = crate::auth::password::hash_password(&password, &state.config.auth)?;
     let user = auth_queries::create_user(&state.db, username, &email, "user", &password_hash)

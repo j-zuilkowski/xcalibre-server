@@ -11,10 +11,12 @@ use axum::{
 use axum_test::TestServer;
 use backend::{app, config::AppConfig, middleware::auth::is_trusted_proxy, AppState};
 use common::{test_db, TestContext, TEST_JWT_SECRET};
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::Row;
 use std::net::{IpAddr, SocketAddr};
 use tempfile::TempDir;
+use uuid::Uuid;
 
 struct ProxyContext {
     db: sqlx::SqlitePool,
@@ -56,6 +58,49 @@ async fn proxy_context(mut config: AppConfig, remote_ip: IpAddr) -> ProxyContext
     }
 }
 
+async fn insert_legacy_proxy_user(db: &sqlx::SqlitePool, username: &str) {
+    let now = Utc::now().to_rfc3339();
+    let user_id = Uuid::new_v4().to_string();
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO roles (id, name, can_upload, can_bulk, can_edit, can_download, created_at, last_modified)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind("user")
+    .bind("user")
+    .bind(1_i64)
+    .bind(1_i64)
+    .bind(1_i64)
+    .bind(1_i64)
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await
+    .expect("insert user role");
+
+    sqlx::query(
+        r#"
+        INSERT INTO users (
+            id, username, email, password_hash, role_id, is_active, force_pw_reset,
+            login_attempts, locked_until, created_at, last_modified
+        )
+        VALUES (?, ?, ?, ?, ?, 1, 0, 0, NULL, ?, ?)
+        "#,
+    )
+    .bind(&user_id)
+    .bind(username)
+    .bind("")
+    .bind("legacy-proxy-password-hash")
+    .bind("user")
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await
+    .expect("insert legacy proxy user");
+}
+
 fn proxy_config() -> AppConfig {
     proxy_config_with_cidrs(vec!["127.0.0.1/32".to_string()])
 }
@@ -87,8 +132,11 @@ async fn test_proxy_auth_disabled_ignores_header() {
 
 #[tokio::test]
 async fn test_proxy_auth_accepted_from_trusted_ip() {
-    let ctx = proxy_context(proxy_config(), "127.0.0.1".parse::<IpAddr>().expect("loopback ip"))
-        .await;
+    let ctx = proxy_context(
+        proxy_config(),
+        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
+    )
+    .await;
 
     let response = ctx
         .server
@@ -114,6 +162,65 @@ async fn test_proxy_auth_accepted_from_trusted_ip() {
         .expect("created proxy user");
     assert_eq!(row.get::<String, _>("username"), "testuser");
     assert_eq!(row.get::<String, _>("email"), "testuser@example.com");
+}
+
+#[tokio::test]
+async fn test_proxy_auth_rejects_missing_email_on_provisioning() {
+    let ctx = proxy_context(
+        proxy_config(),
+        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
+    )
+    .await;
+
+    let response = ctx
+        .server
+        .get("/api/v1/auth/me")
+        .add_header(
+            HeaderName::from_static("x-remote-user"),
+            HeaderValue::from_static("testuser"),
+        )
+        .await;
+
+    assert_status!(response, 401);
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM users WHERE username = ?")
+        .bind("testuser")
+        .fetch_one(&ctx.db)
+        .await
+        .expect("count proxy users");
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_proxy_auth_existing_empty_email_user_still_logs_in() {
+    let ctx = proxy_context(
+        proxy_config(),
+        "127.0.0.1".parse::<IpAddr>().expect("loopback ip"),
+    )
+    .await;
+
+    insert_legacy_proxy_user(&ctx.db, "legacy-user").await;
+
+    let response = ctx
+        .server
+        .get("/api/v1/auth/me")
+        .add_header(
+            HeaderName::from_static("x-remote-user"),
+            HeaderValue::from_static("legacy-user"),
+        )
+        .await;
+
+    assert_status!(response, 200);
+    let body: Value = response.json();
+    assert_eq!(body["username"], "legacy-user");
+
+    let row = sqlx::query("SELECT username, email FROM users WHERE username = ?")
+        .bind("legacy-user")
+        .fetch_one(&ctx.db)
+        .await
+        .expect("legacy proxy user");
+    assert_eq!(row.get::<String, _>("username"), "legacy-user");
+    assert_eq!(row.get::<String, _>("email"), "");
 }
 
 #[tokio::test]
