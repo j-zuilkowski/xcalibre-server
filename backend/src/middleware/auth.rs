@@ -2,14 +2,14 @@ use crate::{
     db::queries::{api_tokens as api_token_queries, auth as auth_queries},
     AppError, AppState,
 };
+use async_trait::async_trait;
 use axum::{
     extract::{ConnectInfo, FromRequestParts, Request, State},
-    http::{header::AUTHORIZATION, HeaderName},
     http::request::Parts,
+    http::{header::AUTHORIZATION, HeaderName},
     middleware::Next,
     response::Response,
 };
-use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ipnet::IpNet;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::{IpAddr, SocketAddr};
 use uuid::Uuid;
+
+pub const TOTP_PENDING_TTL_MINS: i64 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
@@ -35,6 +37,7 @@ pub struct AuthenticatedUser {
 #[derive(Clone, Debug)]
 pub struct TotpPendingUser {
     pub user: crate::db::models::User,
+    pub token: String,
 }
 
 /// Zero-size extractor that enforces admin-role authorization.
@@ -53,10 +56,7 @@ where
 {
     type Rejection = AppError;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let _ = state;
         let user = parts
             .extensions
@@ -113,7 +113,7 @@ pub fn issue_totp_pending_token(user_id: &str, jwt_secret: &str) -> Result<Strin
     let claims = AccessTokenClaims {
         sub: user_id.to_string(),
         iat: now.timestamp() as usize,
-        exp: (now + Duration::minutes(5)).timestamp() as usize,
+        exp: (now + Duration::minutes(TOTP_PENDING_TTL_MINS)).timestamp() as usize,
         totp_pending: true,
     };
 
@@ -186,8 +186,10 @@ pub async fn require_totp_pending(
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    let token = bearer_token(req.headers()).ok_or(AppError::Unauthorized)?;
-    let claims = validate_totp_pending_token(token, &state.config.auth.jwt_secret)?;
+    let token = bearer_token(req.headers())
+        .ok_or(AppError::Unauthorized)?
+        .to_string();
+    let claims = validate_totp_pending_token(&token, &state.config.auth.jwt_secret)?;
     let user = auth_queries::find_user_by_id(&state.db, &claims.sub)
         .await
         .map_err(|_| AppError::Internal)?
@@ -195,8 +197,25 @@ pub async fn require_totp_pending(
     if !user.is_active {
         return Err(AppError::Unauthorized);
     }
+    let session_exists = sqlx::query(
+        r#"
+        SELECT id
+        FROM sessions
+        WHERE token_hash = ? AND user_id = ? AND session_type = 'totp_pending' AND expires_at > ?
+        LIMIT 1
+        "#,
+    )
+    .bind(auth_queries::hash_refresh_token(&token))
+    .bind(&claims.sub)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+    if session_exists.is_none() {
+        return Err(AppError::Unauthorized);
+    }
 
-    req.extensions_mut().insert(TotpPendingUser { user });
+    req.extensions_mut().insert(TotpPendingUser { user, token });
     Ok(next.run(req).await)
 }
 

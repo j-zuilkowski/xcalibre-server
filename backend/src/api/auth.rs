@@ -286,15 +286,8 @@ pub(crate) async fn login(
 
         if verify_password(&user.password_hash, &payload.password) {
             if user.user.totp_enabled {
-                let pending_token =
-                    issue_totp_pending_token(&user.user.id, &state.config.auth.jwt_secret)?;
-                return Ok((
-                    HeaderMap::new(),
-                    Json(LoginResponse::TotpRequired(LoginTotpRequiredResponse {
-                        totp_required: true,
-                        totp_token: pending_token,
-                    })),
-                ));
+                let pending = issue_totp_pending_login_response(&state, &user.user).await?;
+                return Ok((HeaderMap::new(), Json(LoginResponse::TotpRequired(pending))));
             }
 
             auth_queries::clear_login_lockout(&state.db, &user.user.id)
@@ -323,15 +316,8 @@ pub(crate) async fn login(
                 let user =
                     find_or_create_ldap_user(&state, &ldap_user.username, &ldap_user.email).await?;
                 if user.totp_enabled {
-                    let pending_token =
-                        issue_totp_pending_token(&user.id, &state.config.auth.jwt_secret)?;
-                    return Ok((
-                        HeaderMap::new(),
-                        Json(LoginResponse::TotpRequired(LoginTotpRequiredResponse {
-                            totp_required: true,
-                            totp_token: pending_token,
-                        })),
-                    ));
+                    let pending = issue_totp_pending_login_response(&state, &user).await?;
+                    return Ok((HeaderMap::new(), Json(LoginResponse::TotpRequired(pending))));
                 }
 
                 auth_queries::clear_login_lockout(&state.db, &user.id)
@@ -941,7 +927,24 @@ pub(crate) async fn totp_verify(
         ));
     }
 
-    let response = create_login_session_response(&state, &user.user)
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+    let consumed_rows = sqlx::query(
+        r#"
+        DELETE FROM sessions
+        WHERE token_hash = ? AND session_type = 'totp_pending'
+        "#,
+    )
+    .bind(auth_queries::hash_refresh_token(&totp_user.token))
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?
+    .rows_affected();
+    if consumed_rows == 0 {
+        let _ = tx.rollback().await;
+        return Err(AppError::Unauthorized);
+    }
+
+    let response = issue_session_tokens_in_transaction(&mut tx, &state, &user.user)
         .await
         .map_err(|e| {
             tracing::error!(
@@ -951,6 +954,7 @@ pub(crate) async fn totp_verify(
             );
             AppError::Internal
         })?;
+    tx.commit().await.map_err(|_| AppError::Internal)?;
 
     if let Err(e) = auth_queries::clear_login_lockout(&state.db, &totp_user.user.id).await {
         tracing::warn!(
@@ -1037,6 +1041,21 @@ async fn totp_verify_backup(
         .await
         .map_err(|_| AppError::Internal)?;
     clear_login_lockout_in_tx(&mut tx, &totp_user.user.id).await?;
+    let consumed_rows = sqlx::query(
+        r#"
+        DELETE FROM sessions
+        WHERE token_hash = ? AND session_type = 'totp_pending'
+        "#,
+    )
+    .bind(auth_queries::hash_refresh_token(&totp_user.token))
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?
+    .rows_affected();
+    if consumed_rows == 0 {
+        let _ = tx.rollback().await;
+        return Err(AppError::Unauthorized);
+    }
     let response = issue_session_tokens_in_transaction(&mut tx, &state, &user.user).await?;
     tx.commit().await.map_err(|_| AppError::Internal)?;
 
@@ -1067,6 +1086,51 @@ async fn create_login_session_response(
         access_token,
         refresh_token,
         user: user.clone(),
+    })
+}
+
+async fn issue_totp_pending_login_response(
+    state: &AppState,
+    user: &crate::db::models::User,
+) -> Result<LoginTotpRequiredResponse, AppError> {
+    let totp_token = issue_totp_pending_token(&user.id, &state.config.auth.jwt_secret)?;
+    let now = Utc::now();
+    let expires_at =
+        now + chrono::Duration::minutes(crate::middleware::auth::TOTP_PENDING_TTL_MINS);
+    let token_hash = auth_queries::hash_refresh_token(&totp_token);
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+
+    sqlx::query(
+        r#"
+        DELETE FROM sessions
+        WHERE user_id = ? AND session_type = 'totp_pending'
+        "#,
+    )
+    .bind(&user.id)
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO sessions (id, user_id, session_type, token_hash, expires_at, created_at)
+        VALUES (?, ?, 'totp_pending', ?, ?, ?)
+        "#,
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&user.id)
+    .bind(token_hash)
+    .bind(expires_at.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(tx.as_mut())
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    tx.commit().await.map_err(|_| AppError::Internal)?;
+
+    Ok(LoginTotpRequiredResponse {
+        totp_required: true,
+        totp_token,
     })
 }
 
