@@ -55,6 +55,11 @@ impl EmbeddingClient {
             anyhow::bail!("embedding endpoint/model is not configured");
         }
 
+        if self.endpoint.starts_with("mock://") {
+            let _ = text;
+            return Ok(vec![0.1, 0.2, 0.3]);
+        }
+
         let url = embeddings_url(&self.endpoint);
         let response = self
             .http

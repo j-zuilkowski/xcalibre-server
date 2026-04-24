@@ -1,9 +1,14 @@
 use crate::{
     db::queries::{
-        annotations as annotation_queries, book_user_state as book_state_queries,
-        books as book_queries, download_history as download_history_queries, llm as llm_queries,
+        annotations as annotation_queries, book_chunks as chunk_queries,
+        book_user_state as book_state_queries, books as book_queries,
+        download_history as download_history_queries, llm as llm_queries,
     },
-    ingest::{mobi_util, text as ingest_text},
+    ingest::{
+        chunker::{ChunkDomain, ChunkType},
+        mobi_util,
+        text as ingest_text,
+    },
     llm::classify_type::{classify_document_type, DocumentType},
     metrics::ImportMetricsGuard,
     middleware::auth::AuthenticatedUser,
@@ -90,6 +95,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/books/:id/archive", post(set_archive))
         .route("/api/v1/books/:id/cover", get(get_cover))
         .route("/api/v1/books/:id/chapters", get(get_chapters))
+        .route("/api/v1/books/:id/chunks", get(get_chunks))
         .route("/api/v1/books/:id/text", get(get_text))
         .route("/api/v1/books/:id/send", post(send_book))
         .route("/api/v1/books/:id/comic/pages", get(get_comic_pages))
@@ -197,6 +203,18 @@ struct MetadataLookupQuery {
     source: Option<String>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct GetChunksQuery {
+    #[serde(default)]
+    size: Option<usize>,
+    #[serde(default)]
+    overlap: Option<usize>,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(rename = "type", default)]
+    chunk_type: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ComicPageEntry {
     index: usize,
@@ -207,6 +225,25 @@ struct ComicPageEntry {
 struct ComicPagesResponse {
     total_pages: usize,
     pages: Vec<ComicPageEntry>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ChunkResponse {
+    pub id: String,
+    pub chunk_index: usize,
+    pub chapter_index: usize,
+    pub heading_path: Option<String>,
+    pub chunk_type: ChunkType,
+    pub text: String,
+    pub word_count: usize,
+    pub has_image: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ChunksResponse {
+    pub book_id: String,
+    pub chunk_count: usize,
+    pub chunks: Vec<ChunkResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1460,6 +1497,7 @@ pub(crate) async fn upload_book(
 
     enqueue_semantic_index_if_enabled(&state, &book.id).await;
     queue_book_index(state.search.clone(), book.clone());
+    queue_book_chunk_generation(state.clone(), book.clone());
     let _ = webhook_engine::enqueue_event(
         &state.db,
         "book.added",
@@ -1935,6 +1973,95 @@ async fn get_chapters(
         format: format.to_string(),
         chapters,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/chunks",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id"),
+        ("size" = Option<usize>, Query, description = "Target chunk size in tokens"),
+        ("overlap" = Option<usize>, Query, description = "Token overlap between chunks"),
+        ("domain" = Option<String>, Query, description = "Chunking domain"),
+        ("type" = Option<String>, Query, description = "Filter chunk type")
+    ),
+    responses(
+        (status = 200, description = "Book chunks", body = ChunksResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 500, description = "Internal error", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn get_chunks(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Query(query): Query<GetChunksQuery>,
+) -> Result<Json<ChunksResponse>, AppError> {
+    ensure_download_permission(&state, &auth_user.user.id).await?;
+
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let target_size = query.size.unwrap_or(600).clamp(1, 2_000);
+    let overlap = query.overlap.unwrap_or(100).min(target_size.saturating_sub(1));
+    let domain = parse_chunk_domain(query.domain.as_deref())?;
+    let chunk_type = match query.chunk_type.as_deref() {
+        Some(value) if !value.trim().is_empty() => {
+            Some(value.parse::<ChunkType>().map_err(|_| AppError::BadRequest)?)
+        }
+        _ => None,
+    };
+
+    let existing_count = chunk_queries::count_book_chunks(&state.db, &book.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if existing_count == 0 {
+        let Some(_) = preferred_extractable_format(&book) else {
+            return Err(AppError::NoExtractableFormat);
+        };
+
+        let config = crate::ingest::chunker::ChunkConfig {
+            target_size,
+            overlap,
+            domain,
+        };
+        ingest_text::generate_and_store_book_chunks(&state, &book, &config)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+
+    let chunks = chunk_queries::list_book_chunks(&state.db, &book.id, chunk_type)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let payload = ChunksResponse {
+        book_id: book.id,
+        chunk_count: chunks.len(),
+        chunks: chunks
+            .into_iter()
+            .map(|chunk| ChunkResponse {
+                id: chunk.id,
+                chunk_index: chunk.chunk_index as usize,
+                chapter_index: chunk.chapter_index as usize,
+                heading_path: chunk.heading_path,
+                chunk_type: chunk.chunk_type,
+                text: chunk.text,
+                word_count: chunk.word_count as usize,
+                has_image: chunk.has_image,
+            })
+            .collect(),
+    };
+
+    Ok(Json(payload))
 }
 
 async fn get_text(
@@ -3404,6 +3531,13 @@ fn list_extractable_chapters(full_path: &FsPath, format: &str) -> Vec<ingest_tex
     ingest_text::list_chapters(full_path, format).unwrap_or_default()
 }
 
+fn parse_chunk_domain(value: Option<&str>) -> Result<ChunkDomain, AppError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(domain) => domain.parse::<ChunkDomain>().map_err(|_| AppError::BadRequest),
+        None => Ok(ChunkDomain::Technical),
+    }
+}
+
 fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::db::models::Book) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
@@ -3419,6 +3553,30 @@ fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::
         }
         Err(_) => {
             tracing::warn!(book_id = %book.id, "no active runtime available for search indexing");
+        }
+    }
+}
+
+fn queue_book_chunk_generation(state: AppState, book: crate::db::models::Book) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
+                let config = crate::ingest::chunker::ChunkConfig {
+                    target_size: 600,
+                    overlap: 100,
+                    domain: ChunkDomain::Technical,
+                };
+                if let Err(err) = ingest_text::generate_and_store_book_chunks(&state, &book, &config).await {
+                    tracing::warn!(
+                        book_id = %book.id,
+                        error = %err,
+                        "failed to build book chunks"
+                    );
+                }
+            });
+        }
+        Err(_) => {
+            tracing::warn!(book_id = %book.id, "no active runtime available for chunk generation");
         }
     }
 }

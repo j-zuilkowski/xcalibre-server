@@ -1,5 +1,13 @@
 use super::mobi_util;
-use crate::storage::StorageBackend;
+use crate::{
+    db::queries::{book_chunks as chunk_queries, books as book_queries},
+    ingest::{
+        chunker::{self, ChapterText, ChunkConfig, ChunkDomain},
+        vision as vision_llm,
+    },
+    storage::StorageBackend,
+    AppState,
+};
 use anyhow::Context;
 use mobi::Mobi;
 use regex::Regex;
@@ -88,6 +96,149 @@ pub fn extract_text(path: &Path, format: &str, chapter: Option<u32>) -> anyhow::
         _ => String::new(),
     };
     Ok(output)
+}
+
+pub async fn generate_and_store_book_chunks(
+    state: &AppState,
+    book: &crate::db::models::Book,
+    config: &ChunkConfig,
+) -> anyhow::Result<usize> {
+    let Some(format) = preferred_extractable_format(book) else {
+        anyhow::bail!("book has no extractable format");
+    };
+
+    let format_file = book_queries::find_format_file(&state.db, &book.id, format)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("book has no extractable format"))?;
+    let extractable_path = resolve_or_download_path(&*state.storage, &format_file.path).await?;
+    let chapter_texts = collect_chapter_texts(extractable_path.path(), format).await?;
+    let chunks = chunker::chunk_chapters(&chapter_texts, config);
+    if chunks.is_empty() {
+        chunk_queries::replace_book_chunks(&state.db, &book.id, &[]).await?;
+        return Ok(0);
+    }
+
+    let vision_supported = match state.chat_client.as_ref() {
+        Some(chat_client) => match chat_client.supports_vision().await {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(book_id = %book.id, error = %err, "vision capability check failed");
+                false
+            }
+        },
+        None => false,
+    };
+
+    let mut inserts = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let mut text = chunk.text.clone();
+        if vision_supported && chunk.is_image_heavy {
+            match extract_page_image_bytes(extractable_path.path(), format, chunk.chapter_index).await
+            {
+                Ok(Some(image_bytes)) => {
+                    if let Some(chat_client) = state.chat_client.as_ref() {
+                        match vision_llm::describe_image_page(chat_client, &image_bytes, &config.domain).await
+                        {
+                            Ok(description) => {
+                                text = format!("{text}\n\n[Visual content description:]\n{description}");
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    book_id = %book.id,
+                                    chapter_index = chunk.chapter_index,
+                                    error = %err,
+                                    "vision pass failed"
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        book_id = %book.id,
+                        chapter_index = chunk.chapter_index,
+                        error = %err,
+                        "failed to extract image bytes for vision pass"
+                    );
+                }
+            }
+        }
+
+        let embedding = if let Some(semantic) = state.semantic_search.as_ref() {
+            match semantic.embed_text(&text).await {
+                Ok(vector) => Some(embedding_to_blob(&vector)),
+                Err(err) => {
+                    tracing::warn!(
+                        book_id = %book.id,
+                        chunk_index = chunk.chunk_index,
+                        error = %err,
+                        "failed to embed chunk"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let final_word_count = word_count(&text);
+        inserts.push(chunk_queries::BookChunkInsert {
+            chunk_index: chunk.chunk_index,
+            chapter_index: chunk.chapter_index,
+            heading_path: chunk.heading_path.clone(),
+            chunk_type: chunk.chunk_type,
+            text,
+            word_count: final_word_count,
+            has_image: chunk.is_image_heavy,
+            embedding,
+        });
+    }
+
+    chunk_queries::replace_book_chunks(&state.db, &book.id, &inserts).await?;
+    Ok(inserts.len())
+}
+
+pub async fn rechunk_library(state: &AppState) -> anyhow::Result<usize> {
+    let book_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT b.id
+        FROM books b
+        LEFT JOIN book_chunks bc ON bc.book_id = b.id
+        WHERE bc.book_id IS NULL
+        GROUP BY b.id
+        ORDER BY b.created_at ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut processed = 0usize;
+    for book_id in book_ids {
+        let Some(book) = book_queries::get_book_by_id(&state.db, &book_id, None, None).await? else {
+            continue;
+        };
+
+        if let Err(err) = generate_and_store_book_chunks(
+            state,
+            &book,
+            &ChunkConfig {
+                target_size: 600,
+                overlap: 100,
+                domain: ChunkDomain::Technical,
+            },
+        )
+        .await
+        {
+            tracing::warn!(book_id = %book_id, error = %err, "failed to rechunk book");
+        } else {
+            processed += 1;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+
+    Ok(processed)
 }
 
 fn list_mobi_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
@@ -498,6 +649,95 @@ fn unescape_pdf_text(input: &str) -> String {
         .replace(r"\\", r"\")
 }
 
+fn preferred_extractable_format(book: &crate::db::models::Book) -> Option<&str> {
+    ["EPUB", "PDF", "MOBI", "AZW3", "TXT"]
+        .into_iter()
+        .find(|candidate| {
+            book.formats
+                .iter()
+                .any(|format| format.format.eq_ignore_ascii_case(candidate))
+        })
+}
+
+async fn collect_chapter_texts(path: &Path, format: &str) -> anyhow::Result<Vec<ChapterText>> {
+    let chapters = list_chapters(path, format)?;
+    let mut outputs = Vec::with_capacity(chapters.len());
+    for chapter in chapters {
+        let text = extract_text(path, format, Some(chapter.index)).unwrap_or_default();
+        let is_image_heavy_page = normalize_format(format) == "PDF" && chapter.word_count < 80;
+        outputs.push(ChapterText {
+            chapter_index: chapter.index as usize,
+            title: chapter.title,
+            text,
+            is_image_heavy_page,
+        });
+    }
+    Ok(outputs)
+}
+
+async fn extract_page_image_bytes(
+    path: &Path,
+    format: &str,
+    chapter_index: usize,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    match normalize_format(format).as_str() {
+        "EPUB" => extract_epub_image_bytes(path, chapter_index).await,
+        "PDF" => Ok(Some(fs::read(path)?)),
+        _ => Ok(None),
+    }
+}
+
+async fn extract_epub_image_bytes(path: &Path, chapter_index: usize) -> anyhow::Result<Option<Vec<u8>>> {
+    let (mut archive, opf_path) = open_epub_archive(path)?;
+    let spine_items = read_epub_spine_paths(&mut archive, &opf_path)?;
+    let Some(spine_path) = spine_items.get(chapter_index) else {
+        return Ok(None);
+    };
+
+    let html = read_zip_text(&mut archive, spine_path)?;
+    let Some(image_href) = first_img_src(&html) else {
+        return Ok(None);
+    };
+
+    let base_dir = Path::new(spine_path)
+        .parent()
+        .map(path_to_zip_string)
+        .unwrap_or_default();
+    let image_path = resolve_zip_relative_path(&base_dir, &image_href);
+
+    let Ok(mut file) = archive.by_name(&image_path) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if bytes.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(bytes))
+    }
+}
+
+fn first_img_src(html: &str) -> Option<String> {
+    img_src_regex()
+        .captures(html)
+        .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
+}
+
+fn embedding_to_blob(vector: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
+    for value in vector {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn img_src_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#"(?is)<img[^>]*src=["']([^"']+)["']"#).expect("valid img src regex")
+    })
+}
+
 fn epub_title_regexes() -> &'static [Regex; 3] {
     static REGEXES: OnceLock<[Regex; 3]> = OnceLock::new();
     REGEXES.get_or_init(|| {
@@ -544,4 +784,8 @@ fn pdf_paren_text_regex() -> &'static Regex {
 
 fn normalize_format(format: &str) -> String {
     format.trim().to_uppercase()
+}
+
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
 }

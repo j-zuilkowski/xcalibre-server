@@ -65,6 +65,14 @@ pub async fn run() -> anyhow::Result<()> {
         ));
     }
     tokio::spawn(crate::scheduler::run_scheduler(state.clone()));
+    tokio::spawn({
+        let state = state.clone();
+        async move {
+            if let Err(err) = crate::ingest::text::rechunk_library(&state).await {
+                tracing::warn!(error = %err, "library rechunk backfill failed");
+            }
+        }
+    });
     axum::serve(listener, app(state)).await?;
     Ok(())
 }

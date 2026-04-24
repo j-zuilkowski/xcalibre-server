@@ -32,6 +32,10 @@ impl SemanticSearch {
         self.embeddings.model_id()
     }
 
+    pub async fn embed_text(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        self.embeddings.embed(text).await
+    }
+
     pub async fn index_book(
         &self,
         book_id: &str,

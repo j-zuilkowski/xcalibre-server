@@ -3,6 +3,7 @@ pub mod authors;
 pub mod api_tokens;
 pub mod auth;
 pub mod book_insert;
+pub mod book_chunks;
 pub mod book_user_state;
 pub mod books;
 pub mod download_history;
