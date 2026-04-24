@@ -10,7 +10,7 @@ use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use argon2::Argon2;
 use axum::{
     body::Body,
-    extract::{Extension, Query, State},
+    extract::{ConnectInfo, Extension, Query, State},
     http::{
         header::{HeaderName, LOCATION, SET_COOKIE},
         HeaderMap, HeaderValue, StatusCode,
@@ -21,10 +21,14 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use std::time::Duration;
+use std::{net::SocketAddr, string::ToString};
 use utoipa::ToSchema;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -396,9 +400,11 @@ async fn auth_providers(
 async fn oauth_start(
     State(state): State<AppState>,
     axum::extract::Path(provider): axum::extract::Path<String>,
+    ConnectInfo(connect_info): ConnectInfo<SocketAddr>,
 ) -> Result<Response, AppError> {
     let provider_config = provider_config(&state.config, &provider)?;
-    let state_token = generate_oauth_state();
+    let client_ip = extract_client_ip(connect_info);
+    let (nonce, state_token) = generate_oauth_state(&state.config.auth.jwt_secret, &client_ip)?;
     let redirect_uri = oauth_redirect_uri(&state.config.app.base_url, &provider);
     let mut url =
         reqwest::Url::parse(&provider_config.authorization_url).map_err(|_| AppError::Internal)?;
@@ -417,7 +423,7 @@ async fn oauth_start(
     );
     response.headers_mut().insert(
         SET_COOKIE,
-        HeaderValue::from_str(&oauth_state_cookie(&provider, &state_token))
+        HeaderValue::from_str(&oauth_state_cookie(&provider, &nonce))
             .map_err(|_| AppError::Internal)?,
     );
     Ok(response)
@@ -428,12 +434,11 @@ async fn oauth_callback(
     axum::extract::Path(provider): axum::extract::Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
     headers: HeaderMap,
+    ConnectInfo(connect_info): ConnectInfo<SocketAddr>,
 ) -> Result<Response, AppError> {
     let provider_config = provider_config(&state.config, &provider)?;
-    let cookie_state = read_cookie(&headers, "oauth_state").ok_or(AppError::BadRequest)?;
-    if cookie_state != query.state {
-        return Err(AppError::BadRequest);
-    }
+    let cookie_nonce = read_cookie(&headers, "oauth_state").ok_or(AppError::BadRequest)?;
+    validate_oauth_state(&state.config.auth.jwt_secret, &cookie_nonce, &query.state, connect_info)?;
 
     let token = exchange_oauth_code(
         &provider_config,
@@ -1289,17 +1294,69 @@ fn oauth_redirect_uri(base_url: &str, provider: &str) -> String {
     )
 }
 
-fn generate_oauth_state() -> String {
+fn generate_random_token(len: usize) -> String {
     use rand::{distributions::Alphanumeric, Rng};
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(32)
+        .take(len)
         .map(char::from)
         .collect()
 }
 
-fn oauth_state_cookie(_provider: &str, state: &str) -> String {
-    format!("oauth_state={state}; Path=/api/v1/auth/oauth; HttpOnly; SameSite=Lax; Max-Age=600")
+fn generate_oauth_state(
+    jwt_secret: &str,
+    client_ip: &str,
+) -> Result<(String, String), AppError> {
+    let nonce = generate_random_token(32);
+    let state_payload = format!("{nonce}:{client_ip}");
+    let oauth_state_secret = derive_oauth_state_secret(jwt_secret)?;
+    let mac = hmac_sha256(&oauth_state_secret, state_payload.as_bytes())?;
+    let state_token = format!("{nonce}.{}", hex::encode(mac));
+    Ok((nonce, state_token))
+}
+
+fn validate_oauth_state(
+    jwt_secret: &str,
+    cookie_nonce: &str,
+    state_token: &str,
+    client_ip: SocketAddr,
+) -> Result<(), AppError> {
+    let (nonce, mac_hex) = state_token.split_once('.').ok_or(AppError::BadRequest)?;
+    if nonce != cookie_nonce {
+        return Err(AppError::BadRequest);
+    }
+
+    let expected_payload = format!("{nonce}:{}", client_ip.ip());
+    let oauth_state_secret = derive_oauth_state_secret(jwt_secret)?;
+    let expected_mac = hmac_sha256(&oauth_state_secret, expected_payload.as_bytes())?;
+    let provided_mac = hex::decode(mac_hex).map_err(|_| AppError::BadRequest)?;
+    if expected_mac.as_slice().ct_eq(&provided_mac).unwrap_u8() != 1 {
+        return Err(AppError::BadRequest);
+    }
+    Ok(())
+}
+
+fn derive_oauth_state_secret(jwt_secret: &str) -> Result<[u8; 32], AppError> {
+    const OAUTH_STATE_HKDF_SALT: &[u8] = b"autolibre-oauth-state-v1";
+    const OAUTH_STATE_HKDF_LABEL: &[u8] = b"oauth-state-hmac-key";
+    let hkdf = Hkdf::<Sha256>::new(Some(OAUTH_STATE_HKDF_SALT), jwt_secret.as_bytes());
+    let mut key = [0_u8; 32];
+    hkdf.expand(OAUTH_STATE_HKDF_LABEL, &mut key)
+        .map_err(|_| AppError::Internal)?;
+    Ok(key)
+}
+
+fn hmac_sha256(key: &[u8; 32], payload: &[u8]) -> Result<[u8; 32], AppError> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).map_err(|_| AppError::Internal)?;
+    mac.update(payload);
+    let bytes = mac.finalize().into_bytes();
+    let mut output = [0_u8; 32];
+    output.copy_from_slice(&bytes);
+    Ok(output)
+}
+
+fn oauth_state_cookie(_provider: &str, nonce: &str) -> String {
+    format!("oauth_state={nonce}; Path=/api/v1/auth/oauth; HttpOnly; SameSite=Lax; Max-Age=600")
 }
 
 fn clear_oauth_state_cookie(_provider: &str) -> String {
@@ -1583,6 +1640,10 @@ fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
         })
+}
+
+fn extract_client_ip(connect_info: SocketAddr) -> String {
+    connect_info.ip().to_string()
 }
 
 async fn record_login_success(
