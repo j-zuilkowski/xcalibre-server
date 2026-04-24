@@ -17,15 +17,22 @@ use axum::{
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
+const MAX_CHUNK_SEARCH_RESULTS: u32 = 100;
+
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
 
     Router::new()
-        .route("/api/v1/collections", get(list_collections).post(create_collection))
+        .route(
+            "/api/v1/collections",
+            get(list_collections).post(create_collection),
+        )
         .route(
             "/api/v1/collections/:id",
-            get(get_collection).patch(update_collection).delete(delete_collection),
+            get(get_collection)
+                .patch(update_collection)
+                .delete(delete_collection),
         )
         .route(
             "/api/v1/collections/:id/books",
@@ -318,9 +325,10 @@ pub(crate) async fn add_books_to_collection(
         .await?;
     }
 
-    let inserted = collection_queries::add_books_to_collection(&state.db, &collection_id, &book_ids)
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let inserted =
+        collection_queries::add_books_to_collection(&state.db, &collection_id, &book_ids)
+            .await
+            .map_err(|_| AppError::Internal)?;
     if inserted == 0 {
         return Err(AppError::Conflict);
     }
@@ -350,13 +358,10 @@ pub(crate) async fn remove_book_from_collection(
     Path((collection_id, book_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
     ensure_manageable_collection(&state, &auth_user.user, &collection_id).await?;
-    let removed = collection_queries::remove_book_from_collection(
-        &state.db,
-        &collection_id,
-        &book_id,
-    )
-    .await
-    .map_err(|_| AppError::Internal)?;
+    let removed =
+        collection_queries::remove_book_from_collection(&state.db, &collection_id, &book_id)
+            .await
+            .map_err(|_| AppError::Internal)?;
     if !removed {
         return Err(AppError::NotFound);
     }
@@ -391,12 +396,9 @@ pub(crate) async fn search_collection_chunks(
         return Err(AppError::BadRequest);
     }
 
-    let allowed_book_ids = collection_book_ids_for_search(
-        &state,
-        &auth_user.user.id,
-        Some(collection_id.as_str()),
-    )
-    .await?;
+    let allowed_book_ids =
+        collection_book_ids_for_search(&state, &auth_user.user.id, Some(collection_id.as_str()))
+            .await?;
     let allowed_book_ids = allowed_book_ids.unwrap_or_default();
     let scoped_book_ids = {
         let requested_book_ids = normalize_ids(query.book_ids);
@@ -409,7 +411,7 @@ pub(crate) async fn search_collection_chunks(
         }
     };
 
-    let limit = query.limit.unwrap_or(10).clamp(1, 50) as usize;
+    let limit = query.limit.unwrap_or(10).clamp(1, MAX_CHUNK_SEARCH_RESULTS) as usize;
     let rerank = matches!(
         query.rerank
             .as_deref()

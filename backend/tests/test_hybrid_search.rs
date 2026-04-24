@@ -4,9 +4,7 @@ mod common;
 
 use axum::http::header;
 use backend::{
-    config::AppConfig,
-    db::queries::collections as collection_queries,
-    ingest::chunker::ChunkType,
+    config::AppConfig, db::queries::collections as collection_queries, ingest::chunker::ChunkType,
 };
 use common::{auth_header, TestContext};
 use std::collections::HashSet;
@@ -38,8 +36,39 @@ async fn test_bm25_finds_exact_technical_token() {
 
     assert_status!(response, 200);
     let body: serde_json::Value = response.json();
-    assert_eq!(body["chunks"][0]["chunk_id"].as_str().unwrap(), chunk_id(&ctx.db).await);
+    assert_eq!(
+        body["chunks"][0]["chunk_id"].as_str().unwrap(),
+        chunk_id(&ctx.db).await
+    );
     assert!(body["chunks"][0]["bm25_score"].is_number());
+}
+
+#[tokio::test]
+async fn test_chunk_search_clamps_limit_to_100() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let book = ctx.create_book("Chunk Clamp", "Admin").await;
+
+    insert_chunk_series(
+        &ctx.db,
+        &book.id,
+        120,
+        "global clamp search chunk",
+        ChunkType::Reference,
+    )
+    .await;
+
+    let response = ctx
+        .server
+        .get("/api/v1/search/chunks")
+        .add_query_param("q", "global clamp")
+        .add_query_param("limit", 99999)
+        .add_header(header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(response, 200);
+    let body: serde_json::Value = response.json();
+    assert!(body["chunks"].as_array().unwrap().len() <= 100);
 }
 
 #[tokio::test]
@@ -82,6 +111,54 @@ async fn test_semantic_finds_conceptual_match() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["chunks"][0]["book_id"], target.id);
     assert!(body["chunks"][0]["bm25_score"].is_number());
+}
+
+#[tokio::test]
+async fn test_collection_chunk_search_clamps_limit_to_100() {
+    let ctx = TestContext::new().await;
+    let (admin, password) = ctx.create_admin().await;
+    let token = ctx.login(&admin.username, &password).await.access_token;
+    let book = ctx.create_book("Collection Clamp", "Admin").await;
+
+    let collection = collection_queries::create_collection(
+        &ctx.db,
+        &admin.id,
+        collection_queries::CollectionInput {
+            name: "Clamp Collection".to_string(),
+            description: None,
+            domain: "technical".to_string(),
+            is_public: false,
+        },
+    )
+    .await
+    .expect("create collection");
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[book.id.clone()])
+        .await
+        .expect("add book to collection");
+
+    insert_chunk_series(
+        &ctx.db,
+        &book.id,
+        120,
+        "collection clamp search chunk",
+        ChunkType::Reference,
+    )
+    .await;
+
+    let response = ctx
+        .server
+        .get(&format!(
+            "/api/v1/collections/{}/search/chunks",
+            collection.id
+        ))
+        .add_query_param("q", "collection clamp")
+        .add_query_param("limit", 99999)
+        .add_header(header::AUTHORIZATION, auth_header(&token))
+        .await;
+
+    assert_status!(response, 200);
+    let body: serde_json::Value = response.json();
+    assert!(body["chunks"].as_array().unwrap().len() <= 100);
 }
 
 #[tokio::test]
@@ -203,8 +280,8 @@ async fn test_collection_id_filter_spans_all_books_in_collection() {
             is_public: false,
         },
     )
-        .await
-        .expect("create collection");
+    .await
+    .expect("create collection");
     collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[first.id.clone()])
         .await
         .expect("add first book");
@@ -250,7 +327,10 @@ async fn test_collection_id_filter_spans_all_books_in_collection() {
         .iter()
         .map(|chunk| chunk["book_id"].as_str().unwrap().to_string())
         .collect::<HashSet<_>>();
-    assert_eq!(book_ids, HashSet::from([first.id.clone(), second.id.clone()]));
+    assert_eq!(
+        book_ids,
+        HashSet::from([first.id.clone(), second.id.clone()])
+    );
 }
 
 #[tokio::test]
@@ -338,7 +418,12 @@ async fn test_rerank_reorders_results() {
     assert_status!(response, 200);
     let body: serde_json::Value = response.json();
     assert_eq!(body["chunks"][0]["book_id"], second.id);
-    assert!(body["chunks"][0]["rerank_score"].as_f64().unwrap_or_default() > 0.9);
+    assert!(
+        body["chunks"][0]["rerank_score"]
+            .as_f64()
+            .unwrap_or_default()
+            > 0.9
+    );
 }
 
 #[tokio::test]
@@ -386,7 +471,10 @@ async fn test_rerank_falls_back_on_timeout() {
         .iter()
         .map(|chunk| chunk["book_id"].as_str().unwrap().to_string())
         .collect::<HashSet<_>>();
-    assert_eq!(returned_ids, HashSet::from([first.id.clone(), second.id.clone()]));
+    assert_eq!(
+        returned_ids,
+        HashSet::from([first.id.clone(), second.id.clone()])
+    );
     assert!(body["chunks"]
         .as_array()
         .unwrap()
@@ -472,6 +560,28 @@ async fn insert_chunk(
     .execute(db)
     .await
     .expect("insert chunk");
+}
+
+async fn insert_chunk_series(
+    db: &sqlx::SqlitePool,
+    book_id: &str,
+    count: usize,
+    text_prefix: &str,
+    chunk_type: ChunkType,
+) {
+    for chunk_index in 0..count {
+        let text = format!("{text_prefix} {chunk_index}");
+        insert_chunk(
+            db,
+            book_id,
+            chunk_index as i64,
+            None,
+            chunk_type,
+            &text,
+            [0.1, 0.2, 0.3],
+        )
+        .await;
+    }
 }
 
 fn vector_to_blob(vector: &[f32]) -> Vec<u8> {

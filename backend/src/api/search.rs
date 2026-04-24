@@ -13,13 +13,15 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use serde::de::{self, SeqAccess, Visitor};
 use futures::future::join_all;
+use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 use utoipa::{IntoParams, ToSchema};
+
+const MAX_CHUNK_SEARCH_RESULTS: u32 = 100;
 
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -416,7 +418,7 @@ fn clamp_semantic_page_size(page_size: u32) -> u32 {
 fn clamp_chunk_limit(limit: u32) -> usize {
     match limit {
         0 => 10,
-        n if n > 50 => 50,
+        n if n > MAX_CHUNK_SEARCH_RESULTS => MAX_CHUNK_SEARCH_RESULTS as usize,
         n => n as usize,
     }
 }
@@ -490,20 +492,17 @@ pub(crate) async fn run_chunk_search(
     let semantic_hits = if let Some(semantic) = state.semantic_search.as_ref() {
         if semantic.is_configured() {
             match semantic.embed_text(query_text.as_str()).await {
-                Ok(vector) => match chunk_queries::search_chunks_semantic(
-                    &state.db,
-                    &vector,
-                    &filters,
-                    100,
-                )
-                .await
-                {
-                    Ok(hits) => hits,
-                    Err(err) => {
-                        tracing::warn!(error = %err, "chunk semantic search failed");
-                        Vec::new()
+                Ok(vector) => {
+                    match chunk_queries::search_chunks_semantic(&state.db, &vector, &filters, 100)
+                        .await
+                    {
+                        Ok(hits) => hits,
+                        Err(err) => {
+                            tracing::warn!(error = %err, "chunk semantic search failed");
+                            Vec::new()
+                        }
                     }
-                },
+                }
                 Err(err) => {
                     tracing::warn!(error = %err, "chunk query embedding failed");
                     Vec::new()
@@ -710,10 +709,11 @@ async fn rerank_chunk_results(
         }
     });
 
-    let rerank_results = match tokio::time::timeout(Duration::from_secs(10), join_all(futures)).await {
-        Ok(scores) => scores,
-        Err(_) => return None,
-    };
+    let rerank_results =
+        match tokio::time::timeout(Duration::from_secs(10), join_all(futures)).await {
+            Ok(scores) => scores,
+            Err(_) => return None,
+        };
 
     let mut scores = Vec::with_capacity(rerank_results.len());
     for score in rerank_results {
