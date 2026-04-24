@@ -3197,6 +3197,10 @@ fn sanitize_file_name_for_header(value: &str) -> String {
 }
 
 fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
+    if looks_like_windows_absolute_path(relative_path) {
+        return Err(AppError::BadRequest);
+    }
+
     let path = FsPath::new(relative_path);
     if path.is_absolute() {
         return Err(AppError::BadRequest);
@@ -3218,6 +3222,14 @@ fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
     }
 
     Ok(clean)
+}
+
+fn looks_like_windows_absolute_path(relative_path: &str) -> bool {
+    let bytes = relative_path.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+        && matches!(bytes[2], b'/' | b'\\')
 }
 
 fn canonicalize_storage_file_path(

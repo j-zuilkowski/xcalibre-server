@@ -7,6 +7,10 @@ use std::path::{Component, Path, PathBuf};
 /// or as a relative path suffix for local storage.
 /// Rejects absolute paths, ParentDir (..), RootDir, and Prefix components.
 pub fn sanitize_relative_path(relative_path: &str) -> anyhow::Result<String> {
+    if looks_like_windows_absolute_path(relative_path) {
+        anyhow::bail!("absolute or prefixed paths are not allowed");
+    }
+
     let path = Path::new(relative_path);
     if path.is_absolute() {
         anyhow::bail!("absolute paths are not allowed in storage keys");
@@ -36,6 +40,14 @@ pub fn sanitize_relative_path(relative_path: &str) -> anyhow::Result<String> {
     }
 
     Ok(parts.join("/"))
+}
+
+fn looks_like_windows_absolute_path(relative_path: &str) -> bool {
+    let bytes = relative_path.as_bytes();
+    bytes.len() >= 3
+        && bytes[1] == b':'
+        && bytes[0].is_ascii_alphabetic()
+        && matches!(bytes[2], b'/' | b'\\')
 }
 
 #[derive(Debug, Clone)]
