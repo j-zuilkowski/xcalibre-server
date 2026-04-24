@@ -25,6 +25,34 @@ vi.mock("expo-secure-store", () => {
 });
 
 vi.mock("expo-file-system", () => {
+  const resumable = {
+    cancelAsync: vi.fn(async () => undefined),
+    downloadAsync: vi.fn(async () => ({
+      uri: "file:///documents/books/book-1.epub",
+      status: 200,
+      headers: {},
+      mimeType: null,
+    })),
+    pauseAsync: vi.fn(async () => ({
+      url: "http://example.test",
+      fileUri: "file:///documents/books/book-1.epub",
+      options: {},
+      resumeData: null,
+    })),
+    resumeAsync: vi.fn(async () => ({
+      uri: "file:///documents/books/book-1.epub",
+      status: 200,
+      headers: {},
+      mimeType: null,
+    })),
+    savable: vi.fn(() => ({
+      url: "http://example.test",
+      fileUri: "file:///documents/books/book-1.epub",
+      options: {},
+      resumeData: null,
+    })),
+  };
+
   return {
     documentDirectory: "file:///documents/",
     downloadAsync: vi.fn(async (_uri: string, fileUri: string) => ({
@@ -40,6 +68,8 @@ vi.mock("expo-file-system", () => {
       isDirectory: false,
       uri: fileUri,
     })),
+    getFreeDiskStorageAsync: vi.fn(async () => 10 * 1024 * 1024 * 1024),
+    createDownloadResumable: vi.fn(() => resumable),
   };
 });
 

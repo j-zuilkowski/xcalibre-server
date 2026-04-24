@@ -8,6 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import type { UserStats } from "@autolibre/shared";
 import { clearTokens } from "../../lib/auth";
 import { getApiBaseUrl, useApi, setApiBaseUrl } from "../../lib/api";
+import { db } from "../../lib/db";
+import { formatBytes, getDownloadSummary } from "../../lib/downloads";
 
 export default function ProfileTabScreen() {
   const router = useRouter();
@@ -24,6 +26,14 @@ export default function ProfileTabScreen() {
   const statsQuery = useQuery<UserStats>({
     queryKey: ["user-stats"],
     queryFn: () => client.getUserStats(),
+  });
+
+  const downloadSummaryQuery = useQuery({
+    queryKey: ["downloads", "summary"],
+    queryFn: async () => {
+      const database = await db;
+      return await getDownloadSummary(database);
+    },
   });
 
   useEffect(() => {
@@ -97,6 +107,27 @@ export default function ProfileTabScreen() {
             <Text style={styles.statsSummaryLabel}>{t("stats.in_progress")}</Text>
           </View>
         </View>
+      </Pressable>
+
+      <Pressable
+        testID="profile-downloads-row"
+        style={({ pressed }) => [styles.navCard, pressed ? styles.navCardPressed : null]}
+        onPress={() => {
+          router.push("/downloads");
+        }}
+      >
+        <View style={styles.navCardIcon}>
+          <Ionicons name="download-outline" color="#5eead4" size={18} />
+        </View>
+        <View style={styles.navCardBody}>
+          <Text style={styles.navCardTitle}>{t("nav.downloads")}</Text>
+          <Text style={styles.navCardSubtitle}>
+            {downloadSummaryQuery.data
+              ? `${downloadSummaryQuery.data.fileCount} files · ${formatBytes(downloadSummaryQuery.data.usedBytes)}`
+              : t("common.loading")}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" color="#64748b" size={18} />
       </Pressable>
 
       <View style={styles.card}>
@@ -177,6 +208,40 @@ const styles = StyleSheet.create({
   },
   statsCardPressed: {
     opacity: 0.82,
+  },
+  navCard: {
+    borderRadius: 16,
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  navCardPressed: {
+    opacity: 0.82,
+  },
+  navCardIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(94, 234, 212, 0.12)",
+  },
+  navCardBody: {
+    flex: 1,
+    gap: 2,
+  },
+  navCardTitle: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  navCardSubtitle: {
+    color: "#94a3b8",
+    fontSize: 12,
   },
   cardLabel: {
     color: "#cbd5e1",

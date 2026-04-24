@@ -14,7 +14,12 @@ import { useTranslation } from "react-i18next";
 import type { Book } from "@autolibre/shared";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
-import { deleteDownload, downloadBook, getLocalPath } from "../../lib/downloads";
+import {
+  DownloadCancelledError,
+  deleteDownload,
+  downloadBook,
+  getLocalPath,
+} from "../../lib/downloads";
 
 type AiTab = "classify" | "validate" | "derive";
 
@@ -169,16 +174,31 @@ export default function BookDetailScreen() {
   const downloadFormat = async (book: Book, format: string): Promise<void> => {
     const database = await db;
     const normalizedFormat = format.toUpperCase();
+    const formatEntry = book.formats.find((item) => item.format.toUpperCase() === normalizedFormat);
+    if (!formatEntry) {
+      setDownloadError(t("book.unable_to_download"));
+      return;
+    }
+
     setDownloadingFormat(normalizedFormat);
     setDownloadError(null);
 
     try {
-      const { localPath } = await downloadBook(client, database, book.id, normalizedFormat);
+      const { localPath } = await downloadBook(client, database, book.id, normalizedFormat, {
+        title: book.title,
+        coverUrl: book.cover_url ?? client.coverUrl(book.id),
+        hasCover: book.has_cover,
+        sizeBytes: formatEntry.size_bytes,
+      });
+
       setDownloadedFormats((current) => ({
         ...current,
         [normalizedFormat]: localPath,
       }));
     } catch (error) {
+      if (error instanceof DownloadCancelledError) {
+        return;
+      }
       setDownloadError(t("book.unable_to_download"));
     } finally {
       setDownloadingFormat(null);
