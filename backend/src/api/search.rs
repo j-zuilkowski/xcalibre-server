@@ -1,5 +1,10 @@
 use crate::{
-    db::queries::books as book_queries, middleware::auth::AuthenticatedUser, search::SearchQuery,
+    db::queries::{
+        book_chunks as chunk_queries, books as book_queries, shelves as shelf_queries,
+    },
+    ingest::chunker::ChunkType,
+    middleware::auth::AuthenticatedUser,
+    search::SearchQuery,
     AppError, AppState,
 };
 use axum::{
@@ -8,8 +13,12 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use serde::de::{self, SeqAccess, Visitor};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
+use std::time::{Duration, Instant};
 use utoipa::{IntoParams, ToSchema};
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -19,6 +28,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/v1/search", get(search_books))
         .route("/api/v1/search/semantic", get(search_semantic))
+        .route("/api/v1/search/chunks", get(search_chunks))
         .route("/api/v1/search/suggestions", get(search_suggestions))
         .route("/api/v1/system/search-status", get(search_status))
         .route_layer(auth_layer)
@@ -48,6 +58,22 @@ pub(crate) struct SemanticSearchQueryParams {
     page_size: Option<u32>,
 }
 
+#[derive(Debug, Deserialize, Default, IntoParams)]
+pub(crate) struct ChunkSearchQueryParams {
+    q: Option<String>,
+    #[serde(
+        default,
+        alias = "book_ids[]",
+        deserialize_with = "deserialize_string_or_many"
+    )]
+    book_ids: Vec<String>,
+    collection_id: Option<String>,
+    #[serde(default, rename = "type")]
+    chunk_type: Option<String>,
+    limit: Option<u32>,
+    rerank: Option<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct PaginatedResponse<T> {
     items: Vec<T>,
@@ -61,6 +87,29 @@ pub(crate) struct SearchResultItem {
     #[serde(flatten)]
     book: book_queries::BookSummary,
     score: f32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ChunkSearchResponse {
+    query: String,
+    chunks: Vec<ChunkSearchItem>,
+    total_searched: u64,
+    retrieval_ms: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ChunkSearchItem {
+    chunk_id: String,
+    book_id: String,
+    book_title: String,
+    heading_path: Option<String>,
+    chunk_type: ChunkType,
+    text: String,
+    word_count: i64,
+    bm25_score: Option<f32>,
+    cosine_score: Option<f32>,
+    rrf_score: f32,
+    rerank_score: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -252,6 +301,162 @@ pub(crate) async fn search_semantic(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/search/chunks",
+    tag = "search",
+    security(("bearer_auth" = [])),
+    params(ChunkSearchQueryParams),
+    responses(
+        (status = 200, description = "Hybrid chunk search results", body = ChunkSearchResponse),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn search_chunks(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Query(query): Query<ChunkSearchQueryParams>,
+) -> Result<Json<ChunkSearchResponse>, AppError> {
+    let raw_query = query.q.unwrap_or_default();
+    let query_text = raw_query.trim().to_string();
+    if query_text.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let normalized_query =
+        normalize_fts_query(Some(query_text.as_str())).ok_or(AppError::BadRequest)?;
+    let limit = clamp_chunk_limit(query.limit.unwrap_or(10));
+    let rerank = parse_truthy_bool(query.rerank.as_deref());
+    let book_ids = normalize_ids(query.book_ids);
+    let collection_id = query
+        .collection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let chunk_type = query
+        .chunk_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if let Some(collection_id) = collection_id.as_deref() {
+        ensure_collection_visible(&state, &auth_user.user.id, collection_id).await?;
+    }
+
+    let filters = chunk_queries::ChunkSearchFilters {
+        book_ids: &book_ids,
+        collection_id: collection_id.as_deref(),
+        chunk_type: chunk_type.as_deref(),
+    };
+
+    let started_at = Instant::now();
+    let total_searched = chunk_queries::count_searchable_book_chunks(&state.db, &filters)
+        .await
+        .map_err(|_| AppError::Internal)? as u64;
+
+    let bm25_hits = chunk_queries::search_chunks_bm25(&state.db, &normalized_query, &filters, 100)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let semantic_hits = if let Some(semantic) = state.semantic_search.as_ref() {
+        if semantic.is_configured() {
+            match semantic.embed_text(query_text.as_str()).await {
+                Ok(vector) => match chunk_queries::search_chunks_semantic(
+                    &state.db,
+                    &vector,
+                    &filters,
+                    100,
+                )
+                .await
+                {
+                    Ok(hits) => hits,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "chunk semantic search failed");
+                        Vec::new()
+                    }
+                },
+                Err(err) => {
+                    tracing::warn!(error = %err, "chunk query embedding failed");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut fused = fuse_chunk_results(bm25_hits, semantic_hits);
+    let fused_limit = limit.saturating_mul(5).max(1);
+    fused.truncate(fused_limit);
+
+    if rerank {
+        if let Some(chat_client) = state.chat_client.as_ref() {
+            if let Some(reranked) =
+                rerank_chunk_results(chat_client, query_text.as_str(), fused.clone()).await
+            {
+                fused = reranked;
+            }
+        }
+    }
+
+    let ordered_ids = fused
+        .iter()
+        .map(|chunk| chunk.book_id.clone())
+        .collect::<Vec<_>>();
+    let summaries = book_queries::list_book_summaries_by_ids(
+        &state.db,
+        &ordered_ids,
+        Some(auth_user.user.default_library_id.as_str()),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let mut summary_by_id = HashMap::new();
+    for summary in summaries {
+        summary_by_id.insert(summary.id.clone(), summary);
+    }
+
+    let mut chunks = Vec::with_capacity(fused.len());
+    for chunk in fused {
+        if let Some(book) = summary_by_id.get(&chunk.book_id) {
+            chunks.push(ChunkSearchItem {
+                chunk_id: chunk.id,
+                book_id: chunk.book_id,
+                book_title: book.title.clone(),
+                heading_path: chunk.heading_path,
+                chunk_type: chunk.chunk_type,
+                text: chunk.text,
+                word_count: chunk.word_count,
+                bm25_score: chunk.bm25_score,
+                cosine_score: chunk.cosine_score,
+                rrf_score: chunk.rrf_score as f32,
+                rerank_score: chunk.rerank_score,
+            });
+        }
+
+        if chunks.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(Json(ChunkSearchResponse {
+        query: query_text,
+        chunks,
+        total_searched,
+        retrieval_ms: started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+    }))
+}
+
 async fn search_status(
     State(state): State<AppState>,
 ) -> Result<Json<SearchStatusResponse>, AppError> {
@@ -287,6 +492,233 @@ fn clamp_semantic_page_size(page_size: u32) -> u32 {
     }
 }
 
+fn clamp_chunk_limit(limit: u32) -> usize {
+    match limit {
+        0 => 10,
+        n if n > 50 => 50,
+        n => n as usize,
+    }
+}
+
+fn normalize_ids(mut ids: Vec<String>) -> Vec<String> {
+    ids.retain(|id| !id.trim().is_empty());
+    for id in &mut ids {
+        *id = id.trim().to_string();
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    ids
+}
+
+fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_alphanumeric() || ch.is_whitespace() || ch == '*' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push(' ');
+        }
+    }
+
+    let terms = sanitized
+        .split_whitespace()
+        .map(|term| term.trim_matches('*'))
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("{term}*"))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" "))
+    }
+}
+
+async fn ensure_collection_visible(
+    state: &AppState,
+    user_id: &str,
+    collection_id: &str,
+) -> Result<(), AppError> {
+    let Some(shelf) = shelf_queries::get_shelf(&state.db, collection_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+    else {
+        return Err(AppError::NotFound);
+    };
+
+    if shelf.user_id != user_id && !shelf.is_public {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(())
+}
+
+#[derive(Clone)]
+struct FusedChunk {
+    id: String,
+    book_id: String,
+    chunk_index: i64,
+    heading_path: Option<String>,
+    chunk_type: ChunkType,
+    text: String,
+    word_count: i64,
+    bm25_score: Option<f32>,
+    cosine_score: Option<f32>,
+    bm25_rank: Option<usize>,
+    cosine_rank: Option<usize>,
+    rrf_score: f64,
+    rerank_score: Option<f32>,
+}
+
+fn fuse_chunk_results(
+    bm25_hits: Vec<chunk_queries::ChunkSearchRecord>,
+    semantic_hits: Vec<chunk_queries::ChunkSearchRecord>,
+) -> Vec<FusedChunk> {
+    let mut chunks = HashMap::<String, FusedChunk>::new();
+
+    for (rank, hit) in bm25_hits.into_iter().enumerate() {
+        let entry = chunks.entry(hit.id.clone()).or_insert_with(|| FusedChunk {
+            id: hit.id.clone(),
+            book_id: hit.book_id.clone(),
+            chunk_index: hit.chunk_index,
+            heading_path: hit.heading_path.clone(),
+            chunk_type: hit.chunk_type,
+            text: hit.text.clone(),
+            word_count: hit.word_count,
+            bm25_score: hit.bm25_score,
+            cosine_score: hit.cosine_score,
+            bm25_rank: None,
+            cosine_rank: None,
+            rrf_score: 0.0,
+            rerank_score: None,
+        });
+        entry.bm25_score = hit.bm25_score;
+        entry.bm25_rank = Some(rank + 1);
+    }
+
+    for (rank, hit) in semantic_hits.into_iter().enumerate() {
+        let entry = chunks.entry(hit.id.clone()).or_insert_with(|| FusedChunk {
+            id: hit.id.clone(),
+            book_id: hit.book_id.clone(),
+            chunk_index: hit.chunk_index,
+            heading_path: hit.heading_path.clone(),
+            chunk_type: hit.chunk_type,
+            text: hit.text.clone(),
+            word_count: hit.word_count,
+            bm25_score: hit.bm25_score,
+            cosine_score: hit.cosine_score,
+            bm25_rank: None,
+            cosine_rank: None,
+            rrf_score: 0.0,
+            rerank_score: None,
+        });
+        entry.cosine_score = hit.cosine_score;
+        entry.cosine_rank = Some(rank + 1);
+    }
+
+    for chunk in chunks.values_mut() {
+        chunk.rrf_score = reciprocal_rank_fusion_score(chunk.bm25_rank, chunk.cosine_rank);
+    }
+
+    let mut ordered = chunks.into_values().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        right
+            .rrf_score
+            .partial_cmp(&left.rrf_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.book_id.cmp(&right.book_id))
+            .then_with(|| left.chunk_index.cmp(&right.chunk_index))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    ordered
+}
+
+fn reciprocal_rank_fusion_score(bm25_rank: Option<usize>, cosine_rank: Option<usize>) -> f64 {
+    const K: f64 = 60.0;
+    let mut score = 0.0;
+    if let Some(rank) = bm25_rank {
+        score += 1.0 / (K + rank as f64);
+    }
+    if let Some(rank) = cosine_rank {
+        score += 1.0 / (K + rank as f64);
+    }
+    score
+}
+
+async fn rerank_chunk_results(
+    chat_client: &crate::llm::chat::ChatClient,
+    query: &str,
+    chunks: Vec<FusedChunk>,
+) -> Option<Vec<FusedChunk>> {
+    let chunks = chunks.into_iter().take(50).collect::<Vec<_>>();
+    let futures = chunks.iter().map(|chunk| {
+        let prompt = format!(
+            "Query: {query}\n\nPassage: {}\n\nScore the relevance of this passage to the query from 0.0 to 1.0.\nReply with only the number.",
+            chunk.text
+        );
+        async move {
+            let response = chat_client.complete(&prompt).await?;
+            let score = parse_rerank_score(&response).ok_or_else(|| {
+                anyhow::anyhow!("invalid rerank score response: {response}")
+            })?;
+            Ok::<f32, anyhow::Error>(score)
+        }
+    });
+
+    let rerank_results = match tokio::time::timeout(Duration::from_secs(10), join_all(futures)).await {
+        Ok(scores) => scores,
+        Err(_) => return None,
+    };
+
+    let mut scores = Vec::with_capacity(rerank_results.len());
+    for score in rerank_results {
+        let score = match score {
+            Ok(score) => score,
+            Err(err) => {
+                tracing::warn!(error = %err, "chunk rerank failed");
+                return None;
+            }
+        };
+        scores.push(score);
+    }
+
+    let mut reranked = chunks;
+    for (chunk, score) in reranked.iter_mut().zip(scores.into_iter()) {
+        chunk.rerank_score = Some(score);
+    }
+
+    reranked.sort_by(|left, right| {
+        let left_score = left.rerank_score.unwrap_or(0.0);
+        let right_score = right.rerank_score.unwrap_or(0.0);
+        right_score
+            .partial_cmp(&left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .rrf_score
+                    .partial_cmp(&left.rrf_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.book_id.cmp(&right.book_id))
+            .then_with(|| left.chunk_index.cmp(&right.chunk_index))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Some(reranked)
+}
+
+fn parse_rerank_score(response: &str) -> Option<f32> {
+    let token = response.split_whitespace().next()?;
+    let score = token.parse::<f32>().ok()?;
+    Some(score.clamp(0.0, 1.0))
+}
+
 fn semantic_search_or_unavailable(
     state: &AppState,
 ) -> Result<std::sync::Arc<crate::search::semantic::SemanticSearch>, AppError> {
@@ -303,4 +735,53 @@ fn semantic_search_or_unavailable(
     }
 
     Ok(semantic)
+}
+
+fn deserialize_string_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct StringOrMany;
+
+    impl<'de> Visitor<'de> for StringOrMany {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a string or a sequence of strings")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value.to_string()])
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![value])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element::<String>()? {
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrMany)
+}
+
+fn parse_truthy_bool(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "true" | "1" | "yes" | "on")
+    )
 }

@@ -2,8 +2,6 @@ use backend::{
     config::AppConfig,
     db::queries::books as book_queries,
     ingest::text as ingest_text,
-    llm::embeddings::EmbeddingClient,
-    search::semantic::SemanticSearch,
     storage::{LocalFsStorage, StorageBackend},
 };
 use rmcp::schemars::JsonSchema;
@@ -14,7 +12,6 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::{collections::HashMap, sync::Arc};
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CalibreMcpServer {}
@@ -22,9 +19,11 @@ impl ServerHandler for CalibreMcpServer {}
 #[derive(Clone)]
 pub struct CalibreMcpServer {
     db: SqlitePool,
-    config: AppConfig,
     storage: LocalFsStorage,
-    semantic_search: Option<Arc<SemanticSearch>>,
+    llm_enabled: bool,
+    api_client: reqwest::Client,
+    api_base_url: String,
+    api_token: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -44,6 +43,39 @@ pub struct SearchBooksResponse {
     pub total: i64,
     pub page: i64,
     pub page_size: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
+pub struct SearchChunksRequest {
+    pub query: String,
+    pub book_ids: Option<Vec<String>>,
+    pub collection_id: Option<String>,
+    pub chunk_type: Option<String>,
+    pub limit: Option<u32>,
+    pub rerank: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SearchChunksResponseItem {
+    pub chunk_id: String,
+    pub book_id: String,
+    pub book_title: String,
+    pub heading_path: Option<String>,
+    pub chunk_type: String,
+    pub text: String,
+    pub word_count: i64,
+    pub bm25_score: Option<f32>,
+    pub cosine_score: Option<f32>,
+    pub rrf_score: f32,
+    pub rerank_score: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SearchChunksResponse {
+    pub query: String,
+    pub chunks: Vec<SearchChunksResponseItem>,
+    pub total_searched: u64,
+    pub retrieval_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -95,23 +127,21 @@ pub struct SemanticSearchResult {
 #[tool_router(router = tool_router)]
 impl CalibreMcpServer {
     pub fn new(db: SqlitePool, config: AppConfig) -> anyhow::Result<Self> {
-        let semantic_search = if config.llm.enabled {
-            match EmbeddingClient::new(&config) {
-                Ok(client) => Some(Arc::new(SemanticSearch::new(db.clone(), client))),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to initialize semantic search client");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let api_client = reqwest::Client::builder().build()?;
+        let api_base_url = config.app.base_url.trim_end_matches('/').to_string();
+        let api_token = std::env::var("AUTOLIBRE_API_TOKEN")
+            .or_else(|_| std::env::var("APP_API_TOKEN"))
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
 
         Ok(Self {
             db,
             storage: LocalFsStorage::new(&config.app.storage_path),
-            config,
-            semantic_search,
+            llm_enabled: config.llm.enabled,
+            api_client,
+            api_base_url,
+            api_token,
             tool_router: Self::tool_router(),
         })
     }
@@ -143,6 +173,8 @@ impl CalibreMcpServer {
                 tags,
                 page,
                 page_size,
+                publisher: None,
+                rating_bucket: None,
                 ..Default::default()
             },
         )
@@ -255,76 +287,31 @@ impl CalibreMcpServer {
     }
 
     #[tool(
+        name = "search_chunks",
+        description = "Search the library with hybrid BM25 plus semantic chunk retrieval. Returns chunk-level passages with provenance fields."
+    )]
+    pub async fn search_chunks(
+        &self,
+        Parameters(params): Parameters<SearchChunksRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.search_chunks_internal(params).await
+    }
+
+    #[tool(
         name = "semantic_search",
-        description = "Search the library by semantic meaning using vector embeddings. Requires LLM features to be enabled (llm.enabled = true in config)."
+        description = "Deprecated alias for search_chunks."
     )]
     pub async fn semantic_search(
         &self,
-        Parameters(params): Parameters<SemanticSearchRequest>,
+        Parameters(params): Parameters<SearchChunksRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let query = params.query.trim();
-        if query.is_empty() {
-            return Err(ErrorData::invalid_params(
-                "query is required",
-                Some(serde_json::json!({ "field": "query" })),
-            ));
-        }
-
-        if !self.config.llm.enabled {
+        if !self.llm_enabled {
             return Ok(CallToolResult::error(vec![Content::text(
                 "semantic_search_unavailable: LLM features are disabled. Enable llm.enabled in config.toml.",
             )]));
         }
 
-        let Some(semantic) = self.semantic_search.as_ref() else {
-            return Ok(CallToolResult::error(vec![Content::text(
-                "semantic_search_unavailable: semantic search is not configured.",
-            )]));
-        };
-        if !semantic.is_configured() {
-            return Ok(CallToolResult::error(vec![Content::text(
-                "semantic_search_unavailable: semantic search is not configured.",
-            )]));
-        }
-
-        let limit = params.limit.unwrap_or(10).clamp(1, 50);
-        let search_page = semantic
-            .search_semantic(query, 1, limit)
-            .await
-            .map_err(internal_error)?;
-
-        let ordered_ids = search_page
-            .hits
-            .iter()
-            .map(|hit| hit.book_id.clone())
-            .collect::<Vec<_>>();
-        let summaries = book_queries::list_book_summaries_by_ids(&self.db, &ordered_ids, None, None)
-            .await
-            .map_err(internal_error)?;
-        let mut summary_by_id = HashMap::new();
-        for summary in summaries {
-            summary_by_id.insert(summary.id.clone(), summary);
-        }
-
-        let mut results = Vec::new();
-        for hit in search_page.hits {
-            if let Some(summary) = summary_by_id.remove(&hit.book_id) {
-                results.push(SemanticSearchResult {
-                    book_id: summary.id,
-                    title: summary.title,
-                    authors: summary
-                        .authors
-                        .iter()
-                        .map(|author| author.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    score: hit.score,
-                });
-            }
-        }
-
-        let value = serde_json::to_value(results).map_err(internal_error)?;
-        Ok(CallToolResult::structured(value))
+        self.search_chunks_internal(params).await
     }
 }
 
@@ -373,6 +360,78 @@ impl CalibreMcpServer {
             .resolve(&format_file.path)
             .map_err(internal_error)?;
         Ok((book, format, full_path))
+    }
+
+    async fn search_chunks_internal(
+        &self,
+        params: SearchChunksRequest,
+    ) -> Result<CallToolResult, ErrorData> {
+        let query = params.query.trim();
+        if query.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "query is required",
+                Some(serde_json::json!({ "field": "query" })),
+            ));
+        }
+
+        let Some(token) = self.api_token.as_deref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "search_chunks_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
+            )]));
+        };
+
+        let limit = params.limit.unwrap_or(10).clamp(1, 50);
+        let mut query_params = vec![
+            ("q".to_string(), query.to_string()),
+            ("limit".to_string(), limit.to_string()),
+        ];
+
+        if params.rerank.unwrap_or(false) {
+            query_params.push(("rerank".to_string(), "true".to_string()));
+        }
+
+        if let Some(collection_id) = params
+            .collection_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            query_params.push(("collection_id".to_string(), collection_id.to_string()));
+        }
+
+        if let Some(chunk_type) = params
+            .chunk_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            query_params.push(("type".to_string(), chunk_type.to_string()));
+        }
+
+        if let Some(book_ids) = params.book_ids.as_ref() {
+            for book_id in book_ids {
+                let value = book_id.trim();
+                if !value.is_empty() {
+                    query_params.push(("book_ids[]".to_string(), value.to_string()));
+                }
+            }
+        }
+
+        let url = format!("{}/api/v1/search/chunks", self.api_base_url);
+        let response = self
+            .api_client
+            .get(url)
+            .bearer_auth(token)
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(internal_error)?
+            .error_for_status()
+            .map_err(internal_error)?;
+
+        let payload: SearchChunksResponse = response.json().await.map_err(internal_error)?;
+        let value = serde_json::to_value(payload.chunks).map_err(internal_error)?;
+        Ok(CallToolResult::structured(value))
     }
 }
 

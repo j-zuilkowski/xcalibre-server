@@ -82,6 +82,15 @@ impl ChatClient {
             anyhow::bail!("chat endpoint/model is not configured");
         }
 
+        if self.endpoint.contains("mock://timeout")
+            && user_message.contains("Query:")
+            && user_message.contains("Passage:")
+            && user_message.contains("relevance")
+        {
+            tokio::time::sleep(Duration::from_secs(11)).await;
+            return Ok("0.0".to_string());
+        }
+
         if let Some(response) = mock_completion_response(&self.endpoint, user_message) {
             return Ok(response);
         }
@@ -262,6 +271,27 @@ fn mock_completion_response(endpoint: &str, user_message: &str) -> Option<String
             })
             .to_string(),
         );
+    }
+
+    if user_message.contains("Query:")
+        && user_message.contains("Passage:")
+        && user_message.contains("relevance")
+    {
+        if user_message.contains("preferred passage")
+            || user_message.contains("highest relevance")
+            || user_message.contains("[rerank-high]")
+        {
+            return Some("0.98".to_string());
+        }
+
+        if user_message.contains("secondary passage")
+            || user_message.contains("less relevant")
+            || user_message.contains("[rerank-low]")
+        {
+            return Some("0.05".to_string());
+        }
+
+        return Some("0.50".to_string());
     }
 
     Some(String::new())
