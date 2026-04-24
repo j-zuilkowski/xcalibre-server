@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use axum::{
@@ -364,6 +365,41 @@ async fn test_delivery_sends_correct_hmac_signature() {
             .and_then(|value| value.to_str().ok()),
         Some(expected.as_str())
     );
+}
+
+#[tokio::test]
+async fn test_webhook_delivery_skips_oversized_payload() {
+    let ctx = TestContext::new().await;
+    let client = reqwest::Client::new();
+    let delivery_request = webhook_engine::DeliveryRequest::new(
+        &client,
+        ctx.jwt_secret(),
+        Duration::from_secs(5),
+        false,
+    );
+    let payload_json = json!({
+        "message": "a".repeat(1_000_001)
+    })
+    .to_string();
+
+    let result = webhook_engine::deliver_single_delivery(
+        &delivery_request,
+        "webhook-oversized",
+        "https://example.com/hook",
+        "encrypted-secret",
+        "book.added",
+        &payload_json,
+    )
+    .await
+    .expect("delivery result");
+
+    assert!(!result.delivered);
+    assert!(!result.should_retry);
+    assert!(result
+        .error
+        .as_deref()
+        .expect("error")
+        .contains("payload_too_large"));
 }
 
 #[tokio::test]

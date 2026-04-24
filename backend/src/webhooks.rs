@@ -17,20 +17,38 @@ use utoipa::ToSchema;
 const WEBHOOK_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const WEBHOOK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 const WEBHOOK_TEST_MESSAGE: &str = "Webhook test from autolibre";
+const MAX_WEBHOOK_PAYLOAD_BYTES: usize = 1_000_000;
 static WEBHOOK_JWT_SECRET: OnceLock<Mutex<String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct DeliveryAttemptResult {
     pub delivered: bool,
+    pub should_retry: bool,
     pub response_status: Option<u16>,
     pub error: Option<String>,
 }
 
-struct DeliveryRequest<'a> {
+pub struct DeliveryRequest<'a> {
     http_client: &'a Client,
     jwt_secret: &'a str,
     timeout: Duration,
     require_https: bool,
+}
+
+impl<'a> DeliveryRequest<'a> {
+    pub fn new(
+        http_client: &'a Client,
+        jwt_secret: &'a str,
+        timeout: Duration,
+        require_https: bool,
+    ) -> Self {
+        Self {
+            http_client,
+            jwt_secret,
+            timeout,
+            require_https,
+        }
+    }
 }
 
 pub async fn enqueue_event(
@@ -58,18 +76,15 @@ pub async fn deliver_pending(db: &sqlx::SqlitePool, http_client: &Client) -> any
     let now = Utc::now().to_rfc3339();
     let pending = webhook_queries::list_pending_deliveries(db, &now, 50).await?;
     let jwt_secret = webhook_jwt_secret()?;
-    let delivery_request = DeliveryRequest {
-        http_client,
-        jwt_secret: &jwt_secret,
-        timeout: WEBHOOK_DELIVERY_TIMEOUT,
-        require_https: false,
-    };
+    let delivery_request =
+        DeliveryRequest::new(http_client, &jwt_secret, WEBHOOK_DELIVERY_TIMEOUT, false);
     let mut processed = 0usize;
 
     for delivery in pending {
         processed += 1;
         match deliver_single_delivery(
             &delivery_request,
+            &delivery.webhook_id,
             &delivery.webhook_url,
             &delivery.webhook_secret,
             &delivery.event,
@@ -88,22 +103,26 @@ pub async fn deliver_pending(db: &sqlx::SqlitePool, http_client: &Client) -> any
                     webhook_queries::mark_webhook_delivery_success(db, &delivery.webhook_id)
                         .await?;
                 } else {
-                    let attempts = delivery.attempts + 1;
                     let error = result
                         .error
                         .clone()
                         .unwrap_or_else(|| "webhook_delivery_failed".to_string());
-                    if attempts >= 3 {
+                    if !result.should_retry {
                         webhook_queries::mark_delivery_failed(db, &delivery.id, &error).await?;
                     } else {
-                        let next_attempt_at = retry_deadline_for_attempt(attempts);
-                        webhook_queries::mark_delivery_retry(
-                            db,
-                            &delivery.id,
-                            &error,
-                            &next_attempt_at,
-                        )
-                        .await?;
+                        let attempts = delivery.attempts + 1;
+                        if attempts >= 3 {
+                            webhook_queries::mark_delivery_failed(db, &delivery.id, &error).await?;
+                        } else {
+                            let next_attempt_at = retry_deadline_for_attempt(attempts);
+                            webhook_queries::mark_delivery_retry(
+                                db,
+                                &delivery.id,
+                                &error,
+                                &next_attempt_at,
+                            )
+                            .await?;
+                        }
                     }
                 }
             }
@@ -135,14 +154,11 @@ pub async fn send_webhook_test(
 ) -> Result<DeliveryAttemptResult, AppError> {
     let jwt_secret = webhook_jwt_secret()?;
     let payload_json = serde_json::json!({ "message": WEBHOOK_TEST_MESSAGE }).to_string();
-    let delivery_request = DeliveryRequest {
-        http_client,
-        jwt_secret: &jwt_secret,
-        timeout: WEBHOOK_TEST_TIMEOUT,
-        require_https: false,
-    };
+    let delivery_request =
+        DeliveryRequest::new(http_client, &jwt_secret, WEBHOOK_TEST_TIMEOUT, false);
     deliver_single_delivery(
         &delivery_request,
+        &webhook.id,
         &webhook.url,
         &webhook.secret,
         "ping",
@@ -151,13 +167,31 @@ pub async fn send_webhook_test(
     .await
 }
 
-async fn deliver_single_delivery(
+pub async fn deliver_single_delivery(
     request: &DeliveryRequest<'_>,
+    webhook_id: &str,
     url: &str,
     encrypted_secret: &str,
     event: &str,
     payload_json: &str,
 ) -> Result<DeliveryAttemptResult, AppError> {
+    if payload_json.len() > MAX_WEBHOOK_PAYLOAD_BYTES {
+        tracing::warn!(
+            webhook_id = %webhook_id,
+            payload_bytes = payload_json.len(),
+            "webhook payload exceeds 1 MB limit - delivery skipped"
+        );
+        return Ok(DeliveryAttemptResult {
+            delivered: false,
+            should_retry: false,
+            response_status: None,
+            error: Some(format!(
+                "payload_too_large: {} bytes exceeds 1 MB limit",
+                payload_json.len()
+            )),
+        });
+    }
+
     validate_webhook_target(url, request.require_https).await?;
 
     let secret = totp_auth::decrypt_webhook_secret(encrypted_secret, request.jwt_secret)?;
@@ -183,12 +217,14 @@ async fn deliver_single_delivery(
             if response.status().is_success() {
                 Ok(DeliveryAttemptResult {
                     delivered: true,
+                    should_retry: false,
                     response_status: Some(status),
                     error: None,
                 })
             } else {
                 Ok(DeliveryAttemptResult {
                     delivered: false,
+                    should_retry: true,
                     response_status: Some(status),
                     error: Some(format!("http_status_{status}")),
                 })
@@ -202,6 +238,7 @@ async fn deliver_single_delivery(
             };
             Ok(DeliveryAttemptResult {
                 delivered: false,
+                should_retry: true,
                 response_status: None,
                 error: Some(message),
             })
