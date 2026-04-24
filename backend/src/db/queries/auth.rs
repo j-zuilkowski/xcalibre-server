@@ -43,6 +43,33 @@ pub async fn create_first_admin_user(
     create_user(db, username, email, "admin", password_hash).await
 }
 
+pub async fn delete_user(db: &SqlitePool, user_id: &str) -> anyhow::Result<bool> {
+    let mut tx = db.begin().await?;
+
+    sqlx::query(
+        r#"
+        DELETE FROM api_tokens
+        WHERE created_by = ?
+        "#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let result = sqlx::query(
+        r#"
+        DELETE FROM users
+        WHERE id = ?
+        "#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn create_user(
     db: &SqlitePool,
     username: &str,

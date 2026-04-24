@@ -8,6 +8,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug)]
@@ -36,6 +37,12 @@ pub async fn kobo_auth(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Unauthorized)?;
+
+    if let Some(expires_at) = api_token.expires_at {
+        if expires_at < Utc::now().timestamp() {
+            return Err(AppError::Unauthorized);
+        }
+    }
 
     let user = auth_queries::find_user_by_id(&state.db, &api_token.created_by)
         .await

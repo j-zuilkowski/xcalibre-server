@@ -278,15 +278,26 @@ async fn authenticate_api_token(
         return Ok(None);
     };
 
+    if let Some(expires_at) = api_token.expires_at {
+        if expires_at < Utc::now().timestamp() {
+            return Err(AppError::Unauthorized);
+        }
+    }
+
     api_token_queries::touch_last_used(&state.db, &api_token.id)
         .await
         .map_err(|_| AppError::Internal)?;
 
     let user = auth_queries::find_user_by_id(&state.db, &api_token.created_by)
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
 
-    Ok(user)
+    if !user.is_active {
+        return Err(AppError::Unauthorized);
+    }
+
+    Ok(Some(user))
 }
 
 fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {

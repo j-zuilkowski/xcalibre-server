@@ -1,10 +1,10 @@
 use crate::{
     auth::password::hash_password,
     db::queries::{
-        api_tokens as api_token_queries, auth as auth_queries,
-        email_settings as email_queries, kobo as kobo_queries, libraries as library_queries,
-        llm as llm_queries, scheduled_tasks as scheduled_task_queries, tags as tag_queries,
-        totp as totp_queries, user_tag_restrictions as restriction_queries,
+        api_tokens as api_token_queries, auth as auth_queries, email_settings as email_queries,
+        kobo as kobo_queries, libraries as library_queries, llm as llm_queries,
+        scheduled_tasks as scheduled_task_queries, tags as tag_queries, totp as totp_queries,
+        user_tag_restrictions as restriction_queries,
     },
     middleware::auth::{AuthenticatedUser, RequireAdmin},
     scheduler, AppError, AppState,
@@ -104,6 +104,8 @@ struct ListJobsQuery {
 #[derive(Debug, Deserialize)]
 struct CreateTokenRequest {
     name: String,
+    #[serde(default)]
+    expires_in_days: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -796,13 +798,10 @@ async fn delete_user(
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     ensure_admin(&state, &auth_user.user.id).await?;
-    let deleted = sqlx::query("DELETE FROM users WHERE id = ?")
-        .bind(&user_id)
-        .execute(&state.db)
+    let deleted = auth_queries::delete_user(&state.db, &user_id)
         .await
-        .map_err(|_| AppError::Internal)?
-        .rows_affected();
-    if deleted == 0 {
+        .map_err(|_| AppError::Internal)?;
+    if !deleted {
         return Err(AppError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)
@@ -894,16 +893,27 @@ async fn create_token(
 ) -> Result<(StatusCode, Json<CreateTokenResponse>), AppError> {
     ensure_admin(&state, &auth_user.user.id).await?;
 
-    let name = payload.name.trim();
+    let CreateTokenRequest {
+        name,
+        expires_in_days,
+    } = payload;
+    let name = name.trim();
     if name.is_empty() {
         return Err(AppError::BadRequest);
     }
 
     let plain_token = generate_plain_token();
     let token_hash = hash_token(&plain_token);
-    let token = api_token_queries::create_token(&state.db, name, &token_hash, &auth_user.user.id)
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let expires_at = expires_in_days.map(|days| Utc::now().timestamp() + (days as i64) * 86_400);
+    let token = api_token_queries::create_token(
+        &state.db,
+        name,
+        &token_hash,
+        &auth_user.user.id,
+        expires_at,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
 
     Ok((
         StatusCode::CREATED,

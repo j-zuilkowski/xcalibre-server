@@ -11,6 +11,7 @@ pub struct ApiToken {
     pub created_by: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
+    pub expires_at: Option<i64>,
 }
 
 pub async fn create_token(
@@ -18,14 +19,15 @@ pub async fn create_token(
     name: &str,
     token_hash: &str,
     created_by: &str,
+    expires_at: Option<i64>,
 ) -> anyhow::Result<ApiToken> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     sqlx::query(
         r#"
-        INSERT INTO api_tokens (id, name, token_hash, created_by, created_at, last_used_at)
-        VALUES (?, ?, ?, ?, ?, NULL)
+        INSERT INTO api_tokens (id, name, token_hash, created_by, created_at, last_used_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?)
         "#,
     )
     .bind(&id)
@@ -33,6 +35,7 @@ pub async fn create_token(
     .bind(token_hash)
     .bind(created_by)
     .bind(&now)
+    .bind(expires_at)
     .execute(db)
     .await?;
 
@@ -44,7 +47,7 @@ pub async fn create_token(
 pub async fn find_by_hash(db: &SqlitePool, token_hash: &str) -> anyhow::Result<Option<ApiToken>> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at
         FROM api_tokens
         WHERE token_hash = ?
         "#,
@@ -75,7 +78,7 @@ pub async fn touch_last_used(db: &SqlitePool, id: &str) -> anyhow::Result<()> {
 pub async fn list_tokens(db: &SqlitePool, created_by: &str) -> anyhow::Result<Vec<ApiToken>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at
         FROM api_tokens
         WHERE created_by = ?
         ORDER BY created_at DESC, id DESC
@@ -109,7 +112,7 @@ pub async fn delete_token(db: &SqlitePool, id: &str, created_by: &str) -> anyhow
 async fn find_by_id(db: &SqlitePool, id: &str) -> anyhow::Result<Option<ApiToken>> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, created_by, created_at, last_used_at
+        SELECT id, name, created_by, created_at, last_used_at, expires_at
         FROM api_tokens
         WHERE id = ?
         "#,
@@ -132,5 +135,6 @@ fn row_to_api_token(row: Option<sqlx::sqlite::SqliteRow>) -> anyhow::Result<Opti
         created_by: row.get("created_by"),
         created_at: row.get("created_at"),
         last_used_at: row.get("last_used_at"),
+        expires_at: row.get("expires_at"),
     }))
 }
