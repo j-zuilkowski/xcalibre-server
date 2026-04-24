@@ -78,8 +78,8 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-fn photo_url_from_path(photo_path: Option<String>) -> Option<String> {
-    normalize_optional(photo_path).map(|path| format!("/{path}"))
+fn photo_url_from_path(author_id: &str, photo_path: Option<String>) -> Option<String> {
+    normalize_optional(photo_path).map(|_| format!("/api/v1/authors/{author_id}/photo"))
 }
 
 pub async fn get_author_by_id(
@@ -120,7 +120,7 @@ pub async fn get_author_by_id(
             .get::<Option<String>, _>("profile_author_id")
             .map(|_| AuthorProfile {
                 bio: row.get("bio"),
-                photo_url: photo_url_from_path(row.get("photo_path")),
+                photo_url: photo_url_from_path(author_id, row.get("photo_path")),
                 born: row.get("born"),
                 died: row.get("died"),
                 website_url: row.get("website_url"),
@@ -222,6 +222,32 @@ pub async fn upsert_author_profile(
     .execute(db)
     .await
     .context("upsert author profile")?;
+
+    Ok(())
+}
+
+pub async fn set_author_photo_path(
+    db: &SqlitePool,
+    author_id: &str,
+    photo_path: &str,
+) -> anyhow::Result<()> {
+    let updated_at = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT INTO author_profiles (author_id, photo_path, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(author_id) DO UPDATE SET
+            photo_path = excluded.photo_path,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(author_id)
+    .bind(photo_path)
+    .bind(updated_at)
+    .execute(db)
+    .await
+    .context("set author photo path")?;
 
     Ok(())
 }

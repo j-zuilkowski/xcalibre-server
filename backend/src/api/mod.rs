@@ -32,7 +32,6 @@ pub fn router(state: crate::AppState) -> Router {
         .merge(docs::openapi_routes(state.clone()))
         .nest("/api/v1/auth", auth_router)
         .merge(admin::router(state.clone()))
-        .route("/authors/:bucket/:filename", get(authors::serve_author_photo))
         .merge(authors::router(state.clone()))
         .merge(books::router(state.clone()))
         .merge(users::router(state.clone()))

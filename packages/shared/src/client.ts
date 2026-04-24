@@ -337,6 +337,15 @@ export class ApiClient {
     });
   }
 
+  async uploadAuthorPhoto(id: string, photo: File): Promise<AuthorDetail> {
+    const form = new FormData();
+    form.append("photo", photo);
+    return this.requestJson<AuthorDetail>(`/api/v1/authors/${encodeURIComponent(id)}/photo`, {
+      method: "POST",
+      body: form,
+    });
+  }
+
   async listAdminAuthors(params: {
     q?: string;
     page?: number;

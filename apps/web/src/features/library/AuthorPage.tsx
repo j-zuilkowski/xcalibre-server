@@ -1,11 +1,10 @@
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AdminAuthor, AuthorDetail, AuthorProfilePatch } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import { BookCard } from "./BookCard";
-import { CoverPlaceholder } from "./CoverPlaceholder";
 import { AuthorAutocomplete } from "../admin/AuthorAutocomplete";
 
 type AuthorPageProps = {
@@ -59,6 +58,7 @@ export function AuthorPage({ authorId }: AuthorPageProps) {
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
   const resolvedAuthorId = useMemo(() => resolveAuthorId(authorId), [authorId]);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [page, setPage] = useState<number>(() => parsePage(window.location.search ? new URLSearchParams(window.location.search).get("page") : null));
   const [bioExpanded, setBioExpanded] = useState(false);
   const [drawerMode, setDrawerMode] = useState<"edit" | "merge" | null>(null);
@@ -126,6 +126,13 @@ export function AuthorPage({ authorId }: AuthorPageProps) {
     },
   });
 
+  const photoMutation = useMutation({
+    mutationFn: (photo: File) => apiClient.uploadAuthorPhoto(resolvedAuthorId as string, photo),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["author-detail", resolvedAuthorId] });
+    },
+  });
+
   const mergeMutation = useMutation({
     mutationFn: (targetId: string) => apiClient.mergeAuthor(resolvedAuthorId as string, targetId),
     onSuccess: async (_result, targetId) => {
@@ -182,6 +189,20 @@ export function AuthorPage({ authorId }: AuthorPageProps) {
     await mergeMutation.mutateAsync(mergeTarget.id);
   }
 
+  async function handlePhotoSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      await photoMutation.mutateAsync(file);
+    } catch {
+      // Keep the current image in place on upload failure.
+    }
+  }
+
   if (!resolvedAuthorId) {
     return (
       <div className="mx-auto max-w-6xl rounded-2xl border border-zinc-200 bg-white p-6 text-zinc-600">
@@ -194,15 +215,36 @@ export function AuthorPage({ authorId }: AuthorPageProps) {
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
         <aside className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-          {author?.profile?.photo_url ? (
+          <div className="group relative overflow-hidden rounded-xl bg-zinc-100">
             <img
-              src={author.profile.photo_url}
-              alt={`${author.name} portrait`}
-              className="aspect-[2/3] w-full rounded-xl object-cover"
+              src={`/api/v1/authors/${encodeURIComponent(resolvedAuthorId)}/photo?v=${authorQuery.dataUpdatedAt}`}
+              alt={`${author?.name ?? "Author"} portrait`}
+              className="aspect-square w-full object-cover"
             />
-          ) : (
-            <CoverPlaceholder title={author?.name ?? "Author"} />
-          )}
+            {canEdit ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={photoMutation.isPending}
+                  className="absolute inset-0 flex items-end justify-center bg-zinc-950/0 px-4 pb-4 text-sm font-semibold text-white opacity-0 transition duration-150 group-hover:bg-zinc-950/35 group-hover:opacity-100 focus:opacity-100"
+                >
+                  <span className="rounded-full border border-white/20 bg-zinc-950/80 px-4 py-2 backdrop-blur">
+                    {photoMutation.isPending ? "Uploading..." : "Upload photo"}
+                  </span>
+                </button>
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(event) => {
+                    void handlePhotoSelect(event);
+                  }}
+                />
+              </>
+            ) : null}
+          </div>
 
           <div className="mt-4 flex items-start justify-between gap-3">
             <div>
