@@ -2,7 +2,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     path::{Path, PathBuf},
 };
 
@@ -262,6 +262,9 @@ impl std::fmt::Debug for AuthSection {
 #[serde(default)]
 pub struct LlmSection {
     pub enabled: bool,
+    /// Set to true to allow LLM endpoints on private/loopback addresses.
+    /// Required for local model servers (LM Studio, Ollama, etc.).
+    /// Default: false (rejects RFC 1918, loopback, link-local).
     pub allow_private_endpoints: bool,
     pub librarian: LlmRoleSection,
     pub architect: LlmRoleSection,
@@ -354,7 +357,7 @@ pub async fn load_config() -> anyhow::Result<AppConfig> {
     }
 
     validate_jwt_secret(&config.auth.jwt_secret)?;
-    validate_llm_endpoints(&config).await?;
+    validate_llm_endpoints(&config)?;
 
     Ok(config)
 }
@@ -622,24 +625,38 @@ fn decode_base64_secret(secret: &str) -> Result<Vec<u8>, base64::DecodeError> {
         .or_else(|_| base64::engine::general_purpose::STANDARD.decode(secret))
 }
 
-// DNS is resolved once at config load/startup, not on each request.
+// LLM endpoints are validated at config load/startup, not on each request.
 // If LLM endpoints become runtime-configurable later, they must be validated per request.
-async fn validate_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
-    for endpoint in [
-        config.llm.librarian.endpoint.as_str(),
-        config.llm.architect.endpoint.as_str(),
-    ] {
+fn validate_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
+    for endpoint in llm_endpoints(config) {
         if endpoint.trim().is_empty() {
             continue;
         }
-        validate_llm_endpoint(endpoint, config.llm.allow_private_endpoints)
-            .await
-            .map_err(|err| anyhow::anyhow!("{err}"))?;
+        let url = reqwest::Url::parse(endpoint)
+            .map_err(|e| anyhow::anyhow!("invalid LLM endpoint URL: {e}"))?;
+        match url.scheme() {
+            "http" | "https" => {}
+            _ => anyhow::bail!("invalid LLM endpoint URL: only http and https are allowed"),
+        }
+        let host = url.host_str().unwrap_or("");
+        if !config.llm.allow_private_endpoints && is_private_or_loopback_host(host) {
+            anyhow::bail!(
+                "LLM endpoint {} points to a private/loopback address. Set llm.allow_private_endpoints = true to use local model servers (LM Studio, Ollama, etc.).",
+                endpoint
+            );
+        }
     }
     Ok(())
 }
 
-pub async fn validate_llm_endpoint(
+fn llm_endpoints(config: &AppConfig) -> [&str; 2] {
+    [
+        config.llm.librarian.endpoint.as_str(),
+        config.llm.architect.endpoint.as_str(),
+    ]
+}
+
+pub fn validate_llm_endpoint(
     url: &str,
     allow_private_endpoints: bool,
 ) -> Result<(), crate::AppError> {
@@ -650,51 +667,67 @@ pub async fn validate_llm_endpoint(
     }
 
     let host = parsed.host_str().ok_or(crate::AppError::BadRequest)?;
-    let port = parsed
-        .port_or_known_default()
-        .ok_or(crate::AppError::BadRequest)?;
-    let resolved = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| crate::AppError::BadRequest)?;
-
-    let mut private_ip = None;
-    for addr in resolved {
-        if is_private_or_loopback(addr.ip()) {
-            private_ip = Some(addr.ip());
-            break;
-        }
-    }
-
-    if let Some(ip) = private_ip {
-        if allow_private_endpoints {
-            return Ok(());
-        }
-
-        tracing::warn!(
-            endpoint = %url,
-            resolved_ip = %ip,
-            "LLM endpoint resolves to a private/loopback address while llm.allow_private_endpoints=false; continuing startup for local/NAS deployments"
-        );
+    if !allow_private_endpoints && is_private_or_loopback_host(host) {
+        return Err(crate::AppError::BadRequest);
     }
 
     Ok(())
 }
 
+fn is_private_or_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    let Ok(ip) = host.parse::<IpAddr>() else {
+        return false;
+    };
+
+    is_private_or_loopback(ip)
+}
+
 pub(crate) fn is_private_or_loopback(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
+            let octets = v4.octets();
             v4.is_loopback()
-                || v4.octets()[0] == 10
-                || (v4.octets()[0] == 172 && (16..=31).contains(&v4.octets()[1]))
-                || (v4.octets()[0] == 192 && v4.octets()[1] == 168)
-                || (v4.octets()[0] == 169 && v4.octets()[1] == 254) // link-local / cloud metadata
-                || v4 == Ipv4Addr::LOCALHOST
+                || (octets[0] == 10)
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+                || is_link_local(ip)
+                || is_documentation(ip)
         }
         IpAddr::V6(v6) => {
             let octets = v6.octets();
             v6.is_loopback()
-                || (octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80) // fe80::/10 link-local
-                || (octets[0] & 0xfe == 0xfc) // fc00::/7 ULA
+                || (octets[0] == 0xfc || octets[0] == 0xfd)
+                || is_link_local(ip)
+                || is_documentation(ip)
+        }
+    }
+}
+
+fn is_link_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.octets()[0] == 169 && v4.octets()[1] == 254,
+        IpAddr::V6(v6) => {
+            let octets = v6.octets();
+            octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80
+        }
+    }
+}
+
+fn is_documentation(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+                || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+        }
+        IpAddr::V6(v6) => {
+            let octets = v6.octets();
+            octets[0] == 0x20 && octets[1] == 0x01 && octets[2] == 0x0d && octets[3] == 0xb8
         }
     }
 }

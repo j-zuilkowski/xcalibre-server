@@ -164,36 +164,22 @@ jwt_secret = "Zm9vYmFy"
 }
 
 #[tokio::test]
-async fn test_llm_private_endpoint_allowed_with_warning() {
-    let _guard = env_lock().lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[app]
-base_url = "https://example.com"
-storage_path = "/var/lib/calibre"
+async fn test_llm_endpoint_rejects_localhost_by_default() {
+    let result = backend::config::validate_llm_endpoint("http://localhost:1234/v1", false);
 
-[database]
-url = "sqlite://books.db"
+    assert!(result.is_err());
+}
 
-[auth]
-jwt_secret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+#[tokio::test]
+async fn test_llm_endpoint_allows_localhost_when_flag_set() {
+    let result = backend::config::validate_llm_endpoint("http://localhost:1234/v1", true);
 
-[llm]
-enabled = false
-allow_private_endpoints = false
+    assert!(result.is_ok());
+}
 
-[llm.librarian]
-endpoint = "http://192.168.1.20:1234/v1"
-"#,
-    )
-    .unwrap();
-
-    std::env::set_var("CONFIG_PATH", &path);
-    let result = backend::config::load_config().await;
-    std::env::remove_var("CONFIG_PATH");
+#[tokio::test]
+async fn test_llm_endpoint_allows_public_https() {
+    let result = backend::config::validate_llm_endpoint("https://api.openai.com/v1", false);
 
     assert!(result.is_ok());
 }

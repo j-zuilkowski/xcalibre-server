@@ -21,6 +21,8 @@ header = "x-remote-user"
 
 [llm]
 enabled = false
+# Set to true when using a local model server (LM Studio, Ollama, etc.)
+# allow_private_endpoints = false
 
 [storage]
 backend = "local"   # "local" or "s3"
