@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AdminAuthor } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
 import { AuthorAutocomplete } from "./AuthorAutocomplete";
 
 const PAGE_SIZE = 20;
@@ -87,7 +88,8 @@ export function AuthorsPage() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={`${t("common.search")} authors`}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={`${t("common.search")} authors`}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <p className="text-sm text-zinc-400">{total} total</p>
         </div>
@@ -97,10 +99,10 @@ export function AuthorsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("common.name")}</th>
-              <th className="px-4 py-3 font-medium">{t("library.books")}</th>
-              <th className="px-4 py-3 font-medium">Has profile</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.name")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("library.books")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">Has profile</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -161,68 +163,59 @@ export function AuthorsPage() {
         </button>
       </div>
 
-      {mergeSource ? (
-        <div className="fixed inset-0 z-50 flex">
-          <button
-            type="button"
-            aria-label="Close merge drawer"
-            onClick={() => {
-              setMergeSource(null);
-              setMergeTarget(null);
-            }}
-            className="flex-1 bg-zinc-950/50"
-          />
-          <aside className="flex w-full max-w-xl flex-col border-l border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
+      <Sheet
+        open={mergeSource !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMergeSource(null);
+            setMergeTarget(null);
+          }
+        }}
+      >
+        <SheetContent side="right" className="max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Merge author</SheetTitle>
+          </SheetHeader>
+          {mergeSource ? (
+            <div className="flex h-full flex-col p-5 text-zinc-100">
               <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-teal-300">Merge author</p>
-                <h3 className="mt-1 text-2xl font-semibold">{mergeSource.name}</h3>
+                <h3 className="text-2xl font-semibold">{mergeSource.name}</h3>
                 <p className="text-sm text-zinc-400">{mergeSource.sort_name}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setMergeSource(null);
-                  setMergeTarget(null);
-                }}
-                className="rounded-full border border-zinc-700 px-3 py-1 text-sm text-zinc-300"
-              >
-                Close
-              </button>
-            </div>
 
-            <div className="mt-5 flex flex-1 flex-col gap-4">
-              <AuthorAutocomplete
-                excludeId={mergeSource.id}
-                placeholder="Search merge target"
-                onSelect={(author) => setMergeTarget(author)}
-              />
+              <div className="mt-5 flex flex-1 flex-col gap-4">
+                <AuthorAutocomplete
+                  excludeId={mergeSource.id}
+                  placeholder="Search merge target"
+                  onSelect={(author) => setMergeTarget(author)}
+                />
 
-              {mergeTarget ? (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Selected target</p>
-                  <p className="mt-1 text-lg font-semibold text-zinc-100">{mergeTarget.name}</p>
-                  <p className="text-sm text-zinc-400">{mergeTarget.sort_name}</p>
-                  <p className="text-sm text-zinc-400">{mergeTarget.book_count} books</p>
+                {mergeTarget ? (
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Selected target</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-100">{mergeTarget.name}</p>
+                    <p className="text-sm text-zinc-400">{mergeTarget.sort_name}</p>
+                    <p className="text-sm text-zinc-400">{mergeTarget.book_count} books</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-400">Search and choose the author to merge into.</p>
+                )}
+
+                <div className="mt-auto flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void confirmMerge()}
+                    disabled={!mergeTarget || mergeMutation.isPending}
+                    className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
+                  >
+                    {mergeMutation.isPending ? "Merging..." : "Merge"}
+                  </button>
                 </div>
-              ) : (
-                <p className="text-sm text-zinc-400">Search and choose the author to merge into.</p>
-              )}
-
-              <div className="mt-auto flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => void confirmMerge()}
-                  disabled={!mergeTarget || mergeMutation.isPending}
-                  className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50"
-                >
-                  {mergeMutation.isPending ? "Merging..." : "Merge"}
-                </button>
               </div>
             </div>
-          </aside>
-        </div>
-      ) : null}
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

@@ -1,8 +1,9 @@
-import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useId, useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import type { CustomColumnType } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Dialog } from "../../components/ui/Dialog";
 
 type CreateColumnForm = {
   name: string;
@@ -22,6 +23,9 @@ export function CustomColumnsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<CreateColumnForm>(DEFAULT_FORM);
+  const [columnToDelete, setColumnToDelete] = useState<{ id: string; name: string } | null>(null);
+  const deleteDialogTitleId = useId();
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const columnsQuery = useQuery({
     queryKey: ["custom-columns"],
@@ -65,13 +69,15 @@ export function CustomColumnsPage() {
             value={form.name}
             onChange={(event) => setForm((previous) => ({ ...previous, name: event.target.value }))}
             placeholder={t("admin.display_name")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={t("admin.display_name")}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <input
             value={form.label}
             onChange={(event) => setForm((previous) => ({ ...previous, label: event.target.value }))}
             placeholder={t("admin.internal_label")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={t("admin.internal_label")}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <select
             value={form.column_type}
@@ -81,6 +87,7 @@ export function CustomColumnsPage() {
                 column_type: event.target.value as CustomColumnType,
               }))
             }
+            aria-label={t("common.type")}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
             <option value="text">text</option>
@@ -112,11 +119,11 @@ export function CustomColumnsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("common.name")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.label")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.type")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.multi")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.name")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.label")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.type")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.multi")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -129,14 +136,7 @@ export function CustomColumnsPage() {
                 <td className="px-4 py-3">
                   <button
                     type="button"
-                    onClick={() => {
-                      const ok = window.confirm(
-                        t("admin.delete_custom_column_confirm"),
-                      );
-                      if (ok) {
-                        void deleteMutation.mutateAsync(column.id);
-                      }
-                    }}
+                    onClick={() => setColumnToDelete({ id: column.id, name: column.name })}
                     className="rounded-lg border border-red-500 px-3 py-2 text-xs font-semibold text-red-300"
                   >
                     {t("common.delete")}
@@ -154,6 +154,48 @@ export function CustomColumnsPage() {
           </tbody>
         </table>
       </section>
+
+      <Dialog
+        open={columnToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setColumnToDelete(null);
+          }
+        }}
+        titleId={deleteDialogTitleId}
+        initialFocusRef={deleteCancelRef}
+      >
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
+          <h3 id={deleteDialogTitleId} className="text-xl font-semibold text-zinc-50">
+            Delete custom column?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            {columnToDelete ? `This will remove "${columnToDelete.name}".` : null}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              onClick={() => setColumnToDelete(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (columnToDelete) {
+                  void deleteMutation.mutateAsync(columnToDelete.id);
+                }
+                setColumnToDelete(null);
+              }}
+              className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-300"
+            >
+              {t("common.delete")}
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

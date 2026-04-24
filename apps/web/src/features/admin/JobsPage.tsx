@@ -73,11 +73,11 @@ export function JobsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("admin.job")}</th>
-              <th className="px-4 py-3 font-medium">{t("book.book")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.status")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.created")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.job")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("book.book")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.status")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.created")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>

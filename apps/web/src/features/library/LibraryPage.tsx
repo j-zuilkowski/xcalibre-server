@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ListBooksParams } from "@autolibre/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -98,6 +98,7 @@ export function LibraryPage() {
   const [searchState, setSearchState] = useState<LibrarySearchState>(() =>
     parseSearch(window.location.search),
   );
+  const gridRef = useRef<HTMLUListElement | null>(null);
 
   useEffect(() => {
     const onPopState = () => {
@@ -162,6 +163,55 @@ export function LibraryPage() {
       [key]: nextValue,
       page: 1,
     } as Partial<LibrarySearchState>);
+  }
+
+  function focusCardAtIndex(index: number) {
+    const container = gridRef.current;
+    if (!container) {
+      return;
+    }
+
+    const cards = Array.from(container.querySelectorAll<HTMLElement>("[data-book-card='true']"));
+    const target = cards[index];
+    target?.focus();
+  }
+
+  function handleGridKeyDown(event: KeyboardEvent<HTMLUListElement>) {
+    const container = gridRef.current;
+    if (!container || searchState.view !== "grid") {
+      return;
+    }
+
+    const cards = Array.from(container.querySelectorAll<HTMLElement>("[data-book-card='true']"));
+    if (cards.length === 0) {
+      return;
+    }
+
+    const activeElement = document.activeElement as HTMLElement | null;
+    const currentCard = activeElement?.closest("[data-book-card='true']") as HTMLElement | null;
+    const currentIndex = currentCard ? cards.indexOf(currentCard) : 0;
+    if (currentIndex < 0) {
+      return;
+    }
+
+    const computedColumns = window.getComputedStyle(container).gridTemplateColumns;
+    const columns = Math.max(1, computedColumns.split(" ").length);
+    let nextIndex = currentIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = Math.min(cards.length - 1, currentIndex + 1);
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = Math.max(0, currentIndex - 1);
+    } else if (event.key === "ArrowDown") {
+      nextIndex = Math.min(cards.length - 1, currentIndex + columns);
+    } else if (event.key === "ArrowUp") {
+      nextIndex = Math.max(0, currentIndex - columns);
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    focusCardAtIndex(nextIndex);
   }
 
   return (
@@ -252,6 +302,10 @@ export function LibraryPage() {
           </div>
         </header>
 
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {booksQuery.isLoading ? "Loading books..." : `${books.length} books loaded`}
+        </div>
+
         {booksQuery.isLoading ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
             {Array.from({ length: 8 }).map((_, index) => (
@@ -282,11 +336,18 @@ export function LibraryPage() {
         {!booksQuery.isLoading && !booksQuery.isError && books.length > 0 ? (
           <>
             {searchState.view === "grid" ? (
-              <section className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+              <ul
+                ref={gridRef}
+                role="list"
+                onKeyDown={handleGridKeyDown}
+                className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8"
+              >
                 {books.map((book) => (
-                  <BookCard key={book.id} book={book} />
+                  <li key={book.id}>
+                    <BookCard book={book} progressPercentage={book.progress_percentage ?? 0} />
+                  </li>
                 ))}
-              </section>
+              </ul>
             ) : (
               <section className="flex flex-col gap-2">
                 {books.map((book) => (

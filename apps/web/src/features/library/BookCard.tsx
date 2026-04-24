@@ -57,6 +57,14 @@ export function BookCard({
   const readHref = `/books/${encodeURIComponent(book.id)}/read/${encodeURIComponent(readFormat)}`;
   const downloadHref = apiClient.downloadUrl(book.id, readFormat);
 
+  function openBookDetail() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.location.assign(`/books/${encodeURIComponent(book.id)}`);
+  }
+
   const readMutation = useMutation({
     mutationFn: (nextIsRead: boolean) => apiClient.setBookReadState(book.id, nextIsRead),
     onSuccess: () => {
@@ -72,7 +80,17 @@ export function BookCard({
   });
 
   return (
-    <article className={`group ${book.is_archived ? "opacity-75" : ""}`}>
+    <article
+      data-book-card="true"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openBookDetail();
+        }
+      }}
+      className={`group outline-none transition focus-visible:ring-2 focus-visible:ring-teal-500 ${book.is_archived ? "opacity-75" : ""}`}
+    >
       <div className="relative">
         <a href={`/books/${encodeURIComponent(book.id)}`} className="block">
           {book.has_cover ? (

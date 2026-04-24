@@ -169,7 +169,7 @@ export function SearchBar() {
           onFocus={() => setOpen(true)}
           onBlur={handleBlur}
           placeholder={t("search.search_placeholder")}
-          className={`w-full rounded-full border border-zinc-300 bg-white px-4 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition-all duration-200 focus:border-teal-500 ${
+          className={`w-full rounded-full border border-zinc-300 bg-white px-4 py-2.5 text-sm text-zinc-900 shadow-sm outline-none transition-all duration-200 placeholder:text-zinc-500 focus:border-teal-500 ${
             open ? "ring-2 ring-teal-100" : ""
           }`}
         />

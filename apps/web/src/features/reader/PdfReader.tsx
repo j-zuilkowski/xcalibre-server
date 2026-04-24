@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
 import type { ReaderComponentProps } from "./types";
 
@@ -182,24 +182,38 @@ export function PdfReader({ book, format, initialProgress, onProgressChange }: R
       <header
         data-testid="reader-toolbar"
         data-visible={toolbarVisible ? "true" : "false"}
+        aria-hidden={toolbarVisible ? "false" : "true"}
+        onFocusCapture={showToolbar}
         className={`absolute left-0 right-0 top-0 z-20 border-b border-zinc-800 bg-zinc-950/90 px-4 py-3 transition-opacity duration-300 ${
           toolbarVisible ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
-          <a href={`/books/${encodeURIComponent(book.id)}`} className="text-sm font-medium text-zinc-100">
+          <a
+            href={`/books/${encodeURIComponent(book.id)}`}
+            aria-label={t("common.back")}
+            tabIndex={toolbarVisible ? 0 : -1}
+            className="text-sm font-medium text-zinc-100"
+          >
             ←
           </a>
           <div className="min-w-0 flex-1 truncate text-center text-sm text-zinc-300">
             {book.title} · {book.authors.map((author) => author.name).join(", ") || t("common.unknown_author")}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" aria-label={t("reader.open_settings")} onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
+            <button
+              type="button"
+              aria-label={t("reader.open_settings")}
+              tabIndex={toolbarVisible ? 0 : -1}
+              onClick={() => setSettingsOpen(true)}
+              className="rounded border border-zinc-700 px-2 py-1 text-xs"
+            >
               ⚙
             </button>
             <button
               type="button"
               aria-label={t("reader.open_table_of_contents")}
+              tabIndex={toolbarVisible ? 0 : -1}
               onClick={() => setTocOpen(true)}
               className="rounded border border-zinc-700 px-2 py-1 text-xs"
             >

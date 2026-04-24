@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ScheduledTask,
@@ -6,6 +6,7 @@ import type {
   ScheduledTaskType,
 } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Dialog } from "../../components/ui/Dialog";
 import { describeCronExpression, formatDateTime } from "./admin-utils";
 
 const TASK_TYPES: Array<{ value: ScheduledTaskType; label: string; description: string }> = [
@@ -58,6 +59,7 @@ function ScheduledTaskRow({
             type="checkbox"
             checked={task.enabled}
             disabled={disabled}
+            aria-label={`Enabled state for scheduled task ${task.name}`}
             onChange={(event) => onToggleEnabled(task, event.target.checked)}
           />
           {task.enabled ? "Enabled" : "Disabled"}
@@ -87,6 +89,9 @@ export function ScheduledTasksPage() {
     cron_expr: "0 2 * * 0",
     enabled: true,
   });
+  const [taskToDelete, setTaskToDelete] = useState<ScheduledTask | null>(null);
+  const deleteDialogTitleId = useId();
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const tasksQuery = useQuery({
     queryKey: ["admin-scheduled-tasks"],
@@ -154,13 +159,15 @@ export function ScheduledTasksPage() {
             value={form.name}
             onChange={(event) => setForm((previous) => ({ ...previous, name: event.target.value }))}
             placeholder="Task name"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label="Task name"
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <select
             value={form.task_type}
             onChange={(event) =>
               setForm((previous) => ({ ...previous, task_type: event.target.value as ScheduledTaskType }))
             }
+            aria-label="Task type"
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
             {TASK_TYPES.map((taskType) => (
@@ -174,7 +181,8 @@ export function ScheduledTasksPage() {
               value={form.cron_expr}
               onChange={(event) => setForm((previous) => ({ ...previous, cron_expr: event.target.value }))}
               placeholder="0 2 * * 0"
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-mono text-zinc-100"
+              aria-label="Cron expression"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-400"
             />
             <p className="mt-2 text-xs text-zinc-500">{describeCronExpression(form.cron_expr)}</p>
           </div>
@@ -204,13 +212,13 @@ export function ScheduledTasksPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Type</th>
-              <th className="px-4 py-3 font-medium">Cron expression</th>
-              <th className="px-4 py-3 font-medium">Enabled</th>
-              <th className="px-4 py-3 font-medium">Last run</th>
-              <th className="px-4 py-3 font-medium">Next run</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th scope="col" className="px-4 py-3 font-medium">Name</th>
+              <th scope="col" className="px-4 py-3 font-medium">Type</th>
+              <th scope="col" className="px-4 py-3 font-medium">Cron expression</th>
+              <th scope="col" className="px-4 py-3 font-medium">Enabled</th>
+              <th scope="col" className="px-4 py-3 font-medium">Last run</th>
+              <th scope="col" className="px-4 py-3 font-medium">Next run</th>
+              <th scope="col" className="px-4 py-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -223,9 +231,7 @@ export function ScheduledTasksPage() {
                   void updateMutation.mutateAsync({ id: row.id, enabled });
                 }}
                 onDelete={(row) => {
-                  if (window.confirm(`Delete scheduled task "${row.name}"?`)) {
-                    void deleteMutation.mutateAsync(row.id);
-                  }
+                  setTaskToDelete(row);
                 }}
               />
             ))}
@@ -240,6 +246,48 @@ export function ScheduledTasksPage() {
           </tbody>
         </table>
       </section>
+
+      <Dialog
+        open={taskToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTaskToDelete(null);
+          }
+        }}
+        titleId={deleteDialogTitleId}
+        initialFocusRef={deleteCancelRef}
+      >
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
+          <h3 id={deleteDialogTitleId} className="text-xl font-semibold text-zinc-50">
+            Delete scheduled task?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            {taskToDelete ? `This will remove "${taskToDelete.name}".` : null}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              onClick={() => setTaskToDelete(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (taskToDelete) {
+                  void deleteMutation.mutateAsync(taskToDelete.id);
+                }
+                setTaskToDelete(null);
+              }}
+              className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-300"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Dialog>
 
       <section className="grid gap-4 md:grid-cols-3">
         {TASK_TYPES.map((taskType) => (

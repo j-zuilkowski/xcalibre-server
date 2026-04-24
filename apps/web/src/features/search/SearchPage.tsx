@@ -165,6 +165,7 @@ export function SearchPage() {
   const total = hasQuery ? booksQuery.data?.total ?? 0 : 0;
   const pageSize = hasQuery ? booksQuery.data?.page_size ?? PAGE_SIZE : PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const isSearching = hasQuery && booksQuery.isLoading;
 
   return (
     <main className="min-h-screen bg-zinc-50 px-4 py-6 text-zinc-900 md:px-6 lg:px-8">
@@ -242,6 +243,16 @@ export function SearchPage() {
           </div>
         </header>
 
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {hasQuery
+            ? isSearching
+              ? "Searching..."
+              : books.length === 0
+                ? "No results found"
+                : `${books.length} results found`
+            : ""}
+        </div>
+
         {hasQuery && booksQuery.isLoading ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
             {Array.from({ length: 8 }).map((_, index) => (
@@ -274,7 +285,12 @@ export function SearchPage() {
           <>
             <section className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
               {books.map((book) => (
-                <BookCard key={book.id} book={book} score={book.score} />
+                <BookCard
+                  key={book.id}
+                  book={book}
+                  progressPercentage={book.progress_percentage ?? 0}
+                  score={book.score}
+                />
               ))}
             </section>
 

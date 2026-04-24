@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AdminUser, Role, TagLookupItem } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Dialog } from "../../components/ui/Dialog";
 import { formatDateTime } from "./admin-utils";
 import { TagAutocomplete } from "./TagAutocomplete";
 
@@ -37,6 +38,7 @@ export function UsersPage() {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<string, UserDraft>>({});
   const [tagRestrictionUser, setTagRestrictionUser] = useState<AdminUser | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<AdminUser | null>(null);
   const [createForm, setCreateForm] = useState<CreateUserState>({
     username: "",
     email: "",
@@ -117,6 +119,8 @@ export function UsersPage() {
   });
 
   const roleById = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
+  const deleteDialogTitleId = useId();
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -138,24 +142,28 @@ export function UsersPage() {
             value={createForm.username}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, username: event.target.value }))}
             placeholder={t("auth.username")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={t("auth.username")}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <input
             value={createForm.email}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, email: event.target.value }))}
             placeholder={t("auth.email")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={t("auth.email")}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <input
             value={createForm.password}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, password: event.target.value }))}
             placeholder={t("auth.password")}
             type="password"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={t("auth.password")}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <select
             value={createForm.role_id}
             onChange={(event) => setCreateForm((previous) => ({ ...previous, role_id: event.target.value }))}
+            aria-label={t("admin.role")}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
           >
             {roles.map((role) => (
@@ -185,11 +193,11 @@ export function UsersPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("auth.username")}</th>
-              <th className="px-4 py-3 font-medium">{t("admin.role")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.active")}</th>
-              <th className="px-4 py-3 font-medium">{t("admin.last_login")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("auth.username")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.role")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.active")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.last_login")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -205,6 +213,7 @@ export function UsersPage() {
                   <td className="px-4 py-3">
                     <select
                       value={draft.role_id}
+                      aria-label={`Role for user ${user.username}`}
                       onChange={(event) =>
                         setDrafts((previous) => ({
                           ...previous,
@@ -226,6 +235,7 @@ export function UsersPage() {
                       <input
                         type="checkbox"
                         checked={draft.is_active}
+                        aria-label={`Active status for user ${user.username}`}
                         onChange={(event) =>
                           setDrafts((previous) => ({
                             ...previous,
@@ -239,6 +249,7 @@ export function UsersPage() {
                       <input
                         type="checkbox"
                         checked={draft.force_pw_reset}
+                        aria-label={`Force password reset for user ${user.username}`}
                         onChange={(event) =>
                           setDrafts((previous) => ({
                             ...previous,
@@ -293,7 +304,7 @@ export function UsersPage() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => void deleteMutation.mutateAsync(user.id)}
+                        onClick={() => setDeleteCandidate(user)}
                         className="rounded-lg border border-red-900 px-3 py-2 text-xs text-red-300"
                       >
                         {t("common.delete")}
@@ -313,6 +324,48 @@ export function UsersPage() {
           onClose={() => setTagRestrictionUser(null)}
         />
       ) : null}
+
+      <Dialog
+        open={deleteCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteCandidate(null);
+          }
+        }}
+        titleId={deleteDialogTitleId}
+        initialFocusRef={deleteCancelRef}
+      >
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
+          <h3 id={deleteDialogTitleId} className="text-xl font-semibold text-zinc-50">
+            Delete user?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            {deleteCandidate ? `This will remove ${deleteCandidate.username}.` : null}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              onClick={() => setDeleteCandidate(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (deleteCandidate) {
+                  void deleteMutation.mutateAsync(deleteCandidate.id);
+                }
+                setDeleteCandidate(null);
+              }}
+              className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-300"
+            >
+              {t("common.delete")}
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -328,6 +381,8 @@ function TagRestrictionsModal({
   const queryClient = useQueryClient();
   const [selectedTag, setSelectedTag] = useState<TagLookupItem | null>(null);
   const [mode, setMode] = useState<"allow" | "block">("block");
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement | null>(null);
 
   const restrictionsQuery = useQuery({
     queryKey: ["admin-user-tag-restrictions", user.id],
@@ -356,15 +411,27 @@ function TagRestrictionsModal({
   const restrictions = restrictionsQuery.data ?? [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      titleId={titleId}
+      initialFocusRef={closeRef}
+    >
+      <div className="mx-auto w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-teal-300">{t("admin.tag_restrictions")}</p>
-            <h3 className="mt-1 text-xl font-semibold text-zinc-50">{user.username}</h3>
+            <h3 id={titleId} className="mt-1 text-xl font-semibold text-zinc-50">
+              {user.username}
+            </h3>
             <p className="text-sm text-zinc-400">{user.email}</p>
           </div>
             <button
+              ref={closeRef}
               type="button"
               onClick={onClose}
               className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
@@ -440,6 +507,6 @@ function TagRestrictionsModal({
           </div>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

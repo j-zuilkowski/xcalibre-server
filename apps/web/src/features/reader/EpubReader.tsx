@@ -3,7 +3,7 @@ import type { AnnotationColor, BookAnnotation } from "@autolibre/shared";
 import { useAuthStore } from "../../lib/auth-store";
 import { apiClient } from "../../lib/api-client";
 import { useTranslation } from "react-i18next";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
 import type { ReaderComponentProps } from "./types";
 
@@ -121,7 +121,7 @@ function readSettings(userId: string | null): EpubSettings {
 
 function themeStyles(theme: EpubTheme): { background: string; text: string } {
   if (theme === "sepia") {
-    return { background: "#f4ecd8", text: "#3f2f1f" };
+    return { background: "#fdf6e3", text: "#3f2f1f" };
   }
   if (theme === "dark") {
     return { background: "#18181b", text: "#f4f4f5" };
@@ -252,11 +252,13 @@ export function EpubReader({
   const user = useAuthStore((state) => state.user);
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const toolbarRef = useRef<HTMLElement | null>(null);
   const renditionRef = useRef<EpubRendition | null>(null);
   const annotationsRef = useRef<BookAnnotation[]>([]);
   const [engineUnavailable, setEngineUnavailable] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [tocTab, setTocTab] = useState<"chapters" | "annotations">("chapters");
   const [progress, setProgress] = useState(initialProgress?.percentage ?? 0);
   const [tocItems, setTocItems] = useState<TocItem[]>([]);
@@ -529,8 +531,59 @@ export function EpubReader({
     });
   }, [onProgressChange]);
 
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    return (
+      target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
+      Boolean(target.closest("[contenteditable='true']"))
+    );
+  }
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "?") {
+        if (!isEditableTarget(event.target)) {
+          event.preventDefault();
+          setHelpOpen((current) => !current);
+        }
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (helpOpen) {
+          setHelpOpen(false);
+          return;
+        }
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
+        }
+        if (tocOpen) {
+          setTocOpen(false);
+          return;
+        }
+        window.location.assign(`/books/${encodeURIComponent(book.id)}`);
+        return;
+      }
+
+      if (settingsOpen || tocOpen) {
+        return;
+      }
+
+      if (toolbarRef.current?.contains(document.activeElement)) {
+        return;
+      }
+
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
       if (event.key === "ArrowRight") {
         event.preventDefault();
         goNext();
@@ -545,7 +598,7 @@ export function EpubReader({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [goNext, goPrevious]);
+  }, [book.id, goNext, goPrevious, helpOpen, settingsOpen, tocOpen]);
 
   const annotationsByChapter = useMemo(() => {
     const chapterOrder = new Map<string, number>();
@@ -979,26 +1032,41 @@ export function EpubReader({
       ) : null}
 
       <header
+        ref={toolbarRef}
         data-testid="reader-toolbar"
         data-visible={toolbarVisible ? "true" : "false"}
+        aria-hidden={toolbarVisible ? "false" : "true"}
+        onFocusCapture={showToolbar}
         className={`absolute left-0 right-0 top-0 z-20 border-b border-zinc-800 bg-zinc-950/90 px-4 py-3 transition-opacity duration-300 ${
           toolbarVisible ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
-          <a href={`/books/${encodeURIComponent(book.id)}`} className="text-sm font-medium text-zinc-100">
+          <a
+            href={`/books/${encodeURIComponent(book.id)}`}
+            aria-label={t("common.back")}
+            tabIndex={toolbarVisible ? 0 : -1}
+            className="text-sm font-medium text-zinc-100"
+          >
             ←
           </a>
           <div className="min-w-0 flex-1 truncate text-center text-sm text-zinc-300">
             {book.title} · {book.authors.map((author) => author.name).join(", ") || t("common.unknown_author")}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" aria-label={t("reader.open_settings")} onClick={() => setSettingsOpen(true)} className="rounded border border-zinc-700 px-2 py-1 text-xs">
+            <button
+              type="button"
+              aria-label={t("reader.open_settings")}
+              tabIndex={toolbarVisible ? 0 : -1}
+              onClick={() => setSettingsOpen(true)}
+              className="rounded border border-zinc-700 px-2 py-1 text-xs"
+            >
               ⚙
             </button>
             <button
               type="button"
               aria-label={t("reader.open_table_of_contents")}
+              tabIndex={toolbarVisible ? 0 : -1}
               onClick={() => setTocOpen(true)}
               className="rounded border border-zinc-700 px-2 py-1 text-xs"
             >
@@ -1009,13 +1077,30 @@ export function EpubReader({
       </header>
 
       <div className="absolute inset-x-0 bottom-0 z-20 border-t border-zinc-800 bg-zinc-950/90 px-4 py-2">
-        <div className="h-1 w-full overflow-hidden rounded bg-zinc-700">
-          <div className="h-full bg-teal-500" style={{ width: `${progress}%` }} />
-        </div>
+        <progress
+          className="h-1 w-full overflow-hidden rounded bg-zinc-700 [&::-webkit-progress-bar]:bg-zinc-700 [&::-webkit-progress-value]:bg-teal-500 [&::-moz-progress-bar]:bg-teal-500"
+          value={progress}
+          max={100}
+          aria-label={`Reading progress: ${progressLabel}`}
+        />
         <p data-testid="reader-progress-label" className="mt-1 text-right text-xs text-zinc-300">
           {progressLabel}
         </p>
       </div>
+
+      <section
+        aria-hidden={!helpOpen}
+        className={`absolute bottom-16 right-4 z-30 max-w-xs rounded-xl border border-zinc-700 bg-zinc-950/95 p-4 text-xs text-zinc-200 shadow-2xl ${
+          helpOpen ? "not-sr-only" : "sr-only"
+        }`}
+      >
+        <p className="font-semibold text-zinc-100">Keyboard shortcuts</p>
+        <ul className="mt-2 space-y-1 text-zinc-300">
+          <li>Left / Right: change page</li>
+          <li>Esc: close panels or exit reader</li>
+          <li>? : toggle this help</li>
+        </ul>
+      </section>
 
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
         <SheetContent side="right">

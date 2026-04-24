@@ -44,11 +44,11 @@ export function KoboDevicesPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("admin.device")}</th>
-              <th className="px-4 py-3 font-medium">{t("admin.user")}</th>
-              <th className="px-4 py-3 font-medium">{t("admin.last_sync")}</th>
-              <th className="px-4 py-3 font-medium">{t("admin.registered")}</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.device")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.user")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.last_sync")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("admin.registered")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>

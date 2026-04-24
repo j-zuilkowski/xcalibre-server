@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiError, Webhook, WebhookCreateRequest, WebhookEventName, WebhookTestResponse, WebhookUpdateRequest } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Dialog } from "../../components/ui/Dialog";
 import { formatDateTime } from "../admin/admin-utils";
 import { ProfileSidebar } from "./ProfileSidebar";
 
@@ -65,6 +66,9 @@ export function WebhooksPage() {
   const [editingWebhook, setEditingWebhook] = useState<Webhook | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, WebhookTestResponse | null>>({});
+  const [deleteWebhook, setDeleteWebhook] = useState<Webhook | null>(null);
+  const deleteDialogTitleId = useId();
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   const webhooksQuery = useQuery({
     queryKey: ["profile-webhooks"],
@@ -189,15 +193,6 @@ export function WebhooksPage() {
       secret: formState.secret.trim(),
       events,
     });
-  }
-
-  async function removeWebhook(webhook: Webhook) {
-    const confirmed = window.confirm(`Delete webhook ${webhook.url}?`);
-    if (!confirmed) {
-      return;
-    }
-
-    await deleteMutation.mutateAsync(webhook.id);
   }
 
   return (
@@ -432,7 +427,7 @@ export function WebhooksPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void removeWebhook(webhook)}
+                            onClick={() => setDeleteWebhook(webhook)}
                             className="rounded-lg border border-red-900 px-3 py-1.5 text-xs text-red-300"
                           >
                             Delete
@@ -454,6 +449,48 @@ export function WebhooksPage() {
           </section>
         </div>
       </main>
+
+      <Dialog
+        open={deleteWebhook !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteWebhook(null);
+          }
+        }}
+        titleId={deleteDialogTitleId}
+        initialFocusRef={deleteCancelRef}
+      >
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
+          <h3 id={deleteDialogTitleId} className="text-xl font-semibold text-zinc-50">
+            Delete webhook?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            {deleteWebhook ? `This will remove ${deleteWebhook.url}.` : null}
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              onClick={() => setDeleteWebhook(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (deleteWebhook) {
+                  void deleteMutation.mutateAsync(deleteWebhook.id);
+                }
+                setDeleteWebhook(null);
+              }}
+              className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-300"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

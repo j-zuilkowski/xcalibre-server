@@ -885,9 +885,12 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
               <div className="space-y-3">
                 {customValues.map((field) => {
                   const draftValue = customFieldDrafts[field.column_id] ?? customValueToDraft(field.value, field.column_type);
+                  const inputId = `custom-field-${field.column_id}`;
                   return (
                     <div key={field.column_id} className="grid gap-2 md:grid-cols-[180px_1fr] md:items-center">
-                      <label className="font-medium text-zinc-900">{field.label}</label>
+                      <label htmlFor={inputId} className="font-medium text-zinc-900">
+                        {field.label}
+                      </label>
                       {canEditBook ? (
                         field.column_type === "bool" ? (
                           <label className="inline-flex items-center gap-2 text-zinc-700">
@@ -907,6 +910,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                           </label>
                         ) : (
                           <input
+                            id={inputId}
                             type={field.column_type === "integer" || field.column_type === "float" ? "number" : "text"}
                             step={field.column_type === "float" ? "any" : undefined}
                             value={String(draftValue)}
@@ -1180,7 +1184,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                     value={mergeSearch}
                     onChange={(event) => setMergeSearch(event.target.value)}
                     placeholder={t("book.start_typing_title")}
-                    className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm placeholder:text-zinc-500"
                   />
                 </label>
 

@@ -29,6 +29,15 @@ export function ImportPage() {
   });
 
   const status = statusQuery.data;
+  const importStatus = !jobId
+    ? ""
+    : status?.status === "completed"
+      ? `Import complete: ${status.records_imported} books added`
+      : status?.status === "running"
+        ? "Processing..."
+        : status?.status === "pending"
+          ? "Import started"
+          : status?.status ?? "";
 
   const logLines = useMemo(() => {
     if (!status) {
@@ -63,6 +72,10 @@ export function ImportPage() {
       </header>
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {importStatus}
+        </div>
+
         <div className="flex gap-2">
           {(["upload", "path"] as const).map((item) => (
             <button
@@ -99,18 +112,37 @@ export function ImportPage() {
           }}
         >
           {mode === "upload" ? (
-            <input
-              type="file"
-              accept=".zip"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-            />
+            <label
+              data-testid="import-dropzone"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                setSelectedFile(event.dataTransfer.files?.[0] ?? null);
+              }}
+              className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-700 bg-zinc-950 px-4 py-8 text-center text-sm text-zinc-300"
+            >
+              <input
+                type="file"
+                accept=".zip"
+                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+                className="sr-only"
+              />
+              <span className="font-medium text-zinc-100">Drop ZIP files here</span>
+              <span className="mt-1 text-xs uppercase tracking-[0.18em] text-zinc-500">
+                or click to choose one
+              </span>
+              {selectedFile ? (
+                <span className="mt-3 rounded-full border border-teal-500/40 bg-teal-500/10 px-3 py-1 text-xs text-teal-200">
+                  {selectedFile.name}
+                </span>
+              ) : null}
+            </label>
           ) : (
             <input
               value={pathValue}
               onChange={(event) => setPathValue(event.target.value)}
               placeholder={t("admin.server_path_placeholder")}
-              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
             />
           )}
 

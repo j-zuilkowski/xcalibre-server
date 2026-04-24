@@ -72,6 +72,8 @@ export function LoginPage() {
   const [step, setStep] = useState<"credentials" | "totp">("credentials");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const totpInputRef = useRef<HTMLInputElement | null>(null);
+  const errorId = "login-form-error";
+  const totpErrorId = "login-totp-error";
 
   const providersQuery = useQuery({
     queryKey: ["auth-providers"],
@@ -94,7 +96,7 @@ export function LoginPage() {
         ? await apiClient.verifyTotpBackup(totpToken, totpCode.trim())
         : await apiClient.verifyTotp(totpToken, totpCode.trim());
       setAuth(response);
-      await navigate({ to: "/" });
+      await navigate({ to: "/library" });
     } catch {
       setTotpError("Invalid code");
     } finally {
@@ -125,7 +127,7 @@ export function LoginPage() {
       }
 
       setAuth(response);
-      await navigate({ to: "/" });
+      await navigate({ to: "/library" });
     } catch (err) {
       setError(getErrorMessage(err, t("auth.unable_to_sign_in"), t));
     } finally {
@@ -148,29 +150,33 @@ export function LoginPage() {
           {step === "credentials" ? (
             <>
               <div>
-                <label htmlFor="login-username" style={labelStyle}>
+                <label htmlFor="username" style={labelStyle}>
                   {t("auth.username")}
                 </label>
                 <input
-                  id="login-username"
+                  id="username"
                   name="username"
                   autoComplete="username"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
+                  aria-describedby={error ? errorId : undefined}
+                  aria-invalid={Boolean(error)}
                   style={inputStyle}
                 />
               </div>
               <div>
-                <label htmlFor="login-password" style={labelStyle}>
+                <label htmlFor="password" style={labelStyle}>
                   {t("auth.password")}
                 </label>
                 <input
-                  id="login-password"
+                  id="password"
                   name="password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
+                  aria-describedby={error ? errorId : undefined}
+                  aria-invalid={Boolean(error)}
                   style={inputStyle}
                 />
               </div>
@@ -202,6 +208,8 @@ export function LoginPage() {
                   value={totpCode}
                   onChange={(event) => setTotpCode(event.target.value)}
                   maxLength={useBackupCode ? 8 : 6}
+                  aria-describedby={totpError ? totpErrorId : undefined}
+                  aria-invalid={Boolean(totpError)}
                   style={inputStyle}
                 />
               </div>
@@ -225,13 +233,19 @@ export function LoginPage() {
             </div>
           )}
 
-          {error ? (
-            <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px", minHeight: "1.25em" }}>{error}</p>
-          ) : totpError ? (
-            <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px", minHeight: "1.25em" }}>{totpError}</p>
-          ) : (
-            <div style={{ minHeight: "1.25em" }} />
-          )}
+          <div
+            id={step === "totp" ? totpErrorId : errorId}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            style={{ minHeight: "1.25em" }}
+          >
+            {error ? (
+              <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px" }}>{error}</p>
+            ) : totpError ? (
+              <p style={{ margin: 0, color: "#b91c1c", fontSize: "14px" }}>{totpError}</p>
+            ) : null}
+          </div>
 
           <button
             type="submit"

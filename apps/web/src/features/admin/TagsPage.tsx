@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AdminTagWithCount, ApiError, TagLookupItem } from "@autolibre/shared";
 import { apiClient } from "../../lib/api-client";
+import { Dialog } from "../../components/ui/Dialog";
 import { TagAutocomplete } from "./TagAutocomplete";
 
 const PAGE_SIZE = 20;
@@ -32,6 +33,9 @@ export function TagsPage() {
 
   const [mergeTagId, setMergeTagId] = useState<string | null>(null);
   const [mergeTarget, setMergeTarget] = useState<TagLookupItem | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<AdminTagWithCount | null>(null);
+  const deleteDialogTitleId = useId();
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setPage(1);
@@ -121,11 +125,7 @@ export function TagsPage() {
   }
 
   async function confirmDelete(tag: AdminTagWithCount) {
-    const accepted = window.confirm(`Remove this tag from ${tag.book_count} books?`);
-    if (!accepted) {
-      return;
-    }
-    await deleteMutation.mutateAsync(tag.id);
+    setDeleteCandidate(tag);
   }
 
   async function confirmMerge() {
@@ -148,7 +148,8 @@ export function TagsPage() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={`${t("common.search")} tags`}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            aria-label={`${t("common.search")} tags`}
+            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-400"
           />
           <p className="text-sm text-zinc-400">{total} total</p>
         </div>
@@ -158,10 +159,10 @@ export function TagsPage() {
         <table className="min-w-full border-collapse text-left text-sm">
           <thead className="bg-zinc-950/60 text-zinc-400">
             <tr>
-              <th className="px-4 py-3 font-medium">{t("common.name")}</th>
-              <th className="px-4 py-3 font-medium">{t("library.books")}</th>
-              <th className="px-4 py-3 font-medium">Confirmed</th>
-              <th className="px-4 py-3 font-medium">{t("common.actions")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.name")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("library.books")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">Confirmed</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -246,6 +247,7 @@ export function TagsPage() {
                             onSelect={setMergeTarget}
                             placeholder="Search target tag"
                             disabled={mergeMutation.isPending}
+                            className="placeholder:text-zinc-400"
                           />
                           {mergeTarget ? (
                             <p className="text-xs text-zinc-400">
@@ -318,6 +320,48 @@ export function TagsPage() {
       {activeMergeRow && mergeTarget && mergeTarget.id === activeMergeRow.id ? (
         <p className="text-sm text-amber-300">Target tag must be different from source tag.</p>
       ) : null}
+
+      <Dialog
+        open={deleteCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteCandidate(null);
+          }
+        }}
+        titleId={deleteDialogTitleId}
+        initialFocusRef={deleteCancelRef}
+      >
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
+          <h3 id={deleteDialogTitleId} className="text-xl font-semibold text-zinc-50">
+            Remove tag?
+          </h3>
+          <p className="mt-2 text-sm text-zinc-400">
+            This will remove "{deleteCandidate?.name}" from {deleteCandidate?.book_count ?? 0} books.
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              onClick={() => setDeleteCandidate(null)}
+              className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (deleteCandidate) {
+                  void deleteMutation.mutateAsync(deleteCandidate.id);
+                }
+                setDeleteCandidate(null);
+              }}
+              className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-300"
+            >
+              {t("common.delete")}
+            </button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

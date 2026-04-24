@@ -134,7 +134,7 @@ export function AppShell() {
           </span>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">
+        <nav aria-label="Main navigation" className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">
           {[
             { to: "/library", label: t("nav.library"), icon: "L" },
             { to: "/downloads", label: t("nav.downloads"), icon: "D" },

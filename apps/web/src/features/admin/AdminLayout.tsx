@@ -26,7 +26,7 @@ export function AdminLayout() {
           <h1 className="mt-2 text-xl font-semibold">{t("app_name")}</h1>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3 py-4">
+        <nav aria-label="Admin navigation" className="flex flex-1 flex-col gap-1 px-3 py-4">
           {NAV_ITEMS.map((item) => {
             const active = location.pathname === item.to;
             return (
