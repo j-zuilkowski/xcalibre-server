@@ -113,7 +113,8 @@ fn decrypt_with_key(ciphertext_b64: &str, key: &[u8; 32]) -> Result<String, AppE
 }
 
 pub fn generate_backup_code() -> String {
-    rand::thread_rng()
+    let rng = OsRng;
+    rng
         .sample_iter(&Alphanumeric)
         .take(8)
         .map(char::from)
