@@ -106,6 +106,38 @@ impl StorageBackend for S3Storage {
         }
     }
 
+    async fn file_size(&self, relative_path: &str) -> anyhow::Result<u64> {
+        let key = self.s3_key(relative_path)?;
+        let response = match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                let service_err = err.into_service_error();
+                let code = service_err.code().unwrap_or_default();
+                if code == "NoSuchKey" || code == "NotFound" {
+                    anyhow::bail!("s3 object not found: {key}");
+                }
+                return Err(anyhow::Error::new(service_err))
+                    .with_context(|| format!("S3 HeadObject {key}"));
+            }
+        };
+
+        let content_length = response
+            .content_length()
+            .context("S3 HeadObject missing content length")?;
+        if content_length < 0 {
+            anyhow::bail!("S3 reported negative content length for {key}");
+        }
+
+        Ok(u64::try_from(content_length).context("convert S3 content length")?)
+    }
+
     async fn get_range(
         &self,
         relative_path: &str,

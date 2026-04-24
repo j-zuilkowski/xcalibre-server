@@ -51,6 +51,100 @@ async fn test_download_returns_206_for_range_request() {
 }
 
 #[tokio::test]
+async fn test_range_request_beyond_file_size_returns_416() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Range Beyond", "EPUB").await;
+    let bytes = vec![b'x'; 100];
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=200-300"),
+        )
+        .await;
+
+    assert_status!(response, 416);
+    let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
+    let content_range = content_range_header.to_str().expect("content-range header");
+    assert_eq!(content_range, "bytes */100");
+}
+
+#[tokio::test]
+async fn test_range_request_u64_max_returns_416() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Range Max", "EPUB").await;
+    let bytes = vec![b'x'; 100];
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=0-18446744073709551615"),
+        )
+        .await;
+
+    assert_status!(response, 416);
+    let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
+    let content_range = content_range_header.to_str().expect("content-range header");
+    assert_eq!(content_range, "bytes */100");
+}
+
+#[tokio::test]
+async fn test_range_request_start_equals_file_size_returns_416() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Range Start", "EPUB").await;
+    let bytes = vec![b'x'; 100];
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=100-199"),
+        )
+        .await;
+
+    assert_status!(response, 416);
+    let content_range_header = response.header(axum::http::header::CONTENT_RANGE);
+    let content_range = content_range_header.to_str().expect("content-range header");
+    assert_eq!(content_range, "bytes */100");
+}
+
+#[tokio::test]
+async fn test_range_request_valid_still_returns_206() {
+    let ctx = TestContext::new().await;
+    let token = ctx.admin_token().await;
+    let (book, file_path) = ctx.create_book_with_file("Range Valid", "EPUB").await;
+    let bytes: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&file_path, &bytes).expect("write fixture bytes");
+
+    let response = ctx
+        .server
+        .get(&format!("/api/v1/books/{}/formats/EPUB/download", book.id))
+        .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
+        .add_header(
+            axum::http::header::RANGE,
+            HeaderValue::from_static("bytes=0-511"),
+        )
+        .await;
+
+    assert_status!(response, 206);
+    assert_eq!(response.as_bytes().len(), 512);
+}
+
+#[tokio::test]
 async fn test_stream_supports_range_requests() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;

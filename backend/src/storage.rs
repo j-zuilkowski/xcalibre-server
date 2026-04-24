@@ -50,6 +50,7 @@ pub struct GetRangeResult {
 pub trait StorageBackend: Send + Sync {
     async fn put(&self, relative_path: &str, bytes: Bytes) -> anyhow::Result<()>;
     async fn delete(&self, relative_path: &str) -> anyhow::Result<()>;
+    async fn file_size(&self, relative_path: &str) -> anyhow::Result<u64>;
     async fn get_range(
         &self,
         relative_path: &str,
@@ -96,6 +97,14 @@ impl StorageBackend for LocalFsStorage {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err).with_context(|| format!("delete file {}", full_path.display())),
         }
+    }
+
+    async fn file_size(&self, relative_path: &str) -> anyhow::Result<u64> {
+        let full_path = self.resolve(relative_path)?;
+        let metadata = tokio::fs::metadata(&full_path)
+            .await
+            .with_context(|| format!("read file metadata {}", full_path.display()))?;
+        Ok(metadata.len())
     }
 
     async fn get_range(

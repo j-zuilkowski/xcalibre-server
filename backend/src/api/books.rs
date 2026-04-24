@@ -6,14 +6,12 @@ use crate::{
     },
     ingest::{
         chunker::{ChunkDomain, ChunkType},
-        mobi_util,
-        text as ingest_text,
+        mobi_util, text as ingest_text,
     },
     llm::classify_type::{classify_document_type, DocumentType},
     metrics::ImportMetricsGuard,
     middleware::auth::AuthenticatedUser,
-    webhooks as webhook_engine,
-    AppError, AppState,
+    webhooks as webhook_engine, AppError, AppState,
 };
 use axum::{
     body::Body,
@@ -2013,12 +2011,17 @@ pub(crate) async fn get_chunks(
     .await?;
 
     let target_size = query.size.unwrap_or(600).clamp(1, 2_000);
-    let overlap = query.overlap.unwrap_or(100).min(target_size.saturating_sub(1));
+    let overlap = query
+        .overlap
+        .unwrap_or(100)
+        .min(target_size.saturating_sub(1));
     let domain = parse_chunk_domain(query.domain.as_deref())?;
     let chunk_type = match query.chunk_type.as_deref() {
-        Some(value) if !value.trim().is_empty() => {
-            Some(value.parse::<ChunkType>().map_err(|_| AppError::BadRequest)?)
-        }
+        Some(value) if !value.trim().is_empty() => Some(
+            value
+                .parse::<ChunkType>()
+                .map_err(|_| AppError::BadRequest)?,
+        ),
         _ => None,
     };
 
@@ -3250,24 +3253,46 @@ fn map_storage_read_error(err: anyhow::Error) -> AppError {
     }
 }
 
-fn parse_range(range_str: &str, _total: u64) -> Option<(u64, u64)> {
+/// Parse an HTTP Range header value against the known file size.
+/// Returns None for malformed or unsatisfiable ranges.
+fn parse_range(range_str: &str, total: u64) -> Option<(u64, u64)> {
+    if total == 0 {
+        return None;
+    }
+
     let bytes = range_str.strip_prefix("bytes=")?.trim();
     if bytes.contains(',') {
         return None;
     }
 
-    let (start, end) = bytes.split_once('-')?;
-    let start = start.trim().parse::<u64>().ok()?;
-    let end = if end.trim().is_empty() {
-        u64::MAX
+    let (start_str, end_str) = bytes.split_once('-')?;
+    let start: u64 = start_str.trim().parse().ok()?;
+    if start >= total {
+        return None;
+    }
+
+    let end: u64 = if end_str.trim().is_empty() {
+        total - 1
     } else {
-        end.trim().parse::<u64>().ok()?
+        let parsed_end: u64 = end_str.trim().parse().ok()?;
+        if parsed_end >= total {
+            return None;
+        }
+        parsed_end
     };
-    if end != u64::MAX && end < start {
+    if end < start {
         return None;
     }
 
     Some((start, end))
+}
+
+fn range_not_satisfiable_response(total_length: u64) -> Result<axum::response::Response, AppError> {
+    axum::response::Response::builder()
+        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+        .header(header::CONTENT_RANGE, format!("bytes */{total_length}"))
+        .body(Body::empty())
+        .map_err(|_| AppError::Internal)
 }
 
 async fn serve_storage_file(
@@ -3282,9 +3307,6 @@ async fn serve_storage_file(
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok())
         .map(ToOwned::to_owned);
-    let range = range_header
-        .as_deref()
-        .and_then(|value| parse_range(value, 0));
     let using_local_backend = state
         .config
         .storage
@@ -3292,53 +3314,28 @@ async fn serve_storage_file(
         .trim()
         .eq_ignore_ascii_case("local");
 
-    match state.storage.resolve(relative_path) {
-        Ok(_) if range.is_none() => {
-            let full_path = canonicalize_storage_file_path(state, relative_path)?;
-            let mut response = serve_file(request, full_path).await?;
-            if let Some(value) = content_type {
-                let content_type_header =
-                    HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_TYPE, content_type_header);
-            }
-            if let Some(value) = content_disposition {
-                let disposition_header =
-                    HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_DISPOSITION, disposition_header);
-            }
-            Ok(response)
-        }
-        Err(resolve_err) if using_local_backend => {
-            tracing::warn!(
-                path = %relative_path,
-                error = %resolve_err,
-                "rejected unsafe local storage path"
-            );
-            Err(AppError::BadRequest)
-        }
-        _ => {
-            if using_local_backend {
-                let _ = canonicalize_storage_file_path(state, relative_path)?;
-            }
+    if using_local_backend {
+        let full_path = canonicalize_storage_file_path(state, relative_path)?;
+        if let Some(range_str) = range_header.as_deref() {
+            let file_size = match tokio::fs::metadata(&full_path).await {
+                Ok(metadata) => metadata.len(),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(AppError::NotFound);
+                }
+                Err(_) => return Err(AppError::Internal),
+            };
+            let Some(range) = parse_range(range_str, file_size) else {
+                return range_not_satisfiable_response(file_size);
+            };
 
             let result = state
                 .storage
-                .get_range(relative_path, range)
+                .get_range(relative_path, Some(range))
                 .await
                 .map_err(map_storage_read_error)?;
 
-            let status = if result.partial {
-                StatusCode::PARTIAL_CONTENT
-            } else {
-                StatusCode::OK
-            };
-
             let mut response_builder = axum::response::Response::builder()
-                .status(status)
+                .status(StatusCode::PARTIAL_CONTENT)
                 .header(header::ACCEPT_RANGES, "bytes")
                 .header(header::CONTENT_LENGTH, result.bytes.len().to_string());
             if let Some(value) = content_type {
@@ -3351,10 +3348,81 @@ async fn serve_storage_file(
                 response_builder = response_builder.header(header::CONTENT_RANGE, content_range);
             }
 
-            response_builder
+            return response_builder
                 .body(Body::from(result.bytes))
-                .map_err(|_| AppError::Internal)
+                .map_err(|_| AppError::Internal);
         }
+
+        let mut response = serve_file(request, full_path).await?;
+        if let Some(value) = content_type {
+            let content_type_header =
+                HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, content_type_header);
+        }
+        if let Some(value) = content_disposition {
+            let disposition_header =
+                HeaderValue::from_str(value).map_err(|_| AppError::Internal)?;
+            response
+                .headers_mut()
+                .insert(header::CONTENT_DISPOSITION, disposition_header);
+        }
+        Ok(response)
+    } else if let Some(range_str) = range_header.as_deref() {
+        let file_size = state
+            .storage
+            .file_size(relative_path)
+            .await
+            .map_err(map_storage_read_error)?;
+        let Some(range) = parse_range(range_str, file_size) else {
+            return range_not_satisfiable_response(file_size);
+        };
+
+        let result = state
+            .storage
+            .get_range(relative_path, Some(range))
+            .await
+            .map_err(map_storage_read_error)?;
+
+        let mut response_builder = axum::response::Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_LENGTH, result.bytes.len().to_string());
+        if let Some(value) = content_type {
+            response_builder = response_builder.header(header::CONTENT_TYPE, value);
+        }
+        if let Some(value) = content_disposition {
+            response_builder = response_builder.header(header::CONTENT_DISPOSITION, value);
+        }
+        if let Some(content_range) = result.content_range.as_deref() {
+            response_builder = response_builder.header(header::CONTENT_RANGE, content_range);
+        }
+
+        response_builder
+            .body(Body::from(result.bytes))
+            .map_err(|_| AppError::Internal)
+    } else {
+        let result = state
+            .storage
+            .get_range(relative_path, None)
+            .await
+            .map_err(map_storage_read_error)?;
+
+        let mut response_builder = axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_LENGTH, result.bytes.len().to_string());
+        if let Some(value) = content_type {
+            response_builder = response_builder.header(header::CONTENT_TYPE, value);
+        }
+        if let Some(value) = content_disposition {
+            response_builder = response_builder.header(header::CONTENT_DISPOSITION, value);
+        }
+
+        response_builder
+            .body(Body::from(result.bytes))
+            .map_err(|_| AppError::Internal)
     }
 }
 
@@ -3533,7 +3601,9 @@ fn list_extractable_chapters(full_path: &FsPath, format: &str) -> Vec<ingest_tex
 
 fn parse_chunk_domain(value: Option<&str>) -> Result<ChunkDomain, AppError> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(domain) => domain.parse::<ChunkDomain>().map_err(|_| AppError::BadRequest),
+        Some(domain) => domain
+            .parse::<ChunkDomain>()
+            .map_err(|_| AppError::BadRequest),
         None => Ok(ChunkDomain::Technical),
     }
 }
@@ -3566,7 +3636,9 @@ fn queue_book_chunk_generation(state: AppState, book: crate::db::models::Book) {
                     overlap: 100,
                     domain: ChunkDomain::Technical,
                 };
-                if let Err(err) = ingest_text::generate_and_store_book_chunks(&state, &book, &config).await {
+                if let Err(err) =
+                    ingest_text::generate_and_store_book_chunks(&state, &book, &config).await
+                {
                     tracing::warn!(
                         book_id = %book.id,
                         error = %err,
