@@ -386,6 +386,16 @@ async fn test_delivery_sends_correct_hmac_signature() {
 #[tokio::test]
 async fn test_webhook_delivery_skips_oversized_payload() {
     let ctx = TestContext::new().await;
+    let (user, _) = ctx.create_user().await;
+    let _webhook_id = insert_webhook(
+        &ctx,
+        &user.id,
+        "https://example.com/hook",
+        "oversized-secret",
+        &["book.added"],
+        true,
+    )
+    .await;
     let client = reqwest::Client::new();
     let delivery_request = webhook_engine::DeliveryRequest::new(
         &client,
@@ -397,6 +407,20 @@ async fn test_webhook_delivery_skips_oversized_payload() {
         "message": "a".repeat(1_000_001)
     })
     .to_string();
+
+    webhook_engine::enqueue_event(
+        &ctx.db,
+        "book.added",
+        serde_json::from_str(&payload_json).expect("parse oversized payload"),
+    )
+    .await
+    .expect("enqueue oversized event");
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM webhook_deliveries")
+        .fetch_one(&ctx.db)
+        .await
+        .expect("count deliveries");
+    assert_eq!(count, 0);
 
     let result = webhook_engine::deliver_single_delivery(
         &delivery_request,

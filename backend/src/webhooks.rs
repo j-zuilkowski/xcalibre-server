@@ -79,7 +79,15 @@ pub async fn enqueue_event(
     event: &str,
     payload: Value,
 ) -> anyhow::Result<usize> {
-    let payload_json = serde_json::to_string(&payload)?;
+    let payload_bytes = serde_json::to_vec(&payload)?;
+    if payload_bytes.len() > MAX_WEBHOOK_PAYLOAD_BYTES {
+        tracing::warn!(
+            size = payload_bytes.len(),
+            "webhook payload exceeds size limit; skipping enqueue"
+        );
+        return Ok(0);
+    }
+    let payload_json = String::from_utf8(payload_bytes)?;
     let now = Utc::now().to_rfc3339();
 
     let webhooks = if event == "user.registered" {
