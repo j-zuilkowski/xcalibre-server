@@ -7,6 +7,7 @@ import { apiClient } from "../lib/api-client";
 
 const searchMock = vi.spyOn(apiClient, "search");
 const searchStatusMock = vi.spyOn(apiClient, "getSearchStatus");
+const listCollectionsMock = vi.spyOn(apiClient, "listCollections");
 
 function makeBook(id: string, title: string, score?: number): SearchResultItem {
   return {
@@ -67,7 +68,9 @@ describe("SearchPage", () => {
   beforeEach(() => {
     searchMock.mockReset();
     searchStatusMock.mockReset();
+    listCollectionsMock.mockReset();
     searchStatusMock.mockResolvedValue(makeSearchStatus(false));
+    listCollectionsMock.mockResolvedValue([]);
     window.history.replaceState({}, "", "/search");
   });
 
@@ -124,5 +127,31 @@ describe("SearchPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Author" }));
 
     expect(window.location.search).toContain("author_id=author-default");
+  });
+
+  test("test_collection_filter_updates_query", async () => {
+    searchMock.mockResolvedValue(makeResponse([]));
+    listCollectionsMock.mockResolvedValue([
+      {
+        id: "collection-1",
+        name: "Oracle 19c",
+        description: null,
+        domain: "technical",
+        is_public: false,
+        book_count: 3,
+        total_chunks: 12,
+        created_at: "2026-04-19T00:00:00Z",
+        updated_at: "2026-04-19T00:00:00Z",
+      },
+    ]);
+
+    renderPage("/search");
+    await screen.findByText("Search");
+
+    fireEvent.change(screen.getByLabelText("Collection"), {
+      target: { value: "collection-1" },
+    });
+
+    expect(window.location.search).toContain("collection_id=collection-1");
   });
 });

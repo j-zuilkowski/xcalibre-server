@@ -5,6 +5,7 @@ pub mod derive;
 pub mod embeddings;
 pub mod job_runner;
 pub mod quality;
+pub mod synthesize;
 pub mod vision;
 pub mod validate;
 

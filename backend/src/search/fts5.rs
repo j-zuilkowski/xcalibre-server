@@ -170,6 +170,23 @@ fn apply_filters(qb: &mut QueryBuilder<'_, Sqlite>, query: &SearchQuery, match_q
         qb.push_bind(format.to_uppercase());
         qb.push(")");
     }
+
+    if let Some(book_ids) = query.book_ids.as_ref() {
+        if book_ids.is_empty() {
+            and_where(qb);
+            qb.push("1 = 0");
+            return;
+        }
+        and_where(qb);
+        qb.push("b.id IN (");
+        for (index, book_id) in book_ids.iter().enumerate() {
+            if index > 0 {
+                qb.push(", ");
+            }
+            qb.push_bind(book_id.to_owned());
+        }
+        qb.push(")");
+    }
 }
 
 fn normalize_fts_query(raw: &str) -> Option<String> {

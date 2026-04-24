@@ -113,6 +113,15 @@ impl MeilisearchBackend {
         let page = if query.page < 1 { 1 } else { query.page };
         let page_size = clamp_page_size(query.page_size);
 
+        if matches!(query.book_ids.as_ref(), Some(book_ids) if book_ids.is_empty()) {
+            return Ok(SearchPage {
+                hits: Vec::new(),
+                total: 0,
+                page,
+                page_size,
+            });
+        }
+
         let mut body = json!({
             "q": query.q.trim(),
             "page": page,
@@ -331,6 +340,15 @@ fn meili_filters(query: &SearchQuery) -> Option<Value> {
         .is_some()
     {
         tracing::debug!("format filter is not supported by the meilisearch index document shape");
+    }
+
+    if let Some(book_ids) = query.book_ids.as_ref() {
+        let ids = book_ids
+            .iter()
+            .map(|id| format!("\"{}\"", sanitize_meili_value(id)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        filters.push(format!("id IN [{ids}]"));
     }
 
     if filters.is_empty() {

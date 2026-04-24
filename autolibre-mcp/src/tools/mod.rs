@@ -1,7 +1,8 @@
 use backend::{
     config::AppConfig,
-    db::queries::books as book_queries,
+    db::queries::{books as book_queries, collections as collection_queries},
     ingest::text as ingest_text,
+    llm::synthesize as synthesis,
     storage::{LocalFsStorage, StorageBackend},
 };
 use rmcp::schemars::JsonSchema;
@@ -21,6 +22,7 @@ pub struct CalibreMcpServer {
     db: SqlitePool,
     storage: LocalFsStorage,
     llm_enabled: bool,
+    chat_client: Option<backend::llm::chat::ChatClient>,
     api_client: reqwest::Client,
     api_base_url: String,
     api_token: Option<String>,
@@ -76,6 +78,34 @@ pub struct SearchChunksResponse {
     pub chunks: Vec<SearchChunksResponseItem>,
     pub total_searched: u64,
     pub retrieval_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
+pub struct SynthesizeRequest {
+    pub query: String,
+    pub format: String,
+    pub collection_id: Option<String>,
+    pub book_ids: Option<Vec<String>>,
+    pub chunk_type: Option<String>,
+    pub rerank: Option<bool>,
+    pub limit: Option<u32>,
+    pub custom_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
+pub struct GetCollectionRequest {
+    pub collection_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListCollectionsResponse {
+    pub collections: Vec<collection_queries::CollectionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GetCollectionResponse {
+    #[serde(flatten)]
+    pub collection: collection_queries::CollectionDetail,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -139,6 +169,7 @@ impl CalibreMcpServer {
             db,
             storage: LocalFsStorage::new(&config.app.storage_path),
             llm_enabled: config.llm.enabled,
+            chat_client: backend::llm::chat::ChatClient::new(&config),
             api_client,
             api_base_url,
             api_token,
@@ -287,6 +318,79 @@ impl CalibreMcpServer {
     }
 
     #[tool(
+        name = "list_collections",
+        description = "List accessible collections owned by the current user or marked public."
+    )]
+    pub async fn list_collections(&self) -> Result<CallToolResult, ErrorData> {
+        let Some(token) = self.api_token.as_deref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "collections_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
+            )]));
+        };
+
+        let url = format!("{}/api/v1/collections", self.api_base_url);
+        let response = self
+            .api_client
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(internal_error)?
+            .error_for_status()
+            .map_err(internal_error)?;
+
+        let collections: Vec<collection_queries::CollectionSummary> =
+            response.json().await.map_err(internal_error)?;
+        let value = serde_json::to_value(ListCollectionsResponse { collections })
+            .map_err(internal_error)?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(
+        name = "get_collection",
+        description = "Get a collection with its book list."
+    )]
+    pub async fn get_collection(
+        &self,
+        Parameters(params): Parameters<GetCollectionRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let collection_id = params.collection_id.trim();
+        if collection_id.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "collection_id is required",
+                Some(serde_json::json!({ "field": "collection_id" })),
+            ));
+        }
+
+        let Some(token) = self.api_token.as_deref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "collections_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
+            )]));
+        };
+
+        let url = format!(
+            "{}/api/v1/collections/{}",
+            self.api_base_url,
+            collection_id
+        );
+        let response = self
+            .api_client
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(internal_error)?
+            .error_for_status()
+            .map_err(internal_error)?;
+
+        let collection: collection_queries::CollectionDetail =
+            response.json().await.map_err(internal_error)?;
+        let value = serde_json::to_value(GetCollectionResponse { collection })
+            .map_err(internal_error)?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(
         name = "search_chunks",
         description = "Search the library with hybrid BM25 plus semantic chunk retrieval. Returns chunk-level passages with provenance fields."
     )]
@@ -312,6 +416,58 @@ impl CalibreMcpServer {
         }
 
         self.search_chunks_internal(params).await
+    }
+
+    #[tool(
+        name = "synthesize",
+        description = "Retrieve relevant passages from the library and synthesize a grounded derivative work in the specified format."
+    )]
+    pub async fn synthesize(
+        &self,
+        Parameters(params): Parameters<SynthesizeRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let chunks = self.retrieve_chunks(&SearchChunksRequest {
+            query: params.query.clone(),
+            book_ids: params.book_ids.clone(),
+            collection_id: params.collection_id.clone(),
+            chunk_type: params.chunk_type.clone(),
+            limit: params.limit,
+            rerank: params.rerank,
+        })
+        .await?;
+
+        let synthesis_chunks = chunks
+            .chunks
+            .iter()
+            .map(|chunk| synthesis::SynthesisChunk {
+                chunk_id: chunk.chunk_id.clone(),
+                book_id: chunk.book_id.clone(),
+                book_title: chunk.book_title.clone(),
+                heading_path: chunk.heading_path.clone(),
+                chunk_type: chunk.chunk_type.clone(),
+                text: chunk.text.clone(),
+                word_count: chunk.word_count,
+                bm25_score: chunk.bm25_score,
+                cosine_score: chunk.cosine_score,
+                rrf_score: chunk.rrf_score,
+                rerank_score: chunk.rerank_score,
+            })
+            .collect::<Vec<_>>();
+
+        let result = synthesis::synthesize(
+            self.chat_client.as_ref(),
+            self.llm_enabled,
+            &params.query,
+            &params.format,
+            params.custom_prompt.as_deref(),
+            synthesis_chunks,
+            chunks.retrieval_ms,
+        )
+        .await
+        .map_err(internal_error)?;
+
+        let value = serde_json::to_value(result).map_err(internal_error)?;
+        Ok(CallToolResult::structured(value))
     }
 }
 
@@ -366,6 +522,15 @@ impl CalibreMcpServer {
         &self,
         params: SearchChunksRequest,
     ) -> Result<CallToolResult, ErrorData> {
+        let payload = self.retrieve_chunks(&params).await?;
+        let value = serde_json::to_value(payload.chunks).map_err(internal_error)?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    async fn retrieve_chunks(
+        &self,
+        params: &SearchChunksRequest,
+    ) -> Result<SearchChunksResponse, ErrorData> {
         let query = params.query.trim();
         if query.is_empty() {
             return Err(ErrorData::invalid_params(
@@ -375,9 +540,10 @@ impl CalibreMcpServer {
         }
 
         let Some(token) = self.api_token.as_deref() else {
-            return Ok(CallToolResult::error(vec![Content::text(
-                "search_chunks_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
-            )]));
+            return Err(ErrorData::internal_error(
+                "search_chunks_unavailable",
+                Some(serde_json::json!({ "details": "configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN" })),
+            ));
         };
 
         let limit = params.limit.unwrap_or(10).clamp(1, 50);
@@ -388,15 +554,6 @@ impl CalibreMcpServer {
 
         if params.rerank.unwrap_or(false) {
             query_params.push(("rerank".to_string(), "true".to_string()));
-        }
-
-        if let Some(collection_id) = params
-            .collection_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            query_params.push(("collection_id".to_string(), collection_id.to_string()));
         }
 
         if let Some(chunk_type) = params
@@ -417,7 +574,21 @@ impl CalibreMcpServer {
             }
         }
 
-        let url = format!("{}/api/v1/search/chunks", self.api_base_url);
+        let url = if let Some(collection_id) = params
+            .collection_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            format!(
+                "{}/api/v1/collections/{}/search/chunks",
+                self.api_base_url,
+                collection_id
+            )
+        } else {
+            format!("{}/api/v1/search/chunks", self.api_base_url)
+        };
+
         let response = self
             .api_client
             .get(url)
@@ -429,9 +600,7 @@ impl CalibreMcpServer {
             .error_for_status()
             .map_err(internal_error)?;
 
-        let payload: SearchChunksResponse = response.json().await.map_err(internal_error)?;
-        let value = serde_json::to_value(payload.chunks).map_err(internal_error)?;
-        Ok(CallToolResult::structured(value))
+        response.json().await.map_err(internal_error)
     }
 }
 

@@ -2,6 +2,7 @@ pub mod annotations;
 pub mod authors;
 pub mod api_tokens;
 pub mod auth;
+pub mod collections;
 pub mod book_insert;
 pub mod book_chunks;
 pub mod book_user_state;

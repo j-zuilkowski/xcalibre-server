@@ -16,6 +16,7 @@ pub struct SearchQuery {
     pub tag: Option<String>,
     pub language: Option<String>,
     pub format: Option<String>,
+    pub book_ids: Option<Vec<String>>,
     pub page: u32,
     pub page_size: u32,
 }

@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: "/admin/users", label: "users" },
   { to: "/admin/tags", label: "tags" },
   { to: "/admin/authors", label: "authors" },
+  { to: "/admin/collections", label: "collections" },
   { to: "/admin/import", label: "import" },
   { to: "/admin/jobs", label: "jobs" },
   { to: "/admin/scheduled-tasks", label: "scheduled_tasks" },

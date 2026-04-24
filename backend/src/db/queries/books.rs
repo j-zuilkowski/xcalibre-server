@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Default, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct BookSummary {
     pub id: String,
     pub title: String,

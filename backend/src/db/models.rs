@@ -137,3 +137,16 @@ pub struct Shelf {
     pub created_at: String,
     pub last_modified: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, ToSchema)]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub domain: String,
+    pub is_public: bool,
+    pub book_count: i64,
+    pub total_chunks: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}

@@ -14,6 +14,7 @@ type SearchState = {
   tag?: string;
   language?: string;
   format?: string;
+  collection_id?: string;
   sort: string;
   page: number;
 };
@@ -46,6 +47,7 @@ function parseSearch(search: string): SearchState {
     tag: params.get("tag") ?? undefined,
     language: params.get("language") ?? undefined,
     format: params.get("format") ?? undefined,
+    collection_id: params.get("collection_id") ?? undefined,
     sort: params.get("sort") ?? "title",
     page: parsePage(params.get("page")),
   };
@@ -74,6 +76,9 @@ function toSearch(state: SearchState): string {
   }
   if (state.format) {
     params.set("format", state.format);
+  }
+  if (state.collection_id) {
+    params.set("collection_id", state.collection_id);
   }
   if (state.sort) {
     params.set("sort", state.sort);
@@ -108,6 +113,12 @@ export function SearchPage() {
     staleTime: 60_000,
   });
 
+  const collectionsQuery = useQuery({
+    queryKey: ["search-collections"],
+    queryFn: () => apiClient.listCollections(),
+    staleTime: 60_000,
+  });
+
   const queryText = searchState.q.trim();
   const hasQuery = queryText.length > 0;
   const semanticEnabled = searchStatusQuery.data?.semantic === true;
@@ -121,6 +132,7 @@ export function SearchPage() {
       tag: searchState.tag,
       language: searchState.language,
       format: searchState.format,
+      collection_id: searchState.collection_id,
       sort: searchState.sort,
       page: searchState.page,
       page_size: PAGE_SIZE,
@@ -180,6 +192,22 @@ export function SearchPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              <select
+                value={searchState.collection_id ?? ""}
+                onChange={(event) =>
+                  updateSearchState({ collection_id: event.target.value || undefined, page: 1 })
+                }
+                className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-700"
+                aria-label="Collection"
+              >
+                <option value="">{t("common.collection", { defaultValue: "Collection" })}</option>
+                {collectionsQuery.data?.map((collection) => (
+                  <option key={collection.id} value={collection.id}>
+                    {collection.name}
+                  </option>
+                ))}
+              </select>
+
               {(["library", "semantic"] as const).map((tab) => {
                 const active = effectiveTab === tab;
                 const disabled = tab === "semantic" && !semanticEnabled;

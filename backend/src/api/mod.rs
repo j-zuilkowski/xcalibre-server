@@ -9,6 +9,7 @@ use tower_http::services::{ServeDir, ServeFile};
 pub mod admin;
 pub mod authors;
 pub mod auth;
+pub mod collections;
 pub mod books;
 pub mod docs;
 pub mod health;
@@ -32,6 +33,7 @@ pub fn router(state: crate::AppState) -> Router {
         .merge(docs::openapi_routes(state.clone()))
         .nest("/api/v1/auth", auth_router)
         .merge(admin::router(state.clone()))
+        .merge(collections::router(state.clone()))
         .merge(authors::router(state.clone()))
         .merge(books::router(state.clone()))
         .merge(users::router(state.clone()))

@@ -1,6 +1,6 @@
 use crate::{
     db::queries::{
-        book_chunks as chunk_queries, books as book_queries, shelves as shelf_queries,
+        book_chunks as chunk_queries, books as book_queries, collections as collection_queries,
     },
     ingest::chunker::ChunkType,
     middleware::auth::AuthenticatedUser,
@@ -41,6 +41,7 @@ pub(crate) struct SearchQueryParams {
     tag: Option<String>,
     language: Option<String>,
     format: Option<String>,
+    collection_id: Option<String>,
     page: Option<u32>,
     page_size: Option<u32>,
 }
@@ -162,6 +163,12 @@ pub(crate) async fn search_books(
             tag: query.tag,
             language: query.language,
             format: query.format,
+            book_ids: collection_book_ids_for_search(
+                &state,
+                &auth_user.user.id,
+                query.collection_id.as_deref(),
+            )
+            .await?,
             page,
             page_size,
         })
@@ -327,9 +334,6 @@ pub(crate) async fn search_chunks(
     if query_text.is_empty() {
         return Err(AppError::BadRequest);
     }
-
-    let normalized_query =
-        normalize_fts_query(Some(query_text.as_str())).ok_or(AppError::BadRequest)?;
     let limit = clamp_chunk_limit(query.limit.unwrap_or(10));
     let rerank = parse_truthy_bool(query.rerank.as_deref());
     let book_ids = normalize_ids(query.book_ids);
@@ -346,13 +350,131 @@ pub(crate) async fn search_chunks(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    if let Some(collection_id) = collection_id.as_deref() {
-        ensure_collection_visible(&state, &auth_user.user.id, collection_id).await?;
+    let collection_book_ids =
+        collection_book_ids_for_search(&state, &auth_user.user.id, collection_id.as_deref())
+            .await?;
+    let scoped_book_ids = match (collection_book_ids, book_ids.is_empty()) {
+        (None, true) => None,
+        (None, false) => Some(book_ids),
+        (Some(allowed), true) => Some(allowed),
+        (Some(allowed), false) => {
+            let mut scoped = book_ids;
+            scoped.retain(|book_id| allowed.iter().any(|allowed| allowed == book_id));
+            Some(scoped)
+        }
+    };
+
+    let response = run_chunk_search(
+        &state,
+        &auth_user,
+        query_text,
+        scoped_book_ids,
+        chunk_type,
+        limit,
+        rerank,
+    )
+    .await?;
+
+    Ok(Json(response))
+}
+
+async fn search_status(
+    State(state): State<AppState>,
+) -> Result<Json<SearchStatusResponse>, AppError> {
+    let backend = state.search.backend_name().to_string();
+    let meilisearch = backend == "meilisearch" && state.search.is_available().await;
+    let semantic = state
+        .semantic_search
+        .as_ref()
+        .map(|semantic| semantic.is_configured())
+        .unwrap_or(false);
+
+    Ok(Json(SearchStatusResponse {
+        fts: true,
+        meilisearch,
+        semantic,
+        backend,
+    }))
+}
+
+fn clamp_page_size(page_size: u32) -> u32 {
+    match page_size {
+        0 => 24,
+        n if n > 100 => 100,
+        n => n,
+    }
+}
+
+fn clamp_semantic_page_size(page_size: u32) -> u32 {
+    match page_size {
+        0 => 24,
+        n if n > 50 => 50,
+        n => n,
+    }
+}
+
+fn clamp_chunk_limit(limit: u32) -> usize {
+    match limit {
+        0 => 10,
+        n if n > 50 => 50,
+        n => n as usize,
+    }
+}
+
+fn normalize_ids(mut ids: Vec<String>) -> Vec<String> {
+    ids.retain(|id| !id.trim().is_empty());
+    for id in &mut ids {
+        *id = id.trim().to_string();
     }
 
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    ids
+}
+
+fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_alphanumeric() || ch.is_whitespace() || ch == '*' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push(' ');
+        }
+    }
+
+    let terms = sanitized
+        .split_whitespace()
+        .map(|term| term.trim_matches('*'))
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("{term}*"))
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" "))
+    }
+}
+
+pub(crate) async fn run_chunk_search(
+    state: &AppState,
+    auth_user: &AuthenticatedUser,
+    query_text: String,
+    book_ids: Option<Vec<String>>,
+    chunk_type: Option<String>,
+    limit: usize,
+    rerank: bool,
+) -> Result<ChunkSearchResponse, AppError> {
+    let normalized_query =
+        normalize_fts_query(Some(query_text.as_str())).ok_or(AppError::BadRequest)?;
     let filters = chunk_queries::ChunkSearchFilters {
-        book_ids: &book_ids,
-        collection_id: collection_id.as_deref(),
+        book_ids: book_ids.as_deref().unwrap_or(&[]),
+        collection_id: None,
         chunk_type: chunk_type.as_deref(),
     };
 
@@ -449,114 +571,31 @@ pub(crate) async fn search_chunks(
         }
     }
 
-    Ok(Json(ChunkSearchResponse {
+    Ok(ChunkSearchResponse {
         query: query_text,
         chunks,
         total_searched,
         retrieval_ms: started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-    }))
+    })
 }
 
-async fn search_status(
-    State(state): State<AppState>,
-) -> Result<Json<SearchStatusResponse>, AppError> {
-    let backend = state.search.backend_name().to_string();
-    let meilisearch = backend == "meilisearch" && state.search.is_available().await;
-    let semantic = state
-        .semantic_search
-        .as_ref()
-        .map(|semantic| semantic.is_configured())
-        .unwrap_or(false);
-
-    Ok(Json(SearchStatusResponse {
-        fts: true,
-        meilisearch,
-        semantic,
-        backend,
-    }))
-}
-
-fn clamp_page_size(page_size: u32) -> u32 {
-    match page_size {
-        0 => 24,
-        n if n > 100 => 100,
-        n => n,
-    }
-}
-
-fn clamp_semantic_page_size(page_size: u32) -> u32 {
-    match page_size {
-        0 => 24,
-        n if n > 50 => 50,
-        n => n,
-    }
-}
-
-fn clamp_chunk_limit(limit: u32) -> usize {
-    match limit {
-        0 => 10,
-        n if n > 50 => 50,
-        n => n as usize,
-    }
-}
-
-fn normalize_ids(mut ids: Vec<String>) -> Vec<String> {
-    ids.retain(|id| !id.trim().is_empty());
-    for id in &mut ids {
-        *id = id.trim().to_string();
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    ids.retain(|id| seen.insert(id.clone()));
-    ids
-}
-
-fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
-    let raw = raw?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let mut sanitized = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if ch.is_alphanumeric() || ch.is_whitespace() || ch == '*' {
-            sanitized.push(ch);
-        } else {
-            sanitized.push(' ');
-        }
-    }
-
-    let terms = sanitized
-        .split_whitespace()
-        .map(|term| term.trim_matches('*'))
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("{term}*"))
-        .collect::<Vec<_>>();
-
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" "))
-    }
-}
-
-async fn ensure_collection_visible(
+pub(crate) async fn collection_book_ids_for_search(
     state: &AppState,
     user_id: &str,
-    collection_id: &str,
-) -> Result<(), AppError> {
-    let Some(shelf) = shelf_queries::get_shelf(&state.db, collection_id)
-        .await
-        .map_err(|_| AppError::Internal)?
+    collection_id: Option<&str>,
+) -> Result<Option<Vec<String>>, AppError> {
+    let Some(collection_id) = collection_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     else {
-        return Err(AppError::NotFound);
+        return Ok(None);
     };
 
-    if shelf.user_id != user_id && !shelf.is_public {
-        return Err(AppError::NotFound);
-    }
-
-    Ok(())
+    crate::api::collections::ensure_visible_collection(state, user_id, collection_id).await?;
+    collection_queries::get_collection_book_ids(&state.db, collection_id)
+        .await
+        .map(Some)
+        .map_err(|_| AppError::Internal)
 }
 
 #[derive(Clone)]
@@ -737,7 +776,7 @@ fn semantic_search_or_unavailable(
     Ok(semantic)
 }
 
-fn deserialize_string_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+pub(crate) fn deserialize_string_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

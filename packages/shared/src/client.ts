@@ -12,6 +12,11 @@ import type {
   AuthProvidersResponse,
   BulkImportRequest,
   BulkImportResponse,
+  CollectionBooksRequest,
+  CollectionCreateRequest,
+  CollectionDetail,
+  CollectionSummary,
+  CollectionUpdateRequest,
   Book,
   BookAnnotation,
   BookChapters,
@@ -309,6 +314,48 @@ export class ApiClient {
 
   async getSearchStatus(): Promise<SearchStatusResponse> {
     return this.requestJson<SearchStatusResponse>("/api/v1/system/search-status");
+  }
+
+  async listCollections(): Promise<CollectionSummary[]> {
+    return this.requestJson<CollectionSummary[]>("/api/v1/collections");
+  }
+
+  async getCollection(id: string): Promise<CollectionDetail> {
+    return this.requestJson<CollectionDetail>(`/api/v1/collections/${encodeURIComponent(id)}`);
+  }
+
+  async createCollection(request: CollectionCreateRequest): Promise<CollectionSummary> {
+    return this.requestJson<CollectionSummary>("/api/v1/collections", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async updateCollection(id: string, request: CollectionUpdateRequest): Promise<CollectionSummary> {
+    return this.requestJson<CollectionSummary>(`/api/v1/collections/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteCollection(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/collections/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async addBooksToCollection(id: string, bookIds: string[]): Promise<void> {
+    await this.requestJson<void>(`/api/v1/collections/${encodeURIComponent(id)}/books`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds } satisfies CollectionBooksRequest),
+    });
+  }
+
+  async removeBookFromCollection(id: string, bookId: string): Promise<void> {
+    await this.requestJson<void>(
+      `/api/v1/collections/${encodeURIComponent(id)}/books/${encodeURIComponent(bookId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async getBook(id: string): Promise<Book> {

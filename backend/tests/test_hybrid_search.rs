@@ -5,7 +5,7 @@ mod common;
 use axum::http::header;
 use backend::{
     config::AppConfig,
-    db::queries::shelves as shelf_queries,
+    db::queries::collections as collection_queries,
     ingest::chunker::ChunkType,
 };
 use common::{auth_header, TestContext};
@@ -187,21 +187,28 @@ async fn test_book_ids_filter_limits_results() {
 
 #[tokio::test]
 async fn test_collection_id_filter_spans_all_books_in_collection() {
-    let mut config = mock_llm_config("mock://collection");
-    config.llm.enabled = true;
-    let ctx = TestContext::new_with_config(config).await;
+    let ctx = TestContext::new().await;
     let (admin, password) = ctx.create_admin().await;
     let token = ctx.login(&admin.username, &password).await.access_token;
     let first = ctx.create_book("First Collection Book", "Admin").await;
     let second = ctx.create_book("Second Collection Book", "Admin").await;
 
-    let shelf = shelf_queries::create_shelf(&ctx.db, &admin.id, "Search Collection", false)
+    let collection = collection_queries::create_collection(
+        &ctx.db,
+        &admin.id,
+        collection_queries::CollectionInput {
+            name: "Search Collection".to_string(),
+            description: None,
+            domain: "technical".to_string(),
+            is_public: false,
+        },
+    )
         .await
-        .expect("create shelf");
-    shelf_queries::add_book_to_shelf(&ctx.db, &shelf.id, &first.id)
+        .expect("create collection");
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[first.id.clone()])
         .await
         .expect("add first book");
-    shelf_queries::add_book_to_shelf(&ctx.db, &shelf.id, &second.id)
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[second.id.clone()])
         .await
         .expect("add second book");
 
@@ -230,7 +237,7 @@ async fn test_collection_id_filter_spans_all_books_in_collection() {
         .server
         .get("/api/v1/search/chunks")
         .add_query_param("q", "ORA-01555")
-        .add_query_param("collection_id", shelf.id.clone())
+        .add_query_param("collection_id", collection.id.clone())
         .add_query_param("limit", 10)
         .add_header(header::AUTHORIZATION, auth_header(&token))
         .await;

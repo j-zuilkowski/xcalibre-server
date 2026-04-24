@@ -13,6 +13,7 @@ import { UsersPage } from "./features/admin/UsersPage";
 import { ScheduledTasksPage } from "./features/admin/ScheduledTasksPage";
 import { TagsPage } from "./features/admin/TagsPage";
 import { AuthorsPage } from "./features/admin/AuthorsPage";
+import { CollectionsPage } from "./features/admin/CollectionsPage";
 import { ImportPage as ProfileImportPage } from "./features/profile/ImportPage";
 import { ProfilePage } from "./features/profile/ProfilePage";
 import { WebhooksPage } from "./features/profile/WebhooksPage";
@@ -131,6 +132,12 @@ const adminAuthorsRoute = createRoute({
   component: AuthorsPage,
 });
 
+const adminCollectionsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "collections",
+  component: CollectionsPage,
+});
+
 const adminImportRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "import",
@@ -197,6 +204,7 @@ export const routeTree = rootRoute.addChildren([
       adminUsersRoute,
       adminTagsRoute,
       adminAuthorsRoute,
+      adminCollectionsRoute,
       adminImportRoute,
       adminJobsRoute,
       adminScheduledTasksRoute,

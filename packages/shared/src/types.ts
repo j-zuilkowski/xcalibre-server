@@ -484,6 +484,48 @@ export type Shelf = {
   last_modified: string;
 };
 
+export type CollectionDomain =
+  | "technical"
+  | "electronics"
+  | "culinary"
+  | "legal"
+  | "academic"
+  | "narrative";
+
+export type CollectionSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  domain: CollectionDomain;
+  is_public: boolean;
+  book_count: number;
+  total_chunks: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CollectionDetail = CollectionSummary & {
+  books: BookSummary[];
+};
+
+export type CollectionCreateRequest = {
+  name: string;
+  description?: string | null;
+  domain?: CollectionDomain;
+  is_public?: boolean;
+};
+
+export type CollectionUpdateRequest = {
+  name?: string;
+  description?: string | null;
+  domain?: CollectionDomain;
+  is_public?: boolean;
+};
+
+export type CollectionBooksRequest = {
+  book_ids: string[];
+};
+
 export type Book = {
   id: string;
   title: string;
@@ -609,6 +651,7 @@ export type ListBooksParams = {
   tag?: string | string[];
   language?: string;
   format?: string;
+  collection_id?: string;
   sort?: string;
   order?: string;
   page?: number;
