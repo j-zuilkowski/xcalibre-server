@@ -204,7 +204,6 @@ pub(crate) async fn get_collection(
         (status = 200, description = "Collection updated", body = crate::db::queries::collections::CollectionSummary),
         (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
-        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
         (status = 404, description = "Not found", body = crate::error::AppErrorResponse)
     )
 )]
@@ -214,39 +213,34 @@ pub(crate) async fn update_collection(
     Path(collection_id): Path<String>,
     Json(payload): Json<UpdateCollectionRequest>,
 ) -> Result<Json<collection_queries::CollectionSummary>, AppError> {
-    ensure_manageable_collection(&state, &auth_user.user, &collection_id).await?;
-
-    let current = collection_queries::get_collection_summary(&state.db, &collection_id)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::NotFound)?;
-
     let name = payload
         .name
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(current.name.clone());
-    if name.trim().is_empty() {
-        return Err(AppError::BadRequest);
-    }
+        .filter(|value| !value.is_empty());
 
     let description = payload
         .description
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or(current.description.clone());
-    let domain = payload.domain.unwrap_or(current.domain.clone());
-    let is_public = payload.is_public.unwrap_or(current.is_public);
+        .filter(|value| !value.is_empty());
+    let domain = payload.domain.map(|value| {
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "technical" | "electronics" | "culinary" | "legal" | "academic" | "narrative" => {
+                value
+            }
+            _ => "technical".to_string(),
+        }
+    });
+    let is_public = payload.is_public;
 
     let updated = collection_queries::update_collection(
         &state.db,
         &collection_id,
-        collection_queries::CollectionInput {
-            name,
-            description,
-            domain,
-            is_public,
-        },
+        &auth_user.user.id,
+        name,
+        description,
+        domain,
+        is_public,
     )
     .await
     .map_err(|_| AppError::Internal)?
@@ -266,7 +260,6 @@ pub(crate) async fn update_collection(
     responses(
         (status = 204, description = "Collection deleted"),
         (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
-        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
         (status = 404, description = "Not found", body = crate::error::AppErrorResponse)
     )
 )]
@@ -275,8 +268,11 @@ pub(crate) async fn delete_collection(
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(collection_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    ensure_manageable_collection(&state, &auth_user.user, &collection_id).await?;
-    let deleted = collection_queries::delete_collection(&state.db, &collection_id)
+    let deleted = collection_queries::delete_collection(
+        &state.db,
+        &collection_id,
+        &auth_user.user.id,
+    )
         .await
         .map_err(|_| AppError::Internal)?;
     if !deleted {
@@ -298,7 +294,6 @@ pub(crate) async fn delete_collection(
         (status = 204, description = "Books added"),
         (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
-        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
         (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
         (status = 409, description = "Conflict", body = crate::error::AppErrorResponse)
     )
@@ -309,7 +304,6 @@ pub(crate) async fn add_books_to_collection(
     Path(collection_id): Path<String>,
     Json(payload): Json<AddBooksRequest>,
 ) -> Result<StatusCode, AppError> {
-    ensure_manageable_collection(&state, &auth_user.user, &collection_id).await?;
     let book_ids = normalize_ids(payload.book_ids);
     if book_ids.is_empty() {
         return Err(AppError::BadRequest);
@@ -325,11 +319,18 @@ pub(crate) async fn add_books_to_collection(
         .await?;
     }
 
-    let inserted =
-        collection_queries::add_books_to_collection(&state.db, &collection_id, &book_ids)
-            .await
-            .map_err(|_| AppError::Internal)?;
-    if inserted == 0 {
+    let outcome = collection_queries::add_books_to_collection(
+        &state.db,
+        &collection_id,
+        &auth_user.user.id,
+        &book_ids,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+    if outcome.inserted == 0 {
+        if !outcome.allowed {
+            return Err(AppError::NotFound);
+        }
         return Err(AppError::Conflict);
     }
 
@@ -348,7 +349,6 @@ pub(crate) async fn add_books_to_collection(
     responses(
         (status = 204, description = "Book removed"),
         (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
-        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
         (status = 404, description = "Not found", body = crate::error::AppErrorResponse)
     )
 )]
@@ -357,11 +357,14 @@ pub(crate) async fn remove_book_from_collection(
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path((collection_id, book_id)): Path<(String, String)>,
 ) -> Result<StatusCode, AppError> {
-    ensure_manageable_collection(&state, &auth_user.user, &collection_id).await?;
-    let removed =
-        collection_queries::remove_book_from_collection(&state.db, &collection_id, &book_id)
-            .await
-            .map_err(|_| AppError::Internal)?;
+    let removed = collection_queries::remove_book_from_collection(
+        &state.db,
+        &collection_id,
+        &auth_user.user.id,
+        &book_id,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
     if !removed {
         return Err(AppError::NotFound);
     }
@@ -451,25 +454,6 @@ pub(crate) async fn ensure_visible_collection(
 
     if collection.owner_id != user_id && !collection.is_public {
         return Err(AppError::NotFound);
-    }
-
-    Ok(())
-}
-
-async fn ensure_manageable_collection(
-    state: &AppState,
-    user: &crate::db::models::User,
-    collection_id: &str,
-) -> Result<(), AppError> {
-    let Some(collection) = collection_queries::get_collection_access(&state.db, collection_id)
-        .await
-        .map_err(|_| AppError::Internal)?
-    else {
-        return Err(AppError::NotFound);
-    };
-
-    if collection.owner_id != user.id && !user.role.name.eq_ignore_ascii_case("admin") {
-        return Err(AppError::Forbidden);
     }
 
     Ok(())

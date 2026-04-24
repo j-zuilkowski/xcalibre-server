@@ -74,11 +74,20 @@ async fn test_remove_book_from_collection() {
     let second = ctx.create_book("Collection Book Two", "Author Two").await;
     let collection_id = create_collection(&ctx, &token, "Reading List", false).await;
 
-    add_books(&ctx, &token, &collection_id, &[first.id.clone(), second.id.clone()]).await;
+    add_books(
+        &ctx,
+        &token,
+        &collection_id,
+        &[first.id.clone(), second.id.clone()],
+    )
+    .await;
 
     let response = ctx
         .server
-        .delete(&format!("/api/v1/collections/{collection_id}/books/{}", first.id))
+        .delete(&format!(
+            "/api/v1/collections/{collection_id}/books/{}",
+            first.id
+        ))
         .add_header(header::AUTHORIZATION, auth_header(&token))
         .await;
 
@@ -92,6 +101,59 @@ async fn test_remove_book_from_collection() {
 }
 
 #[tokio::test]
+async fn test_add_book_to_private_collection_requires_visibility() {
+    let ctx = TestContext::new().await;
+    let owner_token =
+        create_unique_user_token(&ctx, "owner-add-private", "owner-add-private@example.com").await;
+    let other_token =
+        create_unique_user_token(&ctx, "other-add-private", "other-add-private@example.com").await;
+    let book = ctx.create_book("Private Add Book", "Author One").await;
+    let collection_id = create_collection(&ctx, &owner_token, "Private Reading", false).await;
+
+    let response = ctx
+        .server
+        .post(&format!("/api/v1/collections/{collection_id}/books"))
+        .add_header(header::AUTHORIZATION, auth_header(&other_token))
+        .json(&serde_json::json!({
+            "book_ids": [book.id.clone()]
+        }))
+        .await;
+
+    assert_status!(response, 404);
+}
+
+#[tokio::test]
+async fn test_concurrent_remove_book_from_collection_is_atomic() {
+    let ctx = TestContext::new().await;
+    let token = ctx.user_token().await;
+    let book = ctx.create_book("Concurrent Remove Book", "Author One").await;
+    let collection_id = create_collection(&ctx, &token, "Concurrent Reading", false).await;
+
+    add_books(&ctx, &token, &collection_id, &[book.id.clone()]).await;
+
+    let request_one = ctx
+        .server
+        .delete(&format!(
+            "/api/v1/collections/{collection_id}/books/{}",
+            book.id.as_str()
+        ))
+        .add_header(header::AUTHORIZATION, auth_header(&token));
+    let request_two = ctx
+        .server
+        .delete(&format!(
+            "/api/v1/collections/{collection_id}/books/{}",
+            book.id.as_str()
+        ))
+        .add_header(header::AUTHORIZATION, auth_header(&token));
+
+    let response_one = request_one.await;
+    let response_two = request_two.await;
+    let statuses = [response_one.status_code().as_u16(), response_two.status_code().as_u16()];
+    assert!(statuses.contains(&204));
+    assert!(statuses.contains(&404));
+}
+
+#[tokio::test]
 async fn test_collection_search_spans_all_member_books() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
@@ -99,7 +161,13 @@ async fn test_collection_search_spans_all_member_books() {
     let second = ctx.create_book("Second Search Book", "Author Two").await;
     let collection_id = create_collection(&ctx, &token, "Search Scope", false).await;
 
-    add_books(&ctx, &token, &collection_id, &[first.id.clone(), second.id.clone()]).await;
+    add_books(
+        &ctx,
+        &token,
+        &collection_id,
+        &[first.id.clone(), second.id.clone()],
+    )
+    .await;
     insert_chunk(
         &ctx.db,
         &first.id,
@@ -121,7 +189,9 @@ async fn test_collection_search_spans_all_member_books() {
 
     let response = ctx
         .server
-        .get(&format!("/api/v1/collections/{collection_id}/search/chunks"))
+        .get(&format!(
+            "/api/v1/collections/{collection_id}/search/chunks"
+        ))
         .add_query_param("q", "ORA-01555")
         .add_query_param("limit", 10)
         .add_header(header::AUTHORIZATION, auth_header(&token))
@@ -143,8 +213,10 @@ async fn test_collection_search_spans_all_member_books() {
 #[tokio::test]
 async fn test_public_collection_visible_to_other_users() {
     let ctx = TestContext::new().await;
-    let owner_token = create_unique_user_token(&ctx, "owner-public", "owner-public@example.com").await;
-    let other_token = create_unique_user_token(&ctx, "other-public", "other-public@example.com").await;
+    let owner_token =
+        create_unique_user_token(&ctx, "owner-public", "owner-public@example.com").await;
+    let other_token =
+        create_unique_user_token(&ctx, "other-public", "other-public@example.com").await;
 
     let collection_id = create_collection(&ctx, &owner_token, "Public Reading", true).await;
 
@@ -172,8 +244,10 @@ async fn test_public_collection_visible_to_other_users() {
 #[tokio::test]
 async fn test_private_collection_not_visible_to_other_users() {
     let ctx = TestContext::new().await;
-    let owner_token = create_unique_user_token(&ctx, "owner-private", "owner-private@example.com").await;
-    let other_token = create_unique_user_token(&ctx, "other-private", "other-private@example.com").await;
+    let owner_token =
+        create_unique_user_token(&ctx, "owner-private", "owner-private@example.com").await;
+    let other_token =
+        create_unique_user_token(&ctx, "other-private", "other-private@example.com").await;
 
     let collection_id = create_collection(&ctx, &owner_token, "Private Reading", false).await;
 
@@ -202,7 +276,9 @@ async fn test_private_collection_not_visible_to_other_users() {
 async fn test_delete_collection_does_not_delete_books() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
-    let book = ctx.create_book("Disposable Collection Book", "Author").await;
+    let book = ctx
+        .create_book("Disposable Collection Book", "Author")
+        .await;
     let collection_id = create_collection(&ctx, &token, "Temp Collection", false).await;
 
     add_books(&ctx, &token, &collection_id, &[book.id.clone()]).await;
@@ -223,12 +299,7 @@ async fn test_delete_collection_does_not_delete_books() {
     assert_eq!(count, 1);
 }
 
-async fn create_collection(
-    ctx: &TestContext,
-    token: &str,
-    name: &str,
-    is_public: bool,
-) -> String {
+async fn create_collection(ctx: &TestContext, token: &str, name: &str, is_public: bool) -> String {
     let response = ctx
         .server
         .post("/api/v1/collections")
@@ -298,7 +369,11 @@ async fn add_books(ctx: &TestContext, token: &str, collection_id: &str, book_ids
     assert_status!(response, 204);
 }
 
-async fn get_collection_detail(ctx: &TestContext, token: &str, collection_id: &str) -> serde_json::Value {
+async fn get_collection_detail(
+    ctx: &TestContext,
+    token: &str,
+    collection_id: &str,
+) -> serde_json::Value {
     let response = ctx
         .server
         .get(&format!("/api/v1/collections/{collection_id}"))

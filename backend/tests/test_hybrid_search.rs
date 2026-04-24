@@ -132,7 +132,7 @@ async fn test_collection_chunk_search_clamps_limit_to_100() {
     )
     .await
     .expect("create collection");
-    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[book.id.clone()])
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &admin.id, &[book.id.clone()])
         .await
         .expect("add book to collection");
 
@@ -282,10 +282,10 @@ async fn test_collection_id_filter_spans_all_books_in_collection() {
     )
     .await
     .expect("create collection");
-    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[first.id.clone()])
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &admin.id, &[first.id.clone()])
         .await
         .expect("add first book");
-    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &[second.id.clone()])
+    collection_queries::add_books_to_collection(&ctx.db, &collection.id, &admin.id, &[second.id.clone()])
         .await
         .expect("add second book");
 

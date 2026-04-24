@@ -40,6 +40,12 @@ pub struct CollectionInput {
     pub is_public: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CollectionInsertOutcome {
+    pub inserted: usize,
+    pub allowed: bool,
+}
+
 pub async fn list_collections(
     db: &SqlitePool,
     user_id: &str,
@@ -133,14 +139,10 @@ pub async fn get_collection_detail(
         return Ok(None);
     };
     let book_ids = list_collection_book_ids(db, collection_id).await?;
-    let books = crate::db::queries::books::list_book_summaries_by_ids(
-        db,
-        &book_ids,
-        library_id,
-        user_id,
-    )
-    .await
-    .context("load collection books")?;
+    let books =
+        crate::db::queries::books::list_book_summaries_by_ids(db, &book_ids, library_id, user_id)
+            .await
+            .context("load collection books")?;
 
     Ok(Some(CollectionDetail {
         collection: summary,
@@ -187,22 +189,32 @@ pub async fn create_collection(
 pub async fn update_collection(
     db: &SqlitePool,
     collection_id: &str,
-    input: CollectionInput,
+    user_id: &str,
+    name: Option<String>,
+    description: Option<String>,
+    domain: Option<String>,
+    is_public: Option<bool>,
 ) -> anyhow::Result<Option<CollectionSummary>> {
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query(
         r#"
         UPDATE collections
-        SET name = ?, description = ?, domain = ?, is_public = ?, updated_at = ?
+        SET name = COALESCE(?, name),
+            description = COALESCE(?, description),
+            domain = COALESCE(?, domain),
+            is_public = COALESCE(?, is_public),
+            updated_at = ?
         WHERE id = ?
+          AND (owner_id = ? OR is_public = 1)
         "#,
     )
-    .bind(input.name.trim())
-    .bind(input.description.map(|value| value.trim().to_string()))
-    .bind(normalize_domain(&input.domain))
-    .bind(i64::from(input.is_public))
+    .bind(name)
+    .bind(description)
+    .bind(domain)
+    .bind(is_public.map(i64::from))
     .bind(&now)
     .bind(collection_id)
+    .bind(user_id)
     .execute(db)
     .await?;
 
@@ -213,58 +225,102 @@ pub async fn update_collection(
     get_collection_summary(db, collection_id).await
 }
 
-pub async fn delete_collection(db: &SqlitePool, collection_id: &str) -> anyhow::Result<bool> {
-    let result = sqlx::query("DELETE FROM collections WHERE id = ?")
+pub async fn delete_collection(
+    db: &SqlitePool,
+    collection_id: &str,
+    user_id: &str,
+) -> anyhow::Result<bool> {
+    let result = sqlx::query(
+        "DELETE FROM collections WHERE id = ? AND (owner_id = ? OR is_public = 1)",
+    )
         .bind(collection_id)
+        .bind(user_id)
         .execute(db)
         .await?;
     Ok(result.rows_affected() > 0)
 }
 
+async fn add_book_to_collection(
+    db: &SqlitePool,
+    collection_id: &str,
+    user_id: &str,
+    book_id: &str,
+) -> anyhow::Result<CollectionInsertOutcome> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO collection_books (collection_id, book_id, added_at)
+        SELECT ?, ?, ?
+        WHERE EXISTS (
+            SELECT 1
+            FROM collections
+            WHERE id = ? AND (owner_id = ? OR is_public = 1)
+        )
+        "#,
+    )
+    .bind(collection_id)
+    .bind(book_id)
+    .bind(&now)
+    .bind(collection_id)
+    .bind(user_id)
+    .execute(db)
+    .await?;
+
+    let inserted = result.rows_affected() as usize;
+    let allowed = if inserted > 0 {
+        true
+    } else {
+        get_collection_access(db, collection_id)
+            .await?
+            .map(|collection| collection.owner_id == user_id || collection.is_public)
+            .unwrap_or(false)
+    };
+
+    Ok(CollectionInsertOutcome { inserted, allowed })
+}
+
 pub async fn add_books_to_collection(
     db: &SqlitePool,
     collection_id: &str,
+    user_id: &str,
     book_ids: &[String],
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<CollectionInsertOutcome> {
     if book_ids.is_empty() {
-        return Ok(0);
+        return Ok(CollectionInsertOutcome::default());
     }
 
-    let now = Utc::now().to_rfc3339();
     let mut inserted = 0usize;
+    let mut allowed = false;
     for book_id in book_ids {
-        let result = sqlx::query(
-            r#"
-            INSERT OR IGNORE INTO collection_books (collection_id, book_id, added_at)
-            VALUES (?, ?, ?)
-            "#,
-        )
-        .bind(collection_id)
-        .bind(book_id)
-        .bind(&now)
-        .execute(db)
-        .await?;
-        if result.rows_affected() > 0 {
-            inserted += 1;
-        }
+        let outcome = add_book_to_collection(db, collection_id, user_id, book_id).await?;
+        inserted += outcome.inserted;
+        allowed |= outcome.allowed;
     }
 
-    Ok(inserted)
+    Ok(CollectionInsertOutcome { inserted, allowed })
 }
 
 pub async fn remove_book_from_collection(
     db: &SqlitePool,
     collection_id: &str,
+    user_id: &str,
     book_id: &str,
 ) -> anyhow::Result<bool> {
     let result = sqlx::query(
         r#"
         DELETE FROM collection_books
         WHERE collection_id = ? AND book_id = ?
+          AND EXISTS (
+              SELECT 1
+              FROM collections
+              WHERE id = ? AND (owner_id = ? OR is_public = 1)
+          )
         "#,
     )
     .bind(collection_id)
     .bind(book_id)
+    .bind(collection_id)
+    .bind(user_id)
     .execute(db)
     .await?;
     Ok(result.rows_affected() > 0)
