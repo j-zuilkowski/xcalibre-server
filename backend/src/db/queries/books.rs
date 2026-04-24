@@ -1,7 +1,7 @@
 use crate::db::models::{AuthorRef, Book, FormatRef, Identifier, SeriesRef, TagRef};
 use anyhow::{bail, Context};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,6 +14,7 @@ pub struct BookSummary {
     pub title: String,
     pub sort_title: String,
     pub authors: Vec<AuthorRef>,
+    pub tags: Vec<TagRef>,
     pub series: Option<SeriesRef>,
     pub series_index: Option<f64>,
     pub cover_url: Option<String>,
@@ -33,6 +34,21 @@ pub struct BookListPage {
     pub total: i64,
     pub page: i64,
     pub page_size: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AggregatedAuthorRow {
+    display_order: i64,
+    id: String,
+    name: String,
+    sort_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AggregatedTagRow {
+    id: String,
+    name: String,
+    confirmed: i64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -200,13 +216,16 @@ pub async fn role_permissions_for_user(
         can_download: row.get::<i64, _>("can_download") != 0,
     }))
 }
-pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Result<BookListPage> {
+pub async fn list_books<'e, E>(db: E, params: &ListBooksParams) -> anyhow::Result<BookListPage>
+where
+    E: Copy,
+    E: sqlx::Executor<'e, Database = Sqlite>,
+{
     let page_size = clamp_page_size(params.page_size);
     let page = if params.page < 1 { 1 } else { params.page };
     let offset = (page - 1) * page_size;
     let fts_query = normalize_fts_query(params.q.as_deref());
     let user_id = params.user_id.as_deref();
-    let has_user_state = user_id.is_some();
 
     let mut total_query =
         QueryBuilder::<Sqlite>::new("SELECT COUNT(DISTINCT b.id) AS total FROM books b");
@@ -229,52 +248,13 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     let (sort_column, sort_default) = normalize_sort(params.sort.as_deref());
     let order = normalize_order(params.order.as_deref(), sort_default);
 
-    let mut data_query = QueryBuilder::<Sqlite>::new(
-        r#"
-        SELECT
-            b.id AS id,
-            b.title AS title,
-            b.sort_title AS sort_title,
-            b.series_index AS series_index,
-            b.has_cover AS has_cover,
-            b.cover_path AS cover_path,
-            "#,
-    );
-    if has_user_state {
-        data_query.push(
-            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
-        );
-    } else {
-        data_query.push("0 AS is_read, 0 AS is_archived, ");
-    }
-    if user_id.is_some() {
-        data_query.push("COALESCE(rp.percentage, 0.0) AS progress_percentage, ");
-    } else {
-        data_query.push("0.0 AS progress_percentage, ");
-    }
-    data_query.push(
-        r#"
-            b.language AS language,
-            b.rating AS rating,
-            b.document_type AS document_type,
-            b.last_modified AS last_modified,
-            s.id AS series_id,
-            s.name AS series_name
-        FROM books b
-        "#,
-    );
+    let mut data_query = QueryBuilder::<Sqlite>::new("");
+    append_book_summary_base(&mut data_query, user_id);
     if fts_query.is_some() {
         data_query.push(
             " INNER JOIN books_fts ON (books_fts.book_id = b.id OR books_fts.rowid = b.rowid)",
         );
     }
-    if let Some(user_id) = user_id {
-        data_query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
-        data_query.push_bind(user_id);
-        data_query.push(" LEFT JOIN reading_progress rp ON rp.book_id = b.id AND rp.user_id = ");
-        data_query.push_bind(user_id);
-    }
-    data_query.push(" LEFT JOIN series s ON s.id = b.series_id");
     apply_list_filters(&mut data_query, params, fts_query.as_deref());
     data_query.push(" ORDER BY ");
     data_query.push(sort_column);
@@ -293,32 +273,7 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
 
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        let book_id: String = row.get("id");
-        let has_cover = row.get::<i64, _>("has_cover") != 0;
-        let cover_path: Option<String> = row.get("cover_path");
-
-        items.push(BookSummary {
-            id: book_id.clone(),
-            title: row.get("title"),
-            sort_title: row.get("sort_title"),
-            authors: load_book_authors(db, &book_id).await?,
-            series: row
-                .get::<Option<String>, _>("series_id")
-                .map(|id| SeriesRef {
-                    id,
-                    name: row.get("series_name"),
-                }),
-            series_index: row.get("series_index"),
-            cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
-            has_cover,
-            is_read: row.get::<i64, _>("is_read") != 0,
-            is_archived: row.get::<i64, _>("is_archived") != 0,
-            language: row.get("language"),
-            rating: row.get("rating"),
-            document_type: row.get("document_type"),
-            last_modified: row.get("last_modified"),
-            progress_percentage: row.get("progress_percentage"),
-        });
+        items.push(book_summary_from_row(&row)?);
     }
 
     Ok(BookListPage {
@@ -329,57 +284,23 @@ pub async fn list_books(db: &SqlitePool, params: &ListBooksParams) -> anyhow::Re
     })
 }
 
-pub async fn list_book_summaries_by_ids(
-    db: &SqlitePool,
+pub async fn list_book_summaries_by_ids<'e, E>(
+    db: E,
     book_ids: &[String],
     library_id: Option<&str>,
     user_id: Option<&str>,
-) -> anyhow::Result<Vec<BookSummary>> {
+) -> anyhow::Result<Vec<BookSummary>>
+where
+    E: Copy,
+    E: sqlx::Executor<'e, Database = Sqlite>,
+{
     if book_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut query = QueryBuilder::<Sqlite>::new(
-        r#"
-        SELECT
-            b.id AS id,
-            b.title AS title,
-            b.sort_title AS sort_title,
-            b.series_index AS series_index,
-            b.has_cover AS has_cover,
-            b.cover_path AS cover_path,
-            "#,
-    );
-    if user_id.is_some() {
-        query.push(
-            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
-        );
-    } else {
-        query.push("0 AS is_read, 0 AS is_archived, ");
-    }
-    if user_id.is_some() {
-        query.push("COALESCE(rp.percentage, 0.0) AS progress_percentage, ");
-    } else {
-        query.push("0.0 AS progress_percentage, ");
-    }
-    query.push(
-        r#"
-            b.language AS language,
-            b.rating AS rating,
-            b.document_type AS document_type,
-            b.last_modified AS last_modified,
-            s.id AS series_id,
-            s.name AS series_name
-        FROM books b
-        "#,
-    );
-    if let Some(user_id) = user_id {
-        query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
-        query.push_bind(user_id);
-        query.push(" LEFT JOIN reading_progress rp ON rp.book_id = b.id AND rp.user_id = ");
-        query.push_bind(user_id);
-    }
-    query.push(" LEFT JOIN series s ON s.id = b.series_id WHERE ");
+    let mut query = QueryBuilder::<Sqlite>::new("");
+    append_book_summary_base(&mut query, user_id);
+    query.push(" WHERE ");
     if let Some(library_id) = library_id {
         query.push("b.library_id = ");
         query.push_bind(library_id);
@@ -402,35 +323,8 @@ pub async fn list_book_summaries_by_ids(
 
     let mut summaries_by_id = BTreeMap::new();
     for row in rows {
-        let book_id: String = row.get("id");
-        let has_cover = row.get::<i64, _>("has_cover") != 0;
-        let cover_path: Option<String> = row.get("cover_path");
-
-        summaries_by_id.insert(
-            book_id.clone(),
-            BookSummary {
-                id: book_id.clone(),
-                title: row.get("title"),
-                sort_title: row.get("sort_title"),
-                authors: load_book_authors(db, &book_id).await?,
-                series: row
-                    .get::<Option<String>, _>("series_id")
-                    .map(|id| SeriesRef {
-                        id,
-                        name: row.get("series_name"),
-                    }),
-                series_index: row.get("series_index"),
-                cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
-                has_cover,
-                is_read: row.get::<i64, _>("is_read") != 0,
-                is_archived: row.get::<i64, _>("is_archived") != 0,
-                language: row.get("language"),
-                rating: row.get("rating"),
-                document_type: row.get("document_type"),
-                last_modified: row.get("last_modified"),
-                progress_percentage: row.get("progress_percentage"),
-            },
-        );
+        let summary = book_summary_from_row(&row)?;
+        summaries_by_id.insert(summary.id.clone(), summary);
     }
 
     let mut ordered = Vec::with_capacity(book_ids.len());
@@ -445,6 +339,174 @@ pub async fn list_book_summaries_by_ids(
     }
 
     Ok(ordered)
+}
+
+fn append_book_summary_base<'a>(query: &mut QueryBuilder<'a, Sqlite>, user_id: Option<&'a str>) {
+    query.push(
+        r#"
+        -- EXPLAIN QUERY PLAN: one books scan plus aggregate joins for authors and tags; no per-book nested loop.
+        SELECT
+            b.id AS id,
+            b.title AS title,
+            b.sort_title AS sort_title,
+            b.series_index AS series_index,
+            b.has_cover AS has_cover,
+            b.cover_path AS cover_path,
+            COALESCE(author_agg.authors_json, '') AS authors_json,
+            COALESCE(tag_agg.tags_json, '') AS tags_json,
+        "#,
+    );
+    if user_id.is_some() {
+        query.push(
+            "COALESCE(bus.is_read, 0) AS is_read, COALESCE(bus.is_archived, 0) AS is_archived, ",
+        );
+    } else {
+        query.push("0 AS is_read, 0 AS is_archived, ");
+    }
+    if user_id.is_some() {
+        query.push("COALESCE(rp.percentage, 0.0) AS progress_percentage, ");
+    } else {
+        query.push("0.0 AS progress_percentage, ");
+    }
+    query.push(
+        r#"
+            b.language AS language,
+            b.rating AS rating,
+            b.document_type AS document_type,
+            b.last_modified AS last_modified,
+            s.id AS series_id,
+            s.name AS series_name
+        FROM books b
+        LEFT JOIN (
+            SELECT
+                ordered_authors.book_id AS book_id,
+                GROUP_CONCAT(ordered_authors.author_json) AS authors_json
+            FROM (
+                SELECT
+                    ba.book_id AS book_id,
+                    ba.display_order AS display_order,
+                    a.sort_name AS sort_name,
+                    json_object(
+                        'display_order', ba.display_order,
+                        'id', a.id,
+                        'name', a.name,
+                        'sort_name', a.sort_name
+                    ) AS author_json
+                FROM book_authors ba
+                INNER JOIN authors a ON a.id = ba.author_id
+                ORDER BY ba.book_id ASC, ba.display_order ASC, a.sort_name ASC, a.id ASC
+            ) ordered_authors
+            GROUP BY ordered_authors.book_id
+        ) author_agg ON author_agg.book_id = b.id
+        LEFT JOIN (
+            SELECT
+                ordered_tags.book_id AS book_id,
+                GROUP_CONCAT(ordered_tags.tag_json) AS tags_json
+            FROM (
+                SELECT
+                    bt.book_id AS book_id,
+                    t.name AS name,
+                    json_object(
+                        'id', t.id,
+                        'name', t.name,
+                        'confirmed', CASE WHEN bt.confirmed != 0 THEN 1 ELSE 0 END
+                    ) AS tag_json
+                FROM book_tags bt
+                INNER JOIN tags t ON t.id = bt.tag_id
+                ORDER BY bt.book_id ASC, t.name ASC, t.id ASC
+            ) ordered_tags
+            GROUP BY ordered_tags.book_id
+        ) tag_agg ON tag_agg.book_id = b.id
+        "#,
+    );
+    if let Some(user_id) = user_id {
+        query.push(" LEFT JOIN book_user_state bus ON bus.book_id = b.id AND bus.user_id = ");
+        query.push_bind(user_id);
+        query.push(" LEFT JOIN reading_progress rp ON rp.book_id = b.id AND rp.user_id = ");
+        query.push_bind(user_id);
+    }
+    query.push(" LEFT JOIN series s ON s.id = b.series_id");
+}
+
+fn parse_group_concat_json<T>(raw: Option<String>, label: &str) -> anyhow::Result<Vec<T>>
+where
+    T: DeserializeOwned,
+{
+    let raw = raw.unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    serde_json::from_str(&format!("[{raw}]"))
+        .with_context(|| format!("parse aggregated {label} rows"))
+}
+
+fn parse_summary_authors(raw: Option<String>) -> anyhow::Result<Vec<AuthorRef>> {
+    let mut authors: Vec<AggregatedAuthorRow> = parse_group_concat_json(raw, "authors")?;
+    authors.sort_by(|left, right| {
+        left.display_order
+            .cmp(&right.display_order)
+            .then_with(|| left.sort_name.cmp(&right.sort_name))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(authors
+        .into_iter()
+        .map(|author| AuthorRef {
+            id: author.id,
+            name: author.name,
+            sort_name: author.sort_name,
+        })
+        .collect())
+}
+
+fn parse_summary_tags(raw: Option<String>) -> anyhow::Result<Vec<TagRef>> {
+    let mut tags: Vec<AggregatedTagRow> = parse_group_concat_json(raw, "tags")?;
+    tags.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(tags
+        .into_iter()
+        .map(|tag| TagRef {
+            id: tag.id,
+            name: tag.name,
+            confirmed: tag.confirmed != 0,
+        })
+        .collect())
+}
+
+fn book_summary_from_row(row: &SqliteRow) -> anyhow::Result<BookSummary> {
+    let book_id: String = row.get("id");
+    let has_cover = row.get::<i64, _>("has_cover") != 0;
+    let cover_path: Option<String> = row.get("cover_path");
+
+    Ok(BookSummary {
+        id: book_id.clone(),
+        title: row.get("title"),
+        sort_title: row.get("sort_title"),
+        authors: parse_summary_authors(row.get("authors_json"))?,
+        tags: parse_summary_tags(row.get("tags_json"))?,
+        series: row
+            .get::<Option<String>, _>("series_id")
+            .map(|id| SeriesRef {
+                id,
+                name: row.get("series_name"),
+            }),
+        series_index: row.get("series_index"),
+        cover_url: to_cover_url(&book_id, has_cover, cover_path.as_deref()),
+        has_cover,
+        is_read: row.get::<i64, _>("is_read") != 0,
+        is_archived: row.get::<i64, _>("is_archived") != 0,
+        language: row.get("language"),
+        rating: row.get("rating"),
+        document_type: row.get("document_type"),
+        last_modified: row.get("last_modified"),
+        progress_percentage: row.get("progress_percentage"),
+    })
 }
 
 pub async fn get_book_by_id(

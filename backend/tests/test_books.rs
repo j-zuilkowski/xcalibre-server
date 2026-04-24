@@ -3,12 +3,145 @@
 mod common;
 
 use axum_test::multipart::{MultipartForm, Part};
+use backend::db::queries::books::{list_books, ListBooksParams};
 use chrono::{Duration, Utc};
 use common::{
     auth_header, epub_with_cover_bytes, minimal_epub_bytes, minimal_pdf_bytes, TestContext,
 };
-use sqlx::Row;
+use futures::{future::BoxFuture, stream::BoxStream};
+use sqlx::{Database, Describe, Either, Error, Execute, Executor, Row, Sqlite};
+use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use uuid::Uuid;
+
+#[derive(Clone, Copy)]
+struct CountingExecutor<'a> {
+    db: &'a sqlx::SqlitePool,
+    queries: &'a AtomicUsize,
+}
+
+impl fmt::Debug for CountingExecutor<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CountingExecutor").finish_non_exhaustive()
+    }
+}
+
+impl<'c, 'a> Executor<'c> for &'c CountingExecutor<'a>
+where
+    'a: 'c,
+{
+    type Database = Sqlite;
+
+    fn fetch_many<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxStream<
+        'e,
+        Result<
+            Either<<Self::Database as Database>::QueryResult, <Self::Database as Database>::Row>,
+            Error,
+        >,
+    >
+    where
+        'c: 'e,
+        E: 'q + Execute<'q, Self::Database>,
+    {
+        self.queries.fetch_add(1, Ordering::SeqCst);
+        self.db.fetch_many(query)
+    }
+
+    fn fetch_optional<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<Option<<Self::Database as Database>::Row>, Error>>
+    where
+        'c: 'e,
+        E: 'q + Execute<'q, Self::Database>,
+    {
+        self.queries.fetch_add(1, Ordering::SeqCst);
+        self.db.fetch_optional(query)
+    }
+
+    fn prepare_with<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+        parameters: &'e [<Self::Database as Database>::TypeInfo],
+    ) -> BoxFuture<'e, Result<<Self::Database as Database>::Statement<'q>, Error>>
+    where
+        'c: 'e,
+    {
+        self.db.prepare_with(sql, parameters)
+    }
+
+    fn describe<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+    ) -> BoxFuture<'e, Result<Describe<Self::Database>, Error>>
+    where
+        'c: 'e,
+    {
+        self.db.describe(sql)
+    }
+}
+
+async fn seed_list_books_fixtures(ctx: &TestContext, books: usize) {
+    let now = Utc::now().to_rfc3339();
+
+    for book_index in 0..books {
+        let book = ctx
+            .create_book(
+                &format!("Book {book_index:02}"),
+                &format!("Author {book_index:02}-0"),
+            )
+            .await;
+
+        for author_index in 1..3 {
+            let author_id = Uuid::new_v4().to_string();
+            let author_name = format!("Author {book_index:02}-{author_index}");
+            sqlx::query(
+                "INSERT INTO authors (id, name, sort_name, last_modified) VALUES (?, ?, ?, ?)",
+            )
+            .bind(&author_id)
+            .bind(&author_name)
+            .bind(&author_name)
+            .bind(&now)
+            .execute(&ctx.db)
+            .await
+            .expect("insert author");
+
+            sqlx::query(
+                "INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, ?)",
+            )
+            .bind(&book.id)
+            .bind(&author_id)
+            .bind(author_index as i64)
+            .execute(&ctx.db)
+            .await
+            .expect("insert book author");
+        }
+
+        for tag_index in 0..5 {
+            let tag_id = Uuid::new_v4().to_string();
+            let tag_name = format!("Tag {book_index:02}-{tag_index}");
+            sqlx::query(
+                "INSERT INTO tags (id, name, source, last_modified) VALUES (?, ?, 'manual', ?)",
+            )
+            .bind(&tag_id)
+            .bind(&tag_name)
+            .bind(&now)
+            .execute(&ctx.db)
+            .await
+            .expect("insert tag");
+
+            sqlx::query("INSERT INTO book_tags (book_id, tag_id, confirmed) VALUES (?, ?, 1)")
+                .bind(&book.id)
+                .bind(&tag_id)
+                .execute(&ctx.db)
+                .await
+                .expect("insert book tag");
+        }
+    }
+}
 
 #[tokio::test]
 async fn test_list_books_empty_library() {
@@ -64,6 +197,47 @@ async fn test_list_books_pagination() {
     let second_body: serde_json::Value = second.json();
     assert_eq!(second_body["items"].as_array().map(Vec::len), Some(1));
     assert_eq!(second_body["items"][0]["title"], "Gamma");
+}
+
+#[tokio::test]
+async fn test_list_books_does_not_n_plus_one() {
+    let ctx = TestContext::new().await;
+    seed_list_books_fixtures(&ctx, 10).await;
+
+    let query_count = AtomicUsize::new(0);
+    let executor = CountingExecutor {
+        db: &ctx.db,
+        queries: &query_count,
+    };
+    let params = ListBooksParams {
+        sort: Some("title".to_string()),
+        order: Some("asc".to_string()),
+        page: 1,
+        page_size: 10,
+        ..Default::default()
+    };
+
+    let page = list_books(&executor, &params).await.expect("list books");
+
+    assert_eq!(page.total, 10);
+    assert_eq!(page.items.len(), 10);
+    assert!(
+        page.items
+            .iter()
+            .all(|item| item.authors.len() == 3 && item.tags.len() == 5),
+        "each summary should include 3 authors and 5 tags",
+    );
+    assert!(
+        page.items
+            .iter()
+            .all(|item| item.tags.iter().all(|tag| tag.confirmed)),
+        "all test tags should be confirmed",
+    );
+    assert!(
+        query_count.load(Ordering::SeqCst) <= 3,
+        "expected at most 3 SQL statements, got {}",
+        query_count.load(Ordering::SeqCst)
+    );
 }
 
 #[tokio::test]
