@@ -1,6 +1,6 @@
 use crate::{
     config::S3Section,
-    storage::{GetRangeResult, StorageBackend},
+    storage::{sanitize_relative_path, GetRangeResult, StorageBackend},
 };
 use anyhow::Context;
 use aws_credential_types::Credentials;
@@ -44,18 +44,16 @@ impl S3Storage {
         })
     }
 
-    pub fn s3_key(&self, relative_path: &str) -> String {
-        let normalized = relative_path.replace('\\', "/");
-        let clean = normalized
-            .split('/')
-            .filter(|part| !part.is_empty() && *part != "..")
-            .collect::<Vec<_>>()
-            .join("/");
-
+    pub fn s3_key(&self, relative_path: &str) -> anyhow::Result<String> {
+        let clean = sanitize_relative_path(relative_path)?;
         if self.key_prefix.is_empty() {
-            clean
+            Ok(clean)
         } else {
-            format!("{}/{}", self.key_prefix, clean)
+            Ok(format!(
+                "{}/{}",
+                self.key_prefix.trim_end_matches('/'),
+                clean
+            ))
         }
     }
 
@@ -68,7 +66,7 @@ impl S3Storage {
 #[async_trait::async_trait]
 impl StorageBackend for S3Storage {
     async fn put(&self, relative_path: &str, bytes: Bytes) -> anyhow::Result<()> {
-        let key = self.s3_key(relative_path);
+        let key = self.s3_key(relative_path)?;
         self.client
             .put_object()
             .bucket(&self.bucket)
@@ -81,7 +79,7 @@ impl StorageBackend for S3Storage {
     }
 
     async fn delete(&self, relative_path: &str) -> anyhow::Result<()> {
-        let key = self.s3_key(relative_path);
+        let key = self.s3_key(relative_path)?;
         match self
             .client
             .delete_object()
@@ -113,7 +111,7 @@ impl StorageBackend for S3Storage {
         relative_path: &str,
         range: Option<(u64, u64)>,
     ) -> anyhow::Result<GetRangeResult> {
-        let key = self.s3_key(relative_path);
+        let key = self.s3_key(relative_path)?;
         let mut request = self.client.get_object().bucket(&self.bucket).key(&key);
         if let Some((start, end)) = range {
             request = request.range(format!("bytes={start}-{end}"));

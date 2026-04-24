@@ -2,6 +2,42 @@ use anyhow::Context;
 use bytes::Bytes;
 use std::path::{Component, Path, PathBuf};
 
+/// Sanitize a relative storage path against traversal attacks.
+/// Returns a forward-slash-separated string safe to use as an S3 key
+/// or as a relative path suffix for local storage.
+/// Rejects absolute paths, ParentDir (..), RootDir, and Prefix components.
+pub fn sanitize_relative_path(relative_path: &str) -> anyhow::Result<String> {
+    let path = Path::new(relative_path);
+    if path.is_absolute() {
+        anyhow::bail!("absolute paths are not allowed in storage keys");
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => {
+                let s = part
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path component"))?;
+                parts.push(s.to_owned());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                anyhow::bail!("path traversal is not allowed (.. component)");
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("absolute or prefixed paths are not allowed");
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        anyhow::bail!("empty storage path");
+    }
+
+    Ok(parts.join("/"))
+}
+
 #[derive(Debug, Clone)]
 pub struct GetRangeResult {
     pub bytes: Bytes,
@@ -35,30 +71,6 @@ impl LocalFsStorage {
         Self {
             root: root.as_ref().to_path_buf(),
         }
-    }
-
-    fn sanitize_relative_path(&self, relative_path: &str) -> anyhow::Result<PathBuf> {
-        let path = Path::new(relative_path);
-        if path.is_absolute() {
-            anyhow::bail!("absolute paths are not allowed");
-        }
-
-        let mut clean = PathBuf::new();
-        for component in path.components() {
-            match component {
-                Component::Normal(part) => clean.push(part),
-                Component::CurDir => {}
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    anyhow::bail!("path traversal is not allowed");
-                }
-            }
-        }
-
-        if clean.as_os_str().is_empty() {
-            anyhow::bail!("empty storage path");
-        }
-
-        Ok(clean)
     }
 }
 
@@ -151,7 +163,7 @@ impl StorageBackend for LocalFsStorage {
     }
 
     fn resolve(&self, relative_path: &str) -> anyhow::Result<PathBuf> {
-        let clean = self.sanitize_relative_path(relative_path)?;
+        let clean = sanitize_relative_path(relative_path)?;
         Ok(self.root.join(clean))
     }
 }

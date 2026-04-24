@@ -150,7 +150,7 @@ async fn test_s3_key_strips_traversal() {
         .await
         .expect("create storage");
     let key = storage.s3_key("../../etc/passwd");
-    assert!(!key.contains(".."));
+    assert!(key.is_err());
 }
 
 #[tokio::test]
@@ -166,8 +166,69 @@ async fn test_s3_key_applies_prefix() {
     .await
     .expect("create storage");
 
-    let key = storage.s3_key("covers/ab/book.jpg");
+    let key = storage.s3_key("covers/ab/book.jpg").expect("build key");
     assert_eq!(key, "autolibre/covers/ab/book.jpg");
+}
+
+#[tokio::test]
+async fn test_s3_key_rejects_parent_dir() {
+    let storage = S3Storage::new(&dummy_s3_config())
+        .await
+        .expect("create storage");
+
+    assert!(storage.s3_key("../../etc/passwd").is_err());
+}
+
+#[tokio::test]
+async fn test_s3_key_rejects_absolute_path() {
+    let storage = S3Storage::new(&dummy_s3_config())
+        .await
+        .expect("create storage");
+
+    assert!(storage.s3_key("/etc/passwd").is_err());
+}
+
+#[tokio::test]
+async fn test_s3_key_allows_normal_nested_path() {
+    let storage = S3Storage::new(&dummy_s3_config())
+        .await
+        .expect("create storage");
+
+    let key = storage
+        .s3_key("covers/ab/id.jpg")
+        .expect("build nested key");
+    assert_eq!(key, "covers/ab/id.jpg");
+}
+
+#[tokio::test]
+async fn test_s3_key_strips_cur_dir() {
+    let storage = S3Storage::new(&dummy_s3_config())
+        .await
+        .expect("create storage");
+
+    let key = storage
+        .s3_key("./covers/ab/id.jpg")
+        .expect("build normalized key");
+    assert_eq!(key, "covers/ab/id.jpg");
+}
+
+#[tokio::test]
+async fn test_s3_key_preserves_url_encoded_dots_as_literal() {
+    let storage = S3Storage::new(&S3Section {
+        bucket: "bucket".to_string(),
+        region: "us-east-1".to_string(),
+        endpoint_url: String::new(),
+        access_key: "access".to_string(),
+        secret_key: "secret".to_string(),
+        key_prefix: "autolibre".to_string(),
+    })
+    .await
+    .expect("create storage");
+
+    let key = storage
+        .s3_key("%2e%2e/etc/passwd")
+        .expect("build literal key");
+    assert_eq!(key, "autolibre/%2e%2e/etc/passwd");
 }
 
 #[tokio::test]
