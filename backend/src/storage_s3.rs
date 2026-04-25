@@ -1,3 +1,29 @@
+//! S3-compatible object storage backend (AWS S3, MinIO, Cloudflare R2, Backblaze B2).
+//!
+//! Implements [`StorageBackend`] using the `aws-sdk-s3` crate.  All four providers
+//! use the same S3 API; only `endpoint_url` differs (leave blank for AWS S3).
+//!
+//! # Path sanitization
+//! [`S3Storage::s3_key`] calls [`sanitize_relative_path`] (Phase 16 Stage 1) which
+//! uses `Path::components()` to strip any `..` components before building the S3
+//! key.  This prevents path traversal via crafted filenames.
+//!
+//! # Range request limitation
+//! S3 `GetObject` with a `Range` header streams the requested byte range from S3,
+//! but the AWS SDK does not support true streaming with partial-content resumption.
+//! The full requested range is buffered via `body.collect().into_bytes()` before
+//! being returned.  For very large range requests this means the entire range is
+//! loaded into memory.  Callers (the media streaming handler) should request
+//! reasonably-sized ranges.
+//!
+//! # `resolve()` not supported
+//! S3 objects have no local path.  `resolve()` always returns `Err` with a clear
+//! message.  Callers that need a local file (e.g. text extraction) must use
+//! `ingest::text::resolve_or_download_path` which downloads to a temp file.
+//!
+//! # `force_path_style`
+//! Enabled for non-AWS endpoints (MinIO, R2, B2) which require path-style addressing.
+
 use crate::{
     config::S3Section,
     storage::{sanitize_relative_path, GetRangeResult, StorageBackend},
@@ -6,6 +32,7 @@ use anyhow::Context;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::{primitives::ByteStream, Client, Config};
+use aws_smithy_http_client::{tls, Builder as SmithyHttpClientBuilder};
 use bytes::Bytes;
 
 #[derive(Clone, Debug)]
@@ -22,10 +49,14 @@ impl S3Storage {
             cfg.secret_key.clone(),
             None,
             None,
-            "autolibre-config",
+            "xcalibre-server-config",
         );
+        let http_client = SmithyHttpClientBuilder::new()
+            .tls_provider(tls::Provider::S2nTls)
+            .build_https();
 
         let mut builder = Config::builder()
+            .http_client(http_client)
             .credentials_provider(creds)
             .region(aws_sdk_s3::config::Region::new(cfg.region.clone()))
             .behavior_version_latest();
@@ -44,6 +75,10 @@ impl S3Storage {
         })
     }
 
+    /// Build the full S3 object key for a storage-relative path.
+    ///
+    /// Sanitizes `relative_path` via `sanitize_relative_path` to strip `..` components,
+    /// then prepends `key_prefix` if configured.
     pub fn s3_key(&self, relative_path: &str) -> anyhow::Result<String> {
         let clean = sanitize_relative_path(relative_path)?;
         if self.key_prefix.is_empty() {

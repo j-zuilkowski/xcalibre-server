@@ -1,3 +1,14 @@
+//! Author profile management and admin author merge for xcalibre-server.
+//!
+//! Public routes (require JWT): `GET /api/v1/authors/:id`, `PATCH /api/v1/authors/:id`,
+//! `POST /api/v1/authors/:id/photo` (requires `can_edit`), `GET /api/v1/authors/:id/photo`.
+//! Admin routes (require admin role): `GET /api/v1/admin/authors`, `POST /api/v1/admin/authors/:id/merge`.
+//!
+//! Author photos are stored in four variants (full/thumb × JPEG/WebP) under
+//! `authors/{bucket}/{id}.{ext}` in the storage backend. The `bucket` is the first two
+//! characters of the author ID for directory sharding. Photos are center-cropped to square
+//! before encoding. A generated SVG placeholder is served when no photo is set.
+
 use crate::{
     db::queries::{authors as author_queries, books as book_queries},
     ingest::mobi_util,
@@ -59,8 +70,8 @@ pub(crate) struct ListAuthorsQuery {
     page_size: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize, Default, ToSchema)]
+#[allow(dead_code)]
 pub(crate) struct PatchAuthorRequest {
     #[serde(default)]
     bio: Option<Value>,
@@ -99,8 +110,8 @@ pub(crate) struct AuthorPhotoQuery {
     size: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, ToSchema)]
+#[allow(dead_code)]
 struct AuthorPhotoUploadRequestDoc {
     #[schema(value_type = String, format = Binary)]
     photo: String,
@@ -468,6 +479,7 @@ pub(crate) async fn get_author_photo(
     Ok(response)
 }
 
+/// Loads an author with their profile and a paginated book list scoped to the caller's library.
 async fn load_author_detail(
     state: &AppState,
     auth_user: &AuthenticatedUser,
@@ -575,6 +587,7 @@ async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
         .is_ok()
 }
 
+/// Returns the two-character storage bucket prefix for an author ID, used for directory sharding.
 fn author_bucket(author_id: &str) -> Option<String> {
     let bucket: String = author_id.chars().take(2).collect();
     if bucket.len() == 2 {
@@ -616,6 +629,7 @@ async fn delete_storage_paths(state: &AppState, paths: &[&str]) {
     }
 }
 
+/// Returns a deterministically colored SVG avatar using the author's initials when no photo exists.
 fn placeholder_author_photo_response(author_name: &str) -> axum::response::Response {
     let svg = author_placeholder_svg(author_name);
     let mut response = axum::response::Response::new(Body::from(svg));
@@ -659,6 +673,8 @@ fn hash_author_name(bytes: &[u8]) -> usize {
     hash as usize
 }
 
+/// Decodes the uploaded image, center-crops it to square, and encodes four variants:
+/// full (400×400) and thumb (100×100) in both JPEG (quality 85) and lossless WebP.
 fn render_author_photo_variants(raw_photo: &[u8]) -> Option<AuthorPhotoVariants> {
     let image = image::load_from_memory(raw_photo).ok()?;
     if image.width() == 0 || image.height() == 0 {
@@ -728,6 +744,9 @@ fn normalize_profile_value(value: String) -> Option<String> {
     }
 }
 
+/// Extracts an optional-nullable string field from a JSON patch object.
+/// Returns `None` if the field is absent (no update), `Some(None)` for JSON null (clear),
+/// or `Some(Some(text))` for a non-empty string (set).
 fn normalize_patch_value(payload: &Value, field: &str) -> Result<Option<Option<String>>, AppError> {
     let Some(object) = payload.as_object() else {
         return Err(AppError::BadRequest);

@@ -1,3 +1,18 @@
+//! User self-service endpoints and reading-history import for xcalibre-server.
+//!
+//! Routes under `/api/v1/users/me/` (all require JWT):
+//! - `GET/PATCH /users/me` — view and update own username/email.
+//! - `GET /users/me/stats` — reading statistics (books read, per-month counts, top tags).
+//! - `PATCH /users/me/library` — switch the user's active library.
+//! - `POST /users/me/import/goodreads` — upload a Goodreads CSV export.
+//! - `POST /users/me/import/storygraph` — upload a StoryGraph CSV export.
+//! - `GET /users/me/import/:job_id` — poll the status of an import job.
+//! - `GET /libraries` — list all libraries (public, no per-user filter).
+//!
+//! CSV imports are processed in background Tokio tasks; rows are matched against the
+//! library by exact title + fuzzy author. Unmatched rows are counted and logged but do
+//! not cause the job to fail.
+
 use crate::{
     db::queries::{auth as auth_queries, libraries as library_queries, stats as stats_queries},
     db::queries::{
@@ -6,8 +21,7 @@ use crate::{
     },
     ingest::goodreads::{parse_goodreads_csv, parse_storygraph_csv, GoodreadsRow, StorygraphRow},
     middleware::auth::AuthenticatedUser,
-    webhooks as webhook_engine,
-    AppError, AppState,
+    webhooks as webhook_engine, AppError, AppState,
 };
 use axum::{
     extract::{Extension, Json, Multipart, Path, State},
@@ -44,6 +58,7 @@ struct UpdateLibraryRequest {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[allow(dead_code)]
 pub(crate) struct PatchMeRequest {
     #[serde(default)]
     username: Option<String>,
@@ -51,8 +66,8 @@ pub(crate) struct PatchMeRequest {
     email: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, ToSchema)]
+#[allow(dead_code)]
 pub(crate) struct ImportCsvRequestDoc {
     #[schema(value_type = String, format = Binary)]
     file: String,
@@ -418,6 +433,8 @@ async fn parse_csv_upload(
     Ok(UploadedCsv { filename, bytes })
 }
 
+/// Spawns a background Tokio task to process the parsed CSV rows, updating the import log
+/// with progress and emitting an `import.completed` webhook event when done.
 fn spawn_import_task(state: AppState, user_id: String, job_id: String, source: ImportSource) {
     tokio::spawn(async move {
         if let Err(err) = run_import_task(state.clone(), &user_id, &job_id, source).await {
@@ -554,6 +571,9 @@ async fn process_storygraph_rows(
     Ok(())
 }
 
+/// Applies a single Goodreads CSV row: matches to exactly one book, marks it read if
+/// the shelf is "read", stores the star rating (×2 to fit the 1-10 scale), and adds
+/// all shelf names as user shelves. Returns `false` if the title+author match 0 or 2+ books.
 async fn process_goodreads_row(
     state: &AppState,
     user_id: &str,
@@ -655,6 +675,8 @@ fn import_error_from_row(
     }
 }
 
+/// Strips null bytes, path separators, and `..` components from an uploaded file name
+/// to prevent path traversal when the name is later used in log records or storage keys.
 fn sanitize_upload_file_name(file_name: &str) -> String {
     let without_nulls = file_name.replace('\0', "");
     let final_component = without_nulls

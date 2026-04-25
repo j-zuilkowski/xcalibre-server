@@ -1,3 +1,23 @@
+//! Book library CRUD, file serving, reading progress, annotations, and text extraction.
+//!
+//! All routes under `/api/v1/books/`. All routes require a valid JWT.
+//!
+//! Role guards applied inside handlers (not at router level):
+//! - `can_upload` — required for `POST /books` (upload) and `PATCH /books` (bulk edit).
+//! - `can_edit` — required for `PATCH /books/:id`, `DELETE /books/:id`, merge, custom columns.
+//! - `can_download` — required for `GET /books/:id/formats/:format/download` and stream.
+//! - Admin — required for bulk-edit across users and certain tag confirmation flows.
+//!
+//! Path traversal prevention: book file paths are stored relative to the storage root
+//! and validated by `validate_relative_path` before any file is opened.
+//!
+//! Cover images: stored as `{book_id}.jpg` relative to the storage root; served with
+//! conditional GET (ETag/If-None-Match) and range support.
+//!
+//! RAG surface: `GET /books/:id/chunks` re-chunks the book on demand if needed and
+//! returns structured text passages. `GET /books/:id/text` extracts plain text for
+//! display or external consumption.
+
 use crate::{
     db::queries::{
         annotations as annotation_queries, book_chunks as chunk_queries,
@@ -15,7 +35,7 @@ use crate::{
 };
 use axum::{
     body::Body,
-    extract::{Extension, Multipart, Path, Query, Request, State},
+    extract::{DefaultBodyLimit, Extension, Multipart, Path, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware,
     routing::{delete, get, patch, post},
@@ -42,14 +62,20 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
+/// Assembles the books sub-router and attaches the JWT auth middleware to all routes.
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
+    let upload_max_bytes = state.config.limits.upload_max_bytes;
 
     Router::new()
         .route(
             "/api/v1/books",
-            get(list_books).post(upload_book).patch(bulk_edit_books),
+            get(list_books).patch(bulk_edit_books),
+        )
+        .route(
+            "/api/v1/books",
+            post(upload_book).layer(DefaultBodyLimit::max(upload_max_bytes as usize)),
         )
         .route(
             "/api/v1/books/custom-columns",
@@ -334,8 +360,8 @@ struct PatchAnnotationRequest {
     color: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, ToSchema)]
+#[allow(dead_code)]
 struct UploadBookRequestDoc {
     #[schema(value_type = String, format = Binary)]
     file: String,
@@ -401,7 +427,7 @@ struct BookTextResponse {
     word_count: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 struct IdentifierPatch {
     id_type: String,
     value: String,
@@ -495,6 +521,8 @@ impl UploadFormat {
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Returns a paginated list of books, scoped to the caller's library (admins see all libraries).
+/// Supports full-text search, multi-field filtering, and configurable sort order.
 pub(crate) async fn list_books(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -551,6 +579,8 @@ pub(crate) async fn list_books(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Fetches a single book by id with full detail (formats, authors, tags, identifiers);
+/// returns 404 if the book does not exist or belongs to a different library.
 pub(crate) async fn get_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -584,6 +614,8 @@ pub(crate) async fn get_book(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Returns the most-recent reading progress record for the authenticated user and book;
+/// returns 404 if the book doesn't exist or no progress has been saved yet.
 pub(crate) async fn get_reading_progress(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -646,6 +678,9 @@ pub(crate) async fn get_reading_progress(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Creates or updates reading progress for the caller on a book using INSERT … ON CONFLICT;
+/// percentage is clamped to [0, 100] and `format_id` is resolved from either a direct id or
+/// a format name string — exactly one must be supplied.
 pub(crate) async fn upsert_reading_progress(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -736,6 +771,7 @@ pub(crate) async fn upsert_reading_progress(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Returns all annotations created by the authenticated user for the given book.
 pub(crate) async fn list_annotations(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -774,6 +810,8 @@ pub(crate) async fn list_annotations(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Creates a new annotation for the authenticated user on a book; validates type ("highlight",
+/// "note", "bookmark") and color, and enforces field presence rules per annotation type.
 pub(crate) async fn create_annotation(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -823,6 +861,8 @@ pub(crate) async fn create_annotation(
     Ok((StatusCode::CREATED, Json(created)))
 }
 
+/// Updates the note or color on an existing annotation; returns 403 if the annotation belongs
+/// to a different user, 404 if it does not exist or belongs to a different book.
 async fn patch_annotation(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -880,6 +920,7 @@ async fn patch_annotation(
     Ok(Json(updated))
 }
 
+/// Deletes an annotation owned by the authenticated user; returns 403 if the user doesn't own it.
 async fn delete_annotation(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -919,6 +960,7 @@ async fn delete_annotation(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Returns all admin-defined custom column definitions for the library.
 async fn list_custom_columns(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<book_queries::CustomColumn>>, AppError> {
@@ -928,6 +970,8 @@ async fn list_custom_columns(
     Ok(Json(columns))
 }
 
+/// Creates a new custom column definition; requires admin role.
+/// Returns 409 Conflict if a column with the same name or label already exists.
 async fn create_custom_column(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -963,6 +1007,7 @@ async fn create_custom_column(
     Ok((StatusCode::CREATED, Json(created)))
 }
 
+/// Deletes a custom column and all associated book values; requires admin role.
 async fn delete_custom_column(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -982,6 +1027,7 @@ async fn delete_custom_column(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Returns all custom column values set for a specific book.
 async fn get_book_custom_values(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1001,6 +1047,8 @@ async fn get_book_custom_values(
     Ok(Json(values))
 }
 
+/// Upserts a batch of custom column values for a book; requires `can_edit` permission.
+/// Returns 400 for type mismatches and 404 if a referenced column does not exist.
 async fn patch_book_custom_values(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1044,6 +1092,8 @@ async fn patch_book_custom_values(
     }
 }
 
+/// Merges a duplicate book into a primary book, re-pointing all relations; requires admin role.
+/// The duplicate is deleted after the merge and its search index entry is removed.
 async fn merge_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1106,6 +1156,7 @@ async fn merge_book(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Toggles the read/unread flag for the authenticated user on a specific book.
 async fn set_read(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1127,6 +1178,7 @@ async fn set_read(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Toggles the archived flag for the authenticated user on a specific book.
 async fn set_archive(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1148,6 +1200,7 @@ async fn set_archive(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Maps an annotation type string to its canonical static value; returns None for unknown types.
 fn normalize_annotation_type(value: &str) -> Option<&'static str> {
     match value.trim() {
         "highlight" => Some("highlight"),
@@ -1157,6 +1210,7 @@ fn normalize_annotation_type(value: &str) -> Option<&'static str> {
     }
 }
 
+/// Maps a color string to its canonical static value (yellow, green, blue, pink); returns None otherwise.
 fn normalize_annotation_color(value: &str) -> Option<&'static str> {
     match value.trim() {
         "yellow" => Some("yellow"),
@@ -1167,6 +1221,7 @@ fn normalize_annotation_color(value: &str) -> Option<&'static str> {
     }
 }
 
+/// Trims an optional string value and returns None if the trimmed result is empty.
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|raw| {
         let trimmed = raw.trim();
@@ -1178,6 +1233,8 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+/// Enforces per-type field presence rules: highlights require text but not a note;
+/// notes require both text and a note field; bookmarks must have neither.
 fn validate_annotation_create_fields(
     annotation_type: &str,
     highlighted_text: Option<&str>,
@@ -1205,6 +1262,9 @@ fn validate_annotation_create_fields(
     Ok(())
 }
 
+/// Resolves a format id from a progress request, accepting either a direct `format_id` UUID
+/// or a format name string; returns 400 if neither is supplied or if the referenced format
+/// does not belong to the given book.
 async fn resolve_progress_format_id(
     db: &sqlx::SqlitePool,
     book_id: &str,
@@ -1241,6 +1301,8 @@ async fn resolve_progress_format_id(
     Err(AppError::BadRequest)
 }
 
+/// Loads a book by id within the given library scope, returning 404 (not 403) if
+/// the book is missing or inaccessible — preventing library existence disclosure.
 pub(crate) async fn load_book_or_not_found(
     db: &sqlx::SqlitePool,
     book_id: &str,
@@ -1256,6 +1318,7 @@ pub(crate) async fn load_book_or_not_found(
     Ok(book)
 }
 
+/// Returns a paginated history of the authenticated user's format downloads.
 async fn list_download_history(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1287,6 +1350,8 @@ async fn list_download_history(
     }))
 }
 
+/// Returns the library id that should be used as a DB filter for the given user.
+/// Admins receive `None` (no library filter — sees all), regular users receive their default library id.
 pub(crate) fn accessible_library_id(user: &crate::db::models::User) -> Option<&str> {
     if user.role.name.eq_ignore_ascii_case("admin") {
         None
@@ -1314,6 +1379,10 @@ pub(crate) fn accessible_library_id(user: &crate::db::models::User) -> Option<&s
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Accepts a multipart upload (file + optional JSON metadata), detects format by magic bytes,
+/// extracts embedded metadata, optionally classifies the document type via LLM, stores the file
+/// under a 2-char bucket path, and emits a `book.added` webhook event on success.
+/// Requires `can_upload` permission; returns 409 on duplicate ISBN.
 pub(crate) async fn upload_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1543,6 +1612,8 @@ pub(crate) async fn upload_book(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Updates book metadata fields; requires `can_edit` permission.
+/// Returns 409 on duplicate ISBN conflict and 422 if rating is out of [0, 10].
 pub(crate) async fn patch_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1625,6 +1696,9 @@ pub(crate) async fn patch_book(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Deletes a book and all its storage files (formats + cover variants); requires admin role.
+/// Emits a `book.deleted` webhook event. File deletion failures are surfaced as 500 rather
+/// than silently ignored so operators can investigate orphaned storage objects.
 pub(crate) async fn delete_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1712,6 +1786,8 @@ pub(crate) async fn delete_book(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Serves a book format file as an attachment download; requires `can_download` permission.
+/// Supports HTTP range requests and records the download in the history table asynchronously.
 pub(crate) async fn download_format(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1774,6 +1850,8 @@ pub(crate) async fn download_format(
     Ok(response)
 }
 
+/// Serves a book format for inline streaming (e.g. audio/ebook reader); requires `can_download`.
+/// Selects an appropriate MIME type for audio formats and supports HTTP range requests.
 async fn stream_format(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1815,6 +1893,8 @@ async fn stream_format(
     .await
 }
 
+/// Converts a MOBI/AZW3 format to a minimal EPUB on the fly and returns it inline;
+/// requires `can_download` permission. Only accepts "mobi" or "azw3" as the format parameter.
 async fn mobi_to_epub(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1886,6 +1966,9 @@ async fn mobi_to_epub(
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Serves the cover image for a book; requires `can_download` permission.
+/// Automatically serves the WebP variant if the client sends `Accept: image/webp`
+/// and the WebP file exists, falling back to JPEG otherwise.
 pub(crate) async fn get_cover(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1940,6 +2023,8 @@ pub(crate) async fn get_cover(
     .await
 }
 
+/// Returns the chapter table of contents for the preferred extractable format (EPUB > PDF > MOBI);
+/// requires `can_download` permission.
 async fn get_chapters(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1994,6 +2079,9 @@ async fn get_chapters(
         (status = 500, description = "Internal error", body = crate::error::AppErrorResponse)
     )
 )]
+/// Returns structured text chunks for the RAG surface; requires `can_download` permission.
+/// If no chunks exist yet, generates and stores them on demand using the supplied (or default)
+/// chunk configuration. Supports filtering by chunk type.
 pub(crate) async fn get_chunks(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2067,6 +2155,8 @@ pub(crate) async fn get_chunks(
     Ok(Json(payload))
 }
 
+/// Extracts and returns plain text from the book; requires `can_download` permission.
+/// Supports optional chapter-index filtering; returns 400 if the chapter index is out of range.
 async fn get_text(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2119,6 +2209,7 @@ async fn get_text(
     }))
 }
 
+/// Sends a book format to an email address via SMTP; returns 503 if SMTP is not configured.
 async fn send_book(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2174,6 +2265,8 @@ async fn send_book(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Fetches enriched metadata from Open Library or Google Books using the book's ISBN or title/authors.
+/// Defaults to Open Library and falls back to Google Books if Open Library is unavailable.
 async fn metadata_lookup(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2223,6 +2316,7 @@ async fn metadata_lookup(
     Ok(Json(result))
 }
 
+/// Returns the page index for a CBZ/CBR comic archive; requires `can_download` permission.
 async fn get_comic_pages(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2254,6 +2348,8 @@ async fn get_comic_pages(
     }))
 }
 
+/// Serves a single page image from a comic archive by zero-based index;
+/// requires `can_download` permission and returns 404 if the index is out of bounds.
 async fn get_comic_page(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2282,6 +2378,8 @@ async fn get_comic_page(
     Ok(response)
 }
 
+/// Applies batch metadata edits (tags, series, rating, language, publisher) to a list of books;
+/// requires admin role. Tag edits support append/overwrite/remove modes; other fields are overwrite-only.
 async fn bulk_edit_books(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -2462,6 +2560,8 @@ struct GoogleIdentifier {
     identifier: String,
 }
 
+/// Fetches metadata from the Open Library Books API using ISBN (preferred) or title/author search;
+/// uses a 5-second HTTP timeout and maps non-200 responses to `ServiceUnavailable`.
 async fn lookup_openlibrary(
     state: &AppState,
     identifiers: &[crate::db::models::Identifier],
@@ -2521,6 +2621,7 @@ async fn lookup_openlibrary(
     Ok(render_openlibrary_search_doc(doc))
 }
 
+/// Fetches metadata from the Google Books Volumes API using ISBN (preferred) or title/author query.
 async fn lookup_google_books(
     state: &AppState,
     identifiers: &[crate::db::models::Identifier],
@@ -2670,6 +2771,7 @@ fn render_google_books_item(item: GoogleBooksItem) -> MetadataLookupResponse {
     }
 }
 
+/// Finds the first ISBN identifier among a book's identifiers and normalizes it to alphanumeric.
 fn extract_isbn(identifiers: &[crate::db::models::Identifier]) -> Option<String> {
     identifiers.iter().find_map(|identifier| {
         let id_type = identifier.id_type.trim().to_lowercase();
@@ -2712,6 +2814,7 @@ fn build_google_books_query(title: &str, authors: &[String]) -> String {
     query
 }
 
+/// Builds and sends an email with the book file attached using the configured SMTP transport.
 async fn send_book_email(
     settings: &crate::db::queries::email_settings::EmailSettings,
     book: &crate::db::models::Book,
@@ -2724,6 +2827,8 @@ async fn send_book_email(
     send_message_via_transport(&transport, message).await
 }
 
+/// Constructs a `lettre` multipart email message with the book file attached;
+/// exposed as `pub` so integration tests can inspect the message without an SMTP server.
 pub fn build_book_email_message(
     settings: &crate::db::queries::email_settings::EmailSettings,
     book: &crate::db::models::Book,
@@ -2759,6 +2864,8 @@ pub fn build_book_email_message(
         .map_err(|_| AppError::Internal)
 }
 
+/// Builds an async SMTP transport from email settings; uses STARTTLS when `use_tls` is set,
+/// and adds SMTP credentials only when a non-empty username is configured.
 fn build_smtp_transport(
     settings: &crate::db::queries::email_settings::EmailSettings,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, AppError> {
@@ -2781,6 +2888,8 @@ fn build_smtp_transport(
     Ok(builder.build())
 }
 
+/// Sends a pre-built `lettre` message via any async transport; exposed as `pub` to allow
+/// injection of a test transport in integration tests.
 pub async fn send_message_via_transport<T>(transport: &T, message: Message) -> Result<(), AppError>
 where
     T: AsyncTransport + Sync,
@@ -2803,6 +2912,7 @@ struct ComicArchiveEntry {
     content_type: &'static str,
 }
 
+/// Loads a CBZ or CBR comic archive for a book, extracting sorted image pages into memory.
 async fn load_comic_archive(
     state: &AppState,
     book_id: &str,
@@ -2843,13 +2953,13 @@ async fn load_comic_archive(
         .to_ascii_lowercase();
 
     let entries = if extension == "cbz" {
-        load_cbz_pages(extractable_path.path())?
+        load_cbz_pages(extractable_path.path()).await?
     } else if extension == "cbr" {
-        load_cbr_pages(extractable_path.path())?
+        load_cbr_pages(extractable_path.path()).await?
     } else if format.format.eq_ignore_ascii_case("CBZ") {
-        load_cbz_pages(extractable_path.path())?
+        load_cbz_pages(extractable_path.path()).await?
     } else if format.format.eq_ignore_ascii_case("CBR") {
-        load_cbr_pages(extractable_path.path())?
+        load_cbr_pages(extractable_path.path()).await?
     } else {
         return Err(AppError::NoExtractableFormat);
     };
@@ -2857,61 +2967,75 @@ async fn load_comic_archive(
     Ok(ComicArchive { entries })
 }
 
-fn load_cbz_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
-    let file = std::fs::File::open(path).map_err(|_| AppError::NotFound)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|_| AppError::Internal)?;
-    let mut entries = Vec::new();
+/// Reads image pages from a ZIP-based CBZ file; non-image entries are silently skipped.
+async fn load_cbz_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<Vec<ComicArchiveEntry>, AppError> {
+        let file = std::fs::File::open(path).map_err(|_| AppError::NotFound)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|_| AppError::Internal)?;
+        let mut entries = Vec::new();
 
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(|_| AppError::Internal)?;
-        if file.is_dir() {
-            continue;
+        for index in 0..archive.len() {
+            let mut file = archive.by_index(index).map_err(|_| AppError::Internal)?;
+            if file.is_dir() {
+                continue;
+            }
+
+            let name = file.name().to_string();
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)
+                .map_err(|_| AppError::Internal)?;
+            if let Some(content_type) = detect_image_content_type(&name, &bytes) {
+                entries.push(ComicArchiveEntry {
+                    filename: name,
+                    bytes,
+                    content_type,
+                });
+            }
         }
 
-        let name = file.name().to_string();
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|_| AppError::Internal)?;
-        if let Some(content_type) = detect_image_content_type(&name, &bytes) {
-            entries.push(ComicArchiveEntry {
-                filename: name,
-                bytes,
-                content_type,
-            });
-        }
-    }
-
-    entries.sort_by(|left, right| left.filename.cmp(&right.filename));
-    Ok(entries)
+        entries.sort_by(|left, right| left.filename.cmp(&right.filename));
+        Ok(entries)
+    })
+    .await
+    .map_err(|_| AppError::Internal)?
 }
 
-fn load_cbr_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
-    let archive = unrar::Archive::new(path)
-        .as_first_part()
-        .open_for_processing();
-    let mut archive = archive.map_err(|_| AppError::NotFound)?;
-    let mut entries = Vec::new();
+/// Reads image pages from a RAR-based CBR file using the `unrar` crate; non-image entries are skipped.
+async fn load_cbr_pages(path: &FsPath) -> Result<Vec<ComicArchiveEntry>, AppError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<Vec<ComicArchiveEntry>, AppError> {
+        let archive = unrar::Archive::new(&path)
+            .as_first_part()
+            .open_for_processing();
+        let mut archive = archive.map_err(|_| AppError::NotFound)?;
+        let mut entries = Vec::new();
 
-    loop {
-        let Some(next) = archive.read_header().map_err(|_| AppError::Internal)? else {
-            break;
-        };
-        let filename = next.entry().filename.to_string_lossy().to_string();
-        let (bytes, next_archive) = next.read().map_err(|_| AppError::Internal)?;
-        archive = next_archive;
-        if let Some(content_type) = detect_image_content_type(&filename, &bytes) {
-            entries.push(ComicArchiveEntry {
-                filename,
-                bytes,
-                content_type,
-            });
+        loop {
+            let Some(next) = archive.read_header().map_err(|_| AppError::Internal)? else {
+                break;
+            };
+            let filename = next.entry().filename.to_string_lossy().to_string();
+            let (bytes, next_archive) = next.read().map_err(|_| AppError::Internal)?;
+            archive = next_archive;
+            if let Some(content_type) = detect_image_content_type(&filename, &bytes) {
+                entries.push(ComicArchiveEntry {
+                    filename,
+                    bytes,
+                    content_type,
+                });
+            }
         }
-    }
 
-    entries.sort_by(|left, right| left.filename.cmp(&right.filename));
-    Ok(entries)
+        entries.sort_by(|left, right| left.filename.cmp(&right.filename));
+        Ok(entries)
+    })
+    .await
+    .map_err(|_| AppError::Internal)?
 }
 
+/// Detects whether a file entry is a supported comic page image (PNG or JPEG) by magic bytes
+/// with extension as a secondary hint; returns None for non-image entries.
 fn detect_image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
     let extension = FsPath::new(name)
         .extension()
@@ -2931,6 +3055,7 @@ fn detect_image_content_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+/// Checks that the user has `can_edit` permission; returns 403 Forbidden otherwise.
 async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -2942,6 +3067,7 @@ async fn ensure_can_edit(state: &AppState, user_id: &str) -> Result<(), AppError
     Ok(())
 }
 
+/// Checks that the user has admin role; returns 403 Forbidden otherwise.
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -2953,6 +3079,7 @@ async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Checks that the user has `can_download` permission; returns 403 Forbidden otherwise.
 async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let perms = book_queries::role_permissions_for_user(&state.db, user_id)
         .await
@@ -2964,6 +3091,7 @@ async fn ensure_download_permission(state: &AppState, user_id: &str) -> Result<(
     Ok(())
 }
 
+/// Normalizes a column type string to its canonical DB value; returns None for unknown types.
 fn normalize_custom_column_type(raw: &str) -> Option<&'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "text" => Some("text"),
@@ -2975,6 +3103,7 @@ fn normalize_custom_column_type(raw: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns the first extractable format present on a book in priority order: EPUB > PDF > MOBI > AZW3 > TXT.
 fn preferred_extractable_format(book: &crate::db::models::Book) -> Option<&str> {
     ["EPUB", "PDF", "MOBI", "AZW3", "TXT"]
         .into_iter()
@@ -2991,6 +3120,8 @@ struct MobiChapterForEpub {
     text: String,
 }
 
+/// Converts a `mobi::Mobi` book into a minimal valid EPUB 2.0 ZIP archive in memory,
+/// splitting the source HTML on MOBI page-break tags or heading tags for chapter structure.
 fn build_epub_from_mobi(book: &mobi::Mobi, book_id: &str) -> Result<Vec<u8>, AppError> {
     let title = {
         let raw = book.title();
@@ -3055,7 +3186,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi, book_id: &str) -> Result<Vec<u8>, App
     <dc:title>{escaped_title}</dc:title>
     <dc:creator>{escaped_author}</dc:creator>
     <dc:language>en</dc:language>
-    <dc:identifier id="bookid">urn:autolibre:{escaped_book_id}</dc:identifier>
+    <dc:identifier id="bookid">urn:xcalibre-server:{escaped_book_id}</dc:identifier>
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
@@ -3090,7 +3221,7 @@ fn build_epub_from_mobi(book: &mobi::Mobi, book_id: &str) -> Result<Vec<u8>, App
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content="urn:autolibre:{escaped_book_id}"/>
+    <meta name="dtb:uid" content="urn:xcalibre-server:{escaped_book_id}"/>
   </head>
   <docTitle><text>{}</text></docTitle>
   <navMap>
@@ -3139,6 +3270,8 @@ fn build_epub_from_mobi(book: &mobi::Mobi, book_id: &str) -> Result<Vec<u8>, App
     Ok(cursor.into_inner())
 }
 
+/// Splits MOBI HTML into chapter segments, preferring MOBI page-break markers over heading tags;
+/// always returns at least one chapter with "No content available." if the book has no extractable text.
 fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
     let mut segments = mobi_util::split_on_mobi_pagebreak(raw_html);
     if segments.len() <= 1 {
@@ -3177,6 +3310,8 @@ fn mobi_chapters_for_epub(raw_html: &str) -> Vec<MobiChapterForEpub> {
     }
 }
 
+/// Strips non-ASCII-safe characters from a filename for use in a Content-Disposition header;
+/// non-allowed characters are replaced with underscores to avoid HTTP header injection.
 fn sanitize_file_name_for_header(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -3196,6 +3331,8 @@ fn sanitize_file_name_for_header(value: &str) -> String {
     }
 }
 
+/// Validates and normalizes a relative storage path, rejecting absolute paths, Windows drive
+/// paths, and any `..` components to prevent path traversal attacks.
 fn sanitize_relative_path(relative_path: &str) -> Result<PathBuf, AppError> {
     if looks_like_windows_absolute_path(relative_path) {
         return Err(AppError::BadRequest);
@@ -3232,17 +3369,25 @@ fn looks_like_windows_absolute_path(relative_path: &str) -> bool {
         && matches!(bytes[2], b'/' | b'\\')
 }
 
-fn canonicalize_storage_file_path(
+/// Resolves a storage-relative path to a canonical absolute path and verifies it is contained
+/// within the storage root; returns 400 if the canonical path escapes the root directory.
+async fn canonicalize_storage_file_path(
     state: &AppState,
     relative_path: &str,
 ) -> Result<PathBuf, AppError> {
     let clean = sanitize_relative_path(relative_path)?;
     let storage_root = PathBuf::from(&state.config.app.storage_path);
-    std::fs::create_dir_all(&storage_root).map_err(|_| AppError::Internal)?;
-    let canonical_root = std::fs::canonicalize(&storage_root).map_err(|_| AppError::Internal)?;
+    tokio::fs::create_dir_all(&storage_root)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let canonical_root = tokio::fs::canonicalize(&storage_root)
+        .await
+        .map_err(|_| AppError::Internal)?;
 
     let joined = canonical_root.join(clean);
-    let canonical_target = std::fs::canonicalize(&joined).map_err(|_| AppError::NotFound)?;
+    let canonical_target = tokio::fs::canonicalize(&joined)
+        .await
+        .map_err(|_| AppError::NotFound)?;
     if !canonical_target.starts_with(&canonical_root) {
         return Err(AppError::BadRequest);
     }
@@ -3250,6 +3395,8 @@ fn canonicalize_storage_file_path(
     Ok(canonical_target)
 }
 
+/// Converts storage backend errors to `AppError::NotFound` or `AppError::Internal`
+/// by inspecting the error message for "not found" or "NoSuchKey" patterns.
 fn map_storage_read_error(err: anyhow::Error) -> AppError {
     if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
         if io_err.kind() == std::io::ErrorKind::NotFound {
@@ -3299,6 +3446,7 @@ fn parse_range(range_str: &str, total: u64) -> Option<(u64, u64)> {
     Some((start, end))
 }
 
+/// Builds a 416 Range Not Satisfiable response with the required `Content-Range: bytes */N` header.
 fn range_not_satisfiable_response(total_length: u64) -> Result<axum::response::Response, AppError> {
     axum::response::Response::builder()
         .status(StatusCode::RANGE_NOT_SATISFIABLE)
@@ -3307,6 +3455,9 @@ fn range_not_satisfiable_response(total_length: u64) -> Result<axum::response::R
         .map_err(|_| AppError::Internal)
 }
 
+/// Serves a file from the storage backend with full HTTP range-request support.
+/// For the local backend, delegates non-range requests to `tower_http::ServeFile` (which adds
+/// ETag/If-None-Match/conditional-GET handling); for remote backends, streams bytes directly.
 async fn serve_storage_file(
     state: &AppState,
     request: Request<Body>,
@@ -3327,7 +3478,7 @@ async fn serve_storage_file(
         .eq_ignore_ascii_case("local");
 
     if using_local_backend {
-        let full_path = canonicalize_storage_file_path(state, relative_path)?;
+        let full_path = canonicalize_storage_file_path(state, relative_path).await?;
         if let Some(range_str) = range_header.as_deref() {
             // Single-syscall intent: fetch file size once here and pass it through.
             let file_size = match tokio::fs::metadata(&full_path).await {
@@ -3439,6 +3590,8 @@ async fn serve_storage_file(
     }
 }
 
+/// Delegates a request to `tower_http::ServeFile` for local storage, returning 404 if the file
+/// is missing rather than letting tower return its default response body.
 async fn serve_file(
     request: Request<Body>,
     full_path: PathBuf,
@@ -3455,6 +3608,8 @@ async fn serve_file(
     Ok(response)
 }
 
+/// Reads the multipart upload stream, extracting the required "file" field and optional
+/// "metadata" JSON field; enforces the `max_bytes` size limit at the field level.
 async fn parse_upload_multipart(
     mut multipart: Multipart,
     max_bytes: u64,
@@ -3507,6 +3662,8 @@ async fn parse_upload_multipart(
     })
 }
 
+/// Identifies the upload format from magic bytes: `%PDF` → PDF, `PK\x03\x04` → EPUB (ZIP),
+/// `BOOKMOBI` or `PalmDOC` anywhere in the first bytes → MOBI.
 fn detect_upload_format(bytes: &[u8]) -> Option<UploadFormat> {
     if bytes.starts_with(b"%PDF") {
         return Some(UploadFormat::Pdf);
@@ -3540,6 +3697,7 @@ fn extension_format(file_name: &str) -> Option<UploadFormat> {
     }
 }
 
+/// Rejects uploads where the file extension contradicts the magic-byte detected format.
 fn validate_extension_matches(file_name: &str, detected: UploadFormat) -> Result<(), AppError> {
     if let Some(by_extension) = extension_format(file_name) {
         if by_extension != detected {
@@ -3549,6 +3707,8 @@ fn validate_extension_matches(file_name: &str, detected: UploadFormat) -> Result
     Ok(())
 }
 
+/// Validates that a format string is in the allowed download extension allowlist; returns 400
+/// for unknown formats, preventing arbitrary file extension serving.
 fn validated_download_format_extension(format: &str) -> Result<String, AppError> {
     let normalized = format.trim().to_ascii_lowercase();
     if matches!(
@@ -3575,6 +3735,8 @@ fn validated_download_format_extension(format: &str) -> Result<String, AppError>
     }
 }
 
+/// Strips path separators, null bytes, and double-dot sequences from the uploaded filename
+/// to prevent path traversal when the name is later used in storage paths.
 fn sanitize_upload_file_name(file_name: &str) -> String {
     let without_nulls = file_name.replace('\0', "");
     let final_component = without_nulls
@@ -3590,6 +3752,8 @@ fn sanitize_upload_file_name(file_name: &str) -> String {
     }
 }
 
+/// Normalizes the `tag` query parameter: accepts a single string (possibly comma-separated)
+/// or a JSON array, returning a deduplicated list of trimmed non-empty tag strings.
 fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
     let tags = match raw_tags {
         Some(SingleOrMany::One(tag)) => vec![tag],
@@ -3608,10 +3772,12 @@ fn trim_owned(value: String) -> String {
     value.trim().to_string()
 }
 
+/// Wraps `ingest_text::list_chapters`, returning an empty list instead of propagating errors.
 fn list_extractable_chapters(full_path: &FsPath, format: &str) -> Vec<ingest_text::Chapter> {
     ingest_text::list_chapters(full_path, format).unwrap_or_default()
 }
 
+/// Parses an optional chunk domain query param; defaults to `Technical` when absent or empty.
 fn parse_chunk_domain(value: Option<&str>) -> Result<ChunkDomain, AppError> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some(domain) => domain
@@ -3621,6 +3787,7 @@ fn parse_chunk_domain(value: Option<&str>) -> Result<ChunkDomain, AppError> {
     }
 }
 
+/// Spawns a background task to index the book in the search backend; logs a warning on failure.
 fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::db::models::Book) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
@@ -3640,6 +3807,8 @@ fn queue_book_index(search: Arc<dyn crate::search::SearchBackend>, book: crate::
     }
 }
 
+/// Spawns a background task to generate and store text chunks for the book using default
+/// chunk settings (size=600, overlap=100, domain=Technical); logs a warning on failure.
 fn queue_book_chunk_generation(state: AppState, book: crate::db::models::Book) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
@@ -3666,6 +3835,7 @@ fn queue_book_chunk_generation(state: AppState, book: crate::db::models::Book) {
     }
 }
 
+/// Spawns a background task to remove the book from the search index; logs a warning on failure.
 fn queue_book_removal(search: Arc<dyn crate::search::SearchBackend>, book_id: String) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
@@ -3685,6 +3855,8 @@ fn queue_book_removal(search: Arc<dyn crate::search::SearchBackend>, book_id: St
     }
 }
 
+/// Enqueues a `semantic_index` LLM job for the book if LLM features are enabled;
+/// silently logs and continues if the enqueue fails.
 async fn enqueue_semantic_index_if_enabled(state: &AppState, book_id: &str) {
     if !state.config.llm.enabled {
         return;
@@ -3699,6 +3871,8 @@ async fn enqueue_semantic_index_if_enabled(state: &AppState, book_id: &str) {
     }
 }
 
+/// Extracts embedded metadata from an uploaded file: parses OPF for EPUB, derives title/author
+/// from the filename stem for PDF and MOBI (format `"Title - Author.ext"` is recognized).
 fn extract_metadata(
     format: UploadFormat,
     file_name: &str,
@@ -3724,6 +3898,8 @@ fn extract_metadata(
     }
 }
 
+/// Merges caller-supplied upload metadata over the auto-extracted values;
+/// empty or whitespace-only strings are treated as absent (not used to clear extracted data).
 fn apply_metadata_override(
     mut extracted: IngestMetadata,
     metadata: UploadMetadata,
@@ -3797,6 +3973,8 @@ fn apply_metadata_override(
     Ok(extracted)
 }
 
+/// Attempts to extract title and author from a filename stem using the "Title - Author" convention;
+/// falls back to the full stem as title with "Unknown Author" if the separator is absent.
 fn parse_title_author_from_filename(file_name: &str) -> (String, String) {
     let stem = FsPath::new(file_name)
         .file_stem()
@@ -3820,6 +3998,8 @@ fn parse_title_author_from_filename(file_name: &str) -> (String, String) {
     }
 }
 
+/// Parses EPUB metadata by opening the ZIP archive, reading `META-INF/container.xml` to
+/// locate the OPF package document, then extracting Dublin Core fields.
 fn parse_epub_metadata(bytes: &[u8]) -> Option<IngestMetadata> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor).ok()?;
@@ -3830,6 +4010,8 @@ fn parse_epub_metadata(bytes: &[u8]) -> Option<IngestMetadata> {
     parse_opf_xml(&opf_xml)
 }
 
+/// Extracts the raw cover image bytes from an EPUB by following the OPF manifest cover item;
+/// supports both EPUB 3 `properties="cover-image"` and EPUB 2 `<meta name="cover">` conventions.
 fn extract_epub_cover_source(bytes: &[u8]) -> Option<Vec<u8>> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor).ok()?;
@@ -3848,6 +4030,8 @@ struct CoverVariants {
     thumb_webp: Vec<u8>,
 }
 
+/// Decodes a raw cover image and renders four variants: 400×600 JPEG, 100×150 JPEG thumbnail,
+/// 400×600 lossless WebP, and 100×150 lossless WebP thumbnail.
 fn render_cover_variants(raw_cover: &[u8]) -> Option<CoverVariants> {
     let image = image::load_from_memory(raw_cover).ok()?;
     if image.width() == 0 || image.height() == 0 {
@@ -3889,6 +4073,8 @@ fn render_cover_variants(raw_cover: &[u8]) -> Option<CoverVariants> {
     })
 }
 
+/// Checks whether a storage path exists; uses filesystem canonicalization for the local backend
+/// and a zero-byte range GET probe for remote backends.
 async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
     let using_local_backend = state
         .config
@@ -3898,7 +4084,7 @@ async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
         .eq_ignore_ascii_case("local");
 
     if using_local_backend {
-        return canonicalize_storage_file_path(state, relative_path).is_ok();
+        return canonicalize_storage_file_path(state, relative_path).await.is_ok();
     }
 
     state
@@ -3908,6 +4094,7 @@ async fn storage_path_exists(state: &AppState, relative_path: &str) -> bool {
         .is_ok()
 }
 
+/// Deletes multiple storage paths, ignoring individual failures (best-effort cleanup).
 async fn delete_storage_paths(state: &AppState, paths: &[&str]) {
     for path in paths {
         let _ = state.storage.delete(path).await;
@@ -3928,6 +4115,7 @@ fn read_zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Op
     Some(buffer)
 }
 
+/// Parses `META-INF/container.xml` to find the `full-path` attribute of the first `<rootfile>` element.
 fn find_opf_path(container_xml: &str) -> Option<String> {
     let doc = roxmltree::Document::parse(container_xml).ok()?;
     doc.descendants()
@@ -3936,12 +4124,15 @@ fn find_opf_path(container_xml: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Locates the cover image href from the OPF manifest and resolves it relative to the OPF directory.
 fn find_cover_image_path(opf_path: &str, opf_xml: &str) -> Option<String> {
     let doc = roxmltree::Document::parse(opf_xml).ok()?;
     let cover_href = find_cover_href_in_manifest(&doc)?;
     resolve_zip_relative_path(opf_path, &cover_href)
 }
 
+/// Searches the OPF manifest for the cover item, trying EPUB 3 `properties="cover-image"` first
+/// and falling back to the EPUB 2 `<meta name="cover" content="id">` pointer.
 fn find_cover_href_in_manifest(doc: &roxmltree::Document<'_>) -> Option<String> {
     for node in doc.descendants().filter(|node| node.is_element()) {
         if node.tag_name().name() != "item" {
@@ -3991,6 +4182,8 @@ fn find_cover_href_in_manifest(doc: &roxmltree::Document<'_>) -> Option<String> 
     None
 }
 
+/// Resolves a manifest href relative to the OPF document's directory, normalizing `.` components
+/// and rejecting any `..` traversal that would escape the EPUB ZIP root.
 fn resolve_zip_relative_path(opf_path: &str, candidate_href: &str) -> Option<String> {
     let opf_dir = FsPath::new(opf_path)
         .parent()
@@ -4020,6 +4213,7 @@ fn resolve_zip_relative_path(opf_path: &str, candidate_href: &str) -> Option<Str
     )
 }
 
+/// Parses Dublin Core metadata fields (title, creator, identifier) from the OPF package document.
 fn parse_opf_xml(opf_xml: &str) -> Option<IngestMetadata> {
     let doc = roxmltree::Document::parse(opf_xml).ok()?;
     let mut metadata = IngestMetadata::default();
@@ -4070,6 +4264,7 @@ fn parse_opf_xml(opf_xml: &str) -> Option<IngestMetadata> {
     Some(metadata)
 }
 
+/// Returns true if the compact (alphanumeric-only) form of the value is 10 or 13 characters — a heuristic for ISBN.
 fn looks_like_isbn(value: &str) -> bool {
     let compact = value
         .chars()
@@ -4078,6 +4273,7 @@ fn looks_like_isbn(value: &str) -> bool {
     compact.len() == 10 || compact.len() == 13
 }
 
+/// Returns "isbn13" for 13-character compact values and "isbn" for 10-character values.
 fn isbn_type(value: &str) -> String {
     let compact = value
         .chars()

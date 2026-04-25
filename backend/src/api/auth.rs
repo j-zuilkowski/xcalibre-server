@@ -1,3 +1,16 @@
+//! Authentication, session management, and identity federation for xcalibre-server.
+//!
+//! Owns all routes under `/api/v1/auth/`. Public routes (`/login`, `/register`,
+//! `/refresh`, `/providers`, `/oauth/:provider`, `/oauth/:provider/callback`) are
+//! rate-limited by `auth_rate_limit_layer`. Protected routes require a valid JWT.
+//! TOTP-pending routes require a short-lived TOTP-pending token issued at login.
+//!
+//! Security invariants:
+//! - Passwords hashed with Argon2id.
+//! - OAuth state tokens are HMAC-bound to client IP to prevent CSRF.
+//! - New OAuth logins are never silently linked to existing local accounts by email.
+//! - Refresh tokens are stored as SHA-256 hashes and rotated on every use.
+
 use crate::{
     auth::{ldap::authenticate_ldap, password::hash_password, totp as totp_auth},
     db::queries::{auth as auth_queries, oauth as oauth_queries, totp as totp_queries},
@@ -31,6 +44,8 @@ use std::time::Duration;
 use std::{net::SocketAddr, string::ToString};
 use utoipa::ToSchema;
 
+/// Builds the auth sub-router, splitting routes into three groups: public (rate-limited),
+/// protected (require JWT), and TOTP-pending (require short-lived TOTP token, also rate-limited).
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
@@ -146,6 +161,7 @@ struct GithubEmailRecord {
     verified: bool,
 }
 
+/// Login response: either a full session (JWT + refresh token) or a TOTP challenge.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(untagged)]
@@ -178,6 +194,8 @@ pub(crate) struct SuccessResponse {
     success: bool,
 }
 
+/// Creates the first admin user; returns 409 Conflict if any user already exists.
+/// This bootstrap endpoint is only usable on a fresh installation.
 async fn register(
     State(state): State<AppState>,
     Json(payload): Json<RegisterRequest>,
@@ -388,6 +406,7 @@ pub(crate) async fn login(
     Err(AppError::Unauthorized)
 }
 
+/// Returns which OAuth providers (Google, GitHub) are configured in `config.toml`.
 async fn auth_providers(
     State(state): State<AppState>,
 ) -> Result<Json<AuthProvidersResponse>, AppError> {
@@ -397,6 +416,8 @@ async fn auth_providers(
     }))
 }
 
+/// Begins the OAuth authorization-code flow: generates a nonce, HMAC-binds it to the
+/// client IP, stores the nonce in an HttpOnly cookie, and redirects to the provider.
 async fn oauth_start(
     State(state): State<AppState>,
     axum::extract::Path(provider): axum::extract::Path<String>,
@@ -429,6 +450,9 @@ async fn oauth_start(
     Ok(response)
 }
 
+/// Handles the OAuth provider callback: validates the state token, exchanges the code
+/// for an access token, fetches user info, and issues a refresh-token cookie.
+/// Issues a refresh token only — the SPA must call `/auth/refresh` after redirect.
 async fn oauth_callback(
     State(state): State<AppState>,
     axum::extract::Path(provider): axum::extract::Path<String>,
@@ -628,12 +652,15 @@ pub(crate) async fn refresh(
     ))
 }
 
+/// Returns the currently authenticated user's profile from the JWT extension.
 async fn me(
     Extension(auth_user): Extension<AuthenticatedUser>,
 ) -> Result<Json<crate::db::models::User>, AppError> {
     Ok(Json(auth_user.user))
 }
 
+/// Allows the authenticated user to change their own password; requires the current
+/// password to be supplied and verified before updating.
 async fn change_password(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -679,14 +706,14 @@ pub(crate) struct TotpSetupResponse {
     otpauth_uri: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Serialize, ToSchema)]
+#[allow(dead_code)]
 struct TotpBackupCodesResponse {
     backup_codes: Vec<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Serialize, ToSchema)]
+#[allow(dead_code)]
 struct TotpVerifyErrorResponse {
     error: String,
 }
@@ -836,6 +863,7 @@ pub(crate) async fn totp_confirm(
     ))
 }
 
+/// Disables TOTP for the authenticated user after confirming their password.
 async fn totp_disable(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -986,6 +1014,9 @@ pub(crate) async fn totp_verify(
     ))
 }
 
+/// Completes TOTP login using a single-use backup code instead of the TOTP authenticator app.
+/// The backup code is consumed atomically inside a transaction; invalid format and failed
+/// lookups both increment the failed-login counter to prevent brute-force enumeration.
 async fn totp_verify_backup(
     State(state): State<AppState>,
     Extension(totp_user): Extension<TotpPendingUser>,
@@ -1081,6 +1112,7 @@ async fn totp_verify_backup(
     ))
 }
 
+/// Issues fresh access and refresh tokens and bundles them with the user record.
 async fn create_login_session_response(
     state: &AppState,
     user: &crate::db::models::User,
@@ -1161,6 +1193,8 @@ async fn issue_session_tokens(
     Ok((access_token, refresh_token))
 }
 
+/// Issues access and refresh tokens within an already-open transaction so that TOTP
+/// verification and token insertion are atomic — no partial sessions can be created.
 async fn issue_session_tokens_in_transaction(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &AppState,
@@ -1303,6 +1337,8 @@ fn generate_random_token(len: usize) -> String {
         .collect()
 }
 
+/// Generates an HMAC-protected OAuth state token binding the random nonce to the client IP,
+/// returning `(nonce, state_token)` where only the state token is sent to the provider.
 fn generate_oauth_state(
     jwt_secret: &str,
     client_ip: &str,
@@ -1315,6 +1351,8 @@ fn generate_oauth_state(
     Ok((nonce, state_token))
 }
 
+/// Validates the OAuth callback state token: checks that the nonce matches the cookie and that
+/// the HMAC over `{nonce}:{client_ip}` is correct, using constant-time comparison.
 fn validate_oauth_state(
     jwt_secret: &str,
     cookie_nonce: &str,
@@ -1336,8 +1374,10 @@ fn validate_oauth_state(
     Ok(())
 }
 
+/// Derives a dedicated 32-byte HMAC key for OAuth state tokens using HKDF-SHA256,
+/// so the same JWT secret can be used for multiple cryptographic purposes without reuse.
 fn derive_oauth_state_secret(jwt_secret: &str) -> Result<[u8; 32], AppError> {
-    const OAUTH_STATE_HKDF_SALT: &[u8] = b"autolibre-oauth-state-v1";
+    const OAUTH_STATE_HKDF_SALT: &[u8] = b"xcalibre-server-oauth-state-v1";
     const OAUTH_STATE_HKDF_LABEL: &[u8] = b"oauth-state-hmac-key";
     let hkdf = Hkdf::<Sha256>::new(Some(OAUTH_STATE_HKDF_SALT), jwt_secret.as_bytes());
     let mut key = [0_u8; 32];
@@ -1441,7 +1481,7 @@ async fn fetch_oauth_user(
 ) -> Result<ExternalOAuthUser, AppError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
-        .user_agent("autolibre")
+        .user_agent("xcalibre-server")
         .build()
         .map_err(|_| AppError::Internal)?;
 
@@ -1552,6 +1592,8 @@ fn validate_registration(payload: &RegisterRequest) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Builds `Set-Cookie` headers for the refresh token with HttpOnly, SameSite=Strict,
+/// and Secure (when HTTPS is configured); logs a warning if Secure cannot be set.
 fn refresh_cookie_headers(
     config: &crate::config::AppConfig,
     refresh_token: &str,
@@ -1609,12 +1651,13 @@ fn refresh_cookie_secure(config: &crate::config::AppConfig) -> bool {
 fn issuer_name(config: &crate::config::AppConfig) -> String {
     let issuer = config.app.library_name.trim();
     if issuer.is_empty() {
-        "autolibre".to_string()
+        "xcalibre-server".to_string()
     } else {
         issuer.to_string()
     }
 }
 
+/// Hashes a TOTP backup code with SHA-256 for storage; backup codes are never stored in plain text.
 fn hash_totp_backup_code(code: &str) -> String {
     let digest = Sha256::digest(code.as_bytes());
     hex::encode(digest)

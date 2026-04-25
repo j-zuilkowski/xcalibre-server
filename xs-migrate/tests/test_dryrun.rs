@@ -4,8 +4,8 @@ mod common;
 
 use std::path::Path;
 
-use calibre_migrate::calibre::reader::CalibreReader;
-use calibre_migrate::import::pipeline::{ImportPipeline, LocalFs};
+use xs_migrate::calibre::reader::CalibreReader;
+use xs_migrate::import::pipeline::{ImportPipeline, LocalFs};
 use rusqlite::Connection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
@@ -20,7 +20,12 @@ async fn test_dryrun_writes_nothing_to_db() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), true);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        true,
+        "default",
+    );
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.imported, 3);
@@ -50,7 +55,8 @@ async fn test_dryrun_writes_nothing_to_storage() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true);
+    let pipeline =
+        ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true, "default");
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.imported, 3);
@@ -68,7 +74,8 @@ async fn test_dryrun_report_shows_expected_counts() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true);
+    let pipeline =
+        ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true, "default");
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.total, 3);
@@ -91,7 +98,8 @@ async fn test_report_counts_skipped_books() {
     seed_existing_calibre_id(&target_db, "1").await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true);
+    let pipeline =
+        ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true, "default");
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.total, 3);
@@ -115,7 +123,8 @@ async fn test_report_counts_failed_books() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true);
+    let pipeline =
+        ImportPipeline::new(target_db, LocalFs::new(storage_dir.path()), true, "default");
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.total, 3);

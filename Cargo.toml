@@ -1,5 +1,5 @@
 [workspace]
-members = ["backend", "autolibre-migrate", "autolibre-mcp"]
+members = ["backend", "xs-migrate", "xs-mcp"]
 resolver = "2"
 
 [patch.crates-io]

@@ -61,14 +61,21 @@ pub struct ImportPipeline {
     target_db: SqlitePool,
     storage: LocalFs,
     dry_run: bool,
+    library_id: String,
 }
 
 impl ImportPipeline {
-    pub fn new(target_db: SqlitePool, storage: LocalFs, dry_run: bool) -> Self {
+    pub fn new(
+        target_db: SqlitePool,
+        storage: LocalFs,
+        dry_run: bool,
+        library_id: impl Into<String>,
+    ) -> Self {
         Self {
             target_db,
             storage,
             dry_run,
+            library_id: library_id.into(),
         }
     }
 
@@ -162,14 +169,15 @@ impl ImportPipeline {
         sqlx::query(
             r#"
             INSERT INTO books (
-                id, title, sort_title, description, pubdate, language, rating,
+                id, library_id, title, sort_title, description, pubdate, language, rating,
                 series_id, series_index, has_cover, cover_path, flags, indexed_at,
                 created_at, last_modified
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&book_id)
+        .bind(&self.library_id)
         .bind(&entry.book.title)
         .bind(&entry.book.sort)
         .bind(entry.comment.as_ref().map(|comment| comment.text.clone()))

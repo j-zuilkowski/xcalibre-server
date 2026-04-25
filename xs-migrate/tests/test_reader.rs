@@ -2,7 +2,7 @@
 
 mod common;
 
-use calibre_migrate::calibre::reader::CalibreReader;
+use xs_migrate::calibre::reader::CalibreReader;
 
 #[test]
 fn test_reader_loads_books() {

@@ -4,8 +4,8 @@ mod common;
 
 use std::path::Path;
 
-use calibre_migrate::calibre::reader::CalibreReader;
-use calibre_migrate::import::pipeline::{ImportPipeline, LocalFs};
+use xs_migrate::calibre::reader::CalibreReader;
+use xs_migrate::import::pipeline::{ImportPipeline, LocalFs};
 use rusqlite::Connection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
@@ -20,7 +20,12 @@ async fn test_import_creates_book_in_target_db() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.total, 3);
@@ -43,7 +48,12 @@ async fn test_import_copies_book_file_to_storage() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
     let path: String = sqlx::query_scalar("SELECT path FROM formats LIMIT 1")
@@ -62,7 +72,12 @@ async fn test_import_copies_cover_to_storage() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
     let row =
@@ -98,7 +113,12 @@ async fn test_import_skips_duplicate_calibre_id() {
     seed_existing_calibre_id(&target_db, "2").await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.imported, 2);
@@ -129,7 +149,12 @@ async fn test_import_missing_file_is_skipped_not_fatal() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.imported, 2);
@@ -154,7 +179,12 @@ async fn test_import_multiple_authors() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
     let author_count: i64 = sqlx::query_scalar(
@@ -180,7 +210,12 @@ async fn test_import_multiple_formats() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
     let format_count: i64 = sqlx::query_scalar(
@@ -204,7 +239,12 @@ async fn test_import_identifiers_preserved() {
     let (target_db, _target_db_dir) = create_target_db().await;
     let storage_dir = tempfile::tempdir().expect("storage dir");
 
-    let pipeline = ImportPipeline::new(target_db.clone(), LocalFs::new(storage_dir.path()), false);
+    let pipeline = ImportPipeline::new(
+        target_db.clone(),
+        LocalFs::new(storage_dir.path()),
+        false,
+        "default",
+    );
     let _ = pipeline.run(entries, &reader).await.expect("run import");
 
     let rows = sqlx::query(
@@ -264,11 +304,11 @@ async fn seed_existing_calibre_id(pool: &SqlitePool, calibre_id: &str) {
     sqlx::query(
         r#"
         INSERT INTO books (
-            id, title, sort_title, description, pubdate, language, rating,
+            id, library_id, title, sort_title, description, pubdate, language, rating,
             series_id, series_index, has_cover, cover_path, flags, indexed_at,
             created_at, last_modified
         )
-        VALUES (?, 'Already Imported', 'Already Imported', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, ?, ?)
+        VALUES (?, 'default', 'Already Imported', 'Already Imported', NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, ?, ?)
         "#,
     )
     .bind(&book_id)
@@ -347,8 +387,19 @@ const TARGET_SCHEMA: &[&str] = &[
     )
     "#,
     r#"
+    CREATE TABLE libraries (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        calibre_db_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    "#,
+    "INSERT INTO libraries (id, name, calibre_db_path, created_at, updated_at) VALUES ('default', 'Default Library', '', '2025-01-01T00:00:00+00:00', '2025-01-01T00:00:00+00:00')",
+    r#"
     CREATE TABLE books (
         id TEXT PRIMARY KEY,
+        library_id TEXT NOT NULL DEFAULT 'default' REFERENCES libraries(id),
         title TEXT NOT NULL,
         sort_title TEXT NOT NULL,
         description TEXT,

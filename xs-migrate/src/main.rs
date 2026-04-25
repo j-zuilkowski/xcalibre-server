@@ -4,11 +4,11 @@ use std::str::FromStr;
 use clap::Parser;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use calibre_migrate::calibre::reader::CalibreReader;
-use calibre_migrate::import::pipeline::{ImportPipeline, LocalFs};
+use xs_migrate::calibre::reader::CalibreReader;
+use xs_migrate::import::pipeline::{ImportPipeline, LocalFs};
 
 #[derive(Debug, Parser)]
-#[command(name = "calibre-migrate")]
+#[command(name = "xs-migrate")]
 #[command(about = "Migrate metadata and files from a Calibre library")]
 struct Cli {
     #[arg(long)]
@@ -25,6 +25,9 @@ struct Cli {
 
     #[arg(long = "report-path")]
     report_path: Option<PathBuf>,
+
+    #[arg(long = "library-id", default_value = "default")]
+    library_id: String,
 }
 
 #[tokio::main]
@@ -41,13 +44,18 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run(cli: Cli) -> anyhow::Result<calibre_migrate::report::MigrationReport> {
+async fn run(cli: Cli) -> anyhow::Result<xs_migrate::report::MigrationReport> {
     let target_db = connect_and_migrate(&cli.target_db).await?;
 
     let reader = CalibreReader::open(&cli.source)?;
     let entries = reader.read_all_entries()?;
 
-    let pipeline = ImportPipeline::new(target_db, LocalFs::new(&cli.target_storage), cli.dry_run);
+    let pipeline = ImportPipeline::new(
+        target_db,
+        LocalFs::new(&cli.target_storage),
+        cli.dry_run,
+        cli.library_id,
+    );
     let report = pipeline.run(entries, &reader).await?;
 
     if let Some(path) = cli.report_path {
@@ -76,7 +84,7 @@ async fn connect_and_migrate(target_db_url: &str) -> anyhow::Result<sqlx::Sqlite
 
 fn write_report(
     report_path: &Path,
-    report: &calibre_migrate::report::MigrationReport,
+    report: &xs_migrate::report::MigrationReport,
 ) -> anyhow::Result<()> {
     if let Some(parent) = report_path.parent() {
         if !parent.as_os_str().is_empty() {

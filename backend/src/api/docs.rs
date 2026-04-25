@@ -1,3 +1,12 @@
+//! OpenAPI specification and Swagger UI wiring for xcalibre-server.
+//!
+//! `ApiDoc` is a `utoipa::OpenApi` struct that aggregates all annotated handler paths
+//! and schema types across the codebase. The Swagger UI is served at `/api/docs` and the
+//! raw `openapi.json` is available at `/api/docs/openapi.json`.
+//!
+//! `SecurityAddon` patches the compiled OpenAPI document to declare a `bearer_auth`
+//! HTTP Bearer / JWT security scheme, which Swagger UI uses for the Authorize dialog.
+
 use axum::Router;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -6,7 +15,7 @@ use utoipa_swagger_ui::SwaggerUi;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "autolibre API",
+        title = "xcalibre-server API",
         version = "0.1.0",
         description = "Self-hosted ebook library manager — REST API",
         license(name = "MIT")
@@ -118,8 +127,10 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "health", description = "Service health checks")
     )
 )]
+/// Root OpenAPI document; all handler paths and component schemas are registered here.
 pub struct ApiDoc;
 
+/// Adds the `bearer_auth` JWT security scheme to the compiled OpenAPI document.
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
@@ -140,8 +151,9 @@ impl Modify for SecurityAddon {
     }
 }
 
+/// Mounts the Swagger UI at `/api/docs` and the OpenAPI JSON schema at `/api/docs/openapi.json`.
 pub fn openapi_routes(state: crate::AppState) -> Router<crate::AppState> {
-    Router::new()
-        .merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
-        .with_state(state)
+    let swagger = Router::from(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()));
+
+    Router::new().merge(swagger).with_state(state)
 }

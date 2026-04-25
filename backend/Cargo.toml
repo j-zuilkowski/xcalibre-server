@@ -12,9 +12,8 @@ sqlite-vec = ["dep:sqlite-vec"]
 anyhow = "1"
 async-trait = "0.1"
 argon2 = "0.5"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = "1"
-aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.131.0", default-features = false, features = ["behavior-version-latest", "http-1x", "rt-tokio"] }
 axum = { version = "0.7", features = ["macros", "multipart", "json"] }
 axum-prometheus = "0.7"
 axum-extra = { version = "0.9", features = ["cookie"] }
@@ -34,14 +33,15 @@ hmac = "0.12"
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 jsonwebtoken = "9"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
-meilisearch-sdk = { version = "0.27", optional = true }
+meilisearch-sdk = { version = "0.33.0", default-features = false, features = ["reqwest"], optional = true }
 mime = "0.3"
 mime_guess = "2"
-mobi = "0.7"
-oauth2 = "4"
+mobi = "0.8"
+oauth2 = { version = "5.0.0", default-features = false, features = ["reqwest", "native-tls"] }
 ipnet = "2"
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "native-tls"] }
+aws-smithy-http-client = { version = "1.1.12", default-features = false, features = ["s2n-tls"] }
 sqlite-vec = { version = "0.1", optional = true } # SQLite extension, loaded at runtime
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -60,7 +60,7 @@ tower_governor = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+ldap3 = { version = "0.12.1", default-features = false, features = ["tls-native"] }
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
@@ -69,8 +69,8 @@ roxmltree = "0.20"
 urlencoding = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 unrar = "0.5"
-utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "7", features = ["axum"] }
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "8.1.0", features = ["axum"] }
 
 [dev-dependencies]
 axum-test = "14"
