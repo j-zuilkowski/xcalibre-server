@@ -27,11 +27,11 @@ Save the returned `token` value. It is shown only once and is never stored in pl
 
 ## Run the MCP Server
 
-The `xs-mcp` binary reads `config.toml` by default from the current working directory. If you keep the config elsewhere, set `CONFIG_PATH` before launching the server.
+The `calibre-mcp` binary reads `config.toml` by default from the current working directory. If you keep the config elsewhere, set `CONFIG_PATH` before launching the server.
 
 ```bash
-CONFIG_PATH=/path/to/config.toml xs-mcp --transport stdio
-CONFIG_PATH=/path/to/config.toml xs-mcp --transport sse --port 8084
+CONFIG_PATH=/path/to/config.toml calibre-mcp --transport stdio
+CONFIG_PATH=/path/to/config.toml calibre-mcp --transport sse --port 8084
 ```
 
 ## Claude Code Integration
@@ -39,7 +39,7 @@ CONFIG_PATH=/path/to/config.toml xs-mcp --transport sse --port 8084
 Add the server to Claude Code:
 
 ```bash
-claude mcp add xcalibre-server-library ./target/release/xs-mcp \
+claude mcp add xcalibre-server-library ./target/release/calibre-mcp \
   --env CONFIG_PATH=./config.toml
 ```
 
@@ -49,7 +49,7 @@ Or add it manually to `.claude/settings.json`:
 {
   "mcpServers": {
     "xcalibre-server-library": {
-      "command": "/path/to/xs-mcp",
+      "command": "/path/to/calibre-mcp",
       "args": ["--transport", "stdio"],
       "env": {
         "CONFIG_PATH": "./config.toml"
@@ -67,7 +67,7 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "xcalibre-server-library": {
-      "command": "/path/to/xs-mcp",
+      "command": "/path/to/calibre-mcp",
       "args": ["--transport", "stdio"],
       "env": {
         "CONFIG_PATH": "./config.toml"
@@ -82,7 +82,7 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 Start the SSE transport:
 
 ```bash
-CONFIG_PATH=/path/to/config.toml xs-mcp --transport sse --port 8084
+CONFIG_PATH=/path/to/config.toml calibre-mcp --transport sse --port 8084
 ```
 
 Connect from LangGraph:

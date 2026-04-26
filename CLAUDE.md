@@ -56,9 +56,9 @@ Register once: `claude mcp add xcalibre-server-dev node tools/mcp_server.js`
 - `run_migrations` — apply sqlx migrations
 
 ## Library MCP Server (for agents)
-Build: `cargo build --release -p xs-mcp`
+Build: `cargo build --release -p calibre-mcp`
 Register with Claude Code:
-`claude mcp add xcalibre-server-library ./target/release/xs-mcp --env CONFIG_PATH=./config.toml`
+`claude mcp add xcalibre-server-library ./target/release/calibre-mcp --env CONFIG_PATH=./config.toml`
 Exposes: `search_books`, `get_book_metadata`, `list_chapters`, `get_book_text`, `semantic_search`
 
 ## Code Style
