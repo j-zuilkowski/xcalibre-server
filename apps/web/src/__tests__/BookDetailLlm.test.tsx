@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Book, ClassifyResult, LlmHealth, User } from "@xs/shared";
 import { BookDetailPage } from "../features/library/BookDetailPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
+import { makeTestQueryClient } from "../test/query-client";
 
 const getBookMock = vi.spyOn(apiClient, "getBook");
 const getLlmHealthMock = vi.spyOn(apiClient, "getLlmHealth");
@@ -90,10 +91,11 @@ function makeUser(): User {
 }
 
 function renderPage() {
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });

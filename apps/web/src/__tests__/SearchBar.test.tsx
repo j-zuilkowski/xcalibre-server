@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SearchBar } from "../features/search/SearchBar";
 import { apiClient } from "../lib/api-client";
+import { makeTestQueryClient } from "../test/query-client";
 
 const { navigateMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -22,10 +23,11 @@ vi.mock("@tanstack/react-router", async () => {
 const searchSuggestionsMock = vi.spyOn(apiClient, "searchSuggestions");
 
 function renderBar() {
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });

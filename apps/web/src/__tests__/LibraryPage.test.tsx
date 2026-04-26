@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { BookSummary, PaginatedResponse } from "@xs/shared";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { apiClient } from "../lib/api-client";
+import { makeTestQueryClient } from "../test/query-client";
 
 const listBooksMock = vi.spyOn(apiClient, "listBooks");
 
@@ -35,10 +36,11 @@ function makeResponse(items: BookSummary[]): PaginatedResponse<BookSummary> {
 }
 
 function renderPage() {
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });

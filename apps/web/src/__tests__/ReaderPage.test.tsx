@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Book, ReadingProgress, User } from "@xs/shared";
 import { ReaderPage } from "../features/reader/ReaderPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";
+import { makeTestQueryClient } from "../test/query-client";
 
 const epubCallbacks: Array<(payload: { start: { percentage: number; cfi: string } }) => void> = [];
 
@@ -140,10 +141,11 @@ function makeUser(): User {
 function renderReader(pathname: string) {
   window.history.replaceState({}, "", pathname);
 
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });
@@ -186,7 +188,6 @@ describe("ReaderPage", () => {
   });
 
   afterEach(() => {
-    vi.runAllTimers();
     vi.clearAllTimers();
     vi.useRealTimers();
     cleanup();

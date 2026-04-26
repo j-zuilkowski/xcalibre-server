@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { BookSummary } from "@xs/shared";
 import { BookCard } from "../features/library/BookCard";
+import { makeTestQueryClient } from "../test/query-client";
 
 const baseBook: BookSummary = {
   id: "book-1",
@@ -29,10 +30,11 @@ describe("BookCard", () => {
     book: BookSummary,
     props: { readFormat?: string; progressPercentage?: number; score?: number } = {},
   ) {
-    const queryClient = new QueryClient({
+    const queryClient = makeTestQueryClient({
       defaultOptions: {
         queries: {
           retry: false,
+          gcTime: Infinity,
         },
       },
     });

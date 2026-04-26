@@ -1,4 +1,5 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -10,6 +11,7 @@ import { routeTree } from "../router";
 import i18n from "../i18n";
 import { useAuthStore } from "../lib/auth-store";
 import { makeAdminUser, makeUser } from "./fixtures";
+import { makeTestQueryClient } from "./query-client";
 
 type RenderOptions = {
   initialPath?: string;
@@ -47,10 +49,11 @@ export function renderWithProviders(
 
   const client =
     queryClient ??
-    new QueryClient({
+    makeTestQueryClient({
       defaultOptions: {
         queries: {
           retry: false,
+          gcTime: Infinity,
         },
         mutations: {
           retry: 0,

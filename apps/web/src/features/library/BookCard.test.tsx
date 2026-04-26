@@ -1,16 +1,17 @@
 import { describe, expect, test } from "vitest";
 import { http, HttpResponse } from "msw";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BookCard } from "./BookCard";
 import { makeBookSummary } from "../../test/fixtures";
 import { server } from "../../test/setup";
+import { makeTestQueryClient } from "../../test/query-client";
 
 function renderCard(book = makeBookSummary()) {
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
-      queries: { retry: false },
+      queries: { retry: false, gcTime: Infinity },
       mutations: { retry: 0 },
     },
   });

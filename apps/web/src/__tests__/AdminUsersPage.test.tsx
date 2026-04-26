@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { AdminUser, Role } from "@xs/shared";
 import { UsersPage } from "../features/admin/UsersPage";
 import { apiClient } from "../lib/api-client";
+import { makeTestQueryClient } from "../test/query-client";
 
 const listUsersMock = vi.spyOn(apiClient, "listUsers");
 const listRolesMock = vi.spyOn(apiClient, "listRoles");
@@ -38,10 +39,11 @@ function makeUser(id: string, username: string, role: Role): AdminUser {
 }
 
 function renderPage() {
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });

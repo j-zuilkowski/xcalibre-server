@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PaginatedResponse, SearchResultItem, SearchStatusResponse } from "@xs/shared";
 import { SearchPage } from "../features/search/SearchPage";
 import { apiClient } from "../lib/api-client";
+import { makeTestQueryClient } from "../test/query-client";
 
 const searchMock = vi.spyOn(apiClient, "search");
 const searchStatusMock = vi.spyOn(apiClient, "getSearchStatus");
@@ -50,10 +51,11 @@ function makeSearchStatus(semantic: boolean): SearchStatusResponse {
 function renderPage(path = "/search?q=dune") {
   window.history.replaceState({}, "", path);
 
-  const queryClient = new QueryClient({
+  const queryClient = makeTestQueryClient({
     defaultOptions: {
       queries: {
         retry: false,
+        gcTime: Infinity,
       },
     },
   });

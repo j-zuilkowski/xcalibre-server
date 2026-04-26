@@ -106,6 +106,8 @@ function authorLabel(book: BookSummary, t: (key: string) => string): string {
 }
 
 function SearchMiniCard({ book }: { book: BookSummary }) {
+  const { t } = useTranslation();
+
   return (
     <a
       href={`/books/${encodeURIComponent(book.id)}`}
