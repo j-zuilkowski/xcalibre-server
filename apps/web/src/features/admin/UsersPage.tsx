@@ -1,7 +1,47 @@
+/**
+ * UsersPage — admin user management table.
+ *
+ * Route: /admin/users
+ *
+ * Features:
+ *   - Inline create-user form (username, email, password, role, active).
+ *     The role selector pre-selects the first available role once the roles
+ *     list loads.
+ *   - User table with per-row:
+ *       - Role selector (drafts stored in `drafts` state map, applied on
+ *         "Save").
+ *       - Active checkbox and force-password-reset checkbox.
+ *       - "Save" — PATCH /api/v1/users/:id with the draft values.
+ *       - "Reset password" — POST /api/v1/users/:id/reset-password (sends
+ *         email or generates a token depending on backend config).
+ *       - "Tag restrictions" — opens TagRestrictionsModal.
+ *       - "Disable 2FA" — POST /api/v1/users/:id/totp/disable (admin action,
+ *         visible only when `user.totp_enabled` is true).
+ *       - "Delete" — opens confirm Dialog.
+ *
+ * `drafts` is a per-user-id record initialised lazily as users load.  This
+ * allows the admin to modify multiple rows without triggering saves until they
+ * explicitly click "Save" for each user.
+ *
+ * TagRestrictionsModal (defined in the same file) manages allow/block tag
+ * restrictions for a selected user.
+ *
+ * API calls:
+ *   GET    /api/v1/users
+ *   GET    /api/v1/roles
+ *   POST   /api/v1/users
+ *   PATCH  /api/v1/users/:id
+ *   DELETE /api/v1/users/:id
+ *   POST   /api/v1/users/:id/reset-password
+ *   POST   /api/v1/users/:id/totp/disable
+ *   GET    /api/v1/users/:id/tag-restrictions
+ *   PUT    /api/v1/users/:id/tag-restrictions/:tagId
+ *   DELETE /api/v1/users/:id/tag-restrictions/:tagId
+ */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AdminUser, Role, TagLookupItem } from "@autolibre/shared";
+import type { AdminUser, Role, TagLookupItem } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Dialog } from "../../components/ui/Dialog";
 import { formatDateTime } from "./admin-utils";
@@ -33,6 +73,11 @@ function buildDraft(user: AdminUser): UserDraft {
   };
 }
 
+/**
+ * UsersPage renders the admin user management table with create form, per-row
+ * role/status editing, password reset, TOTP disable, tag restrictions, and
+ * delete confirmation dialog.
+ */
 export function UsersPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

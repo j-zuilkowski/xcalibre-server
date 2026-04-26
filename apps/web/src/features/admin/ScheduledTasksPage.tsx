@@ -1,10 +1,39 @@
+/**
+ * ScheduledTasksPage — admin cron task CRUD.
+ *
+ * Route: /admin/scheduled-tasks
+ *
+ * A scheduled task maps a cron expression to one of three task types:
+ *   - classify_all     — runs the library-wide LLM classification job
+ *   - semantic_index_all — rebuilds the vector/semantic index for all books
+ *   - backup           — triggers the configured backup job
+ *
+ * Layout:
+ *   - "Add task" form: name, task type selector, cron expression input.
+ *     A human-readable cron description (`describeCronExpression` from
+ *     admin-utils) is shown beneath the cron field.
+ *   - Tasks table rendered via `ScheduledTaskRow` sub-component: name, type,
+ *     cron expression, enabled toggle (inline PATCH on change), last-run and
+ *     next-run timestamps, Delete button.
+ *   - Delete confirmation Dialog.
+ *   - Task type reference cards at the bottom of the page.
+ *
+ * The `disabled` prop on ScheduledTaskRow is set while any mutation is
+ * pending to prevent concurrent conflicting updates.
+ *
+ * API calls:
+ *   GET    /api/v1/admin/scheduled-tasks
+ *   POST   /api/v1/admin/scheduled-tasks
+ *   PATCH  /api/v1/admin/scheduled-tasks/:id
+ *   DELETE /api/v1/admin/scheduled-tasks/:id
+ */
 import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ScheduledTask,
   ScheduledTaskCreateRequest,
   ScheduledTaskType,
-} from "@autolibre/shared";
+} from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Dialog } from "../../components/ui/Dialog";
 import { describeCronExpression, formatDateTime } from "./admin-utils";
@@ -31,6 +60,15 @@ function taskTypeLabel(taskType: ScheduledTaskType): string {
   return TASK_TYPES.find((entry) => entry.value === taskType)?.label ?? taskType;
 }
 
+/**
+ * ScheduledTaskRow renders a single row in the tasks table.
+ *
+ * @param task            - The scheduled task data to display.
+ * @param onToggleEnabled - Called when the enabled checkbox changes.
+ * @param onDelete        - Called when the Delete button is clicked.
+ * @param disabled        - Disables interactive controls while a mutation is
+ *                          pending to prevent concurrent conflicting updates.
+ */
 function ScheduledTaskRow({
   task,
   onToggleEnabled,
@@ -81,6 +119,10 @@ function ScheduledTaskRow({
   );
 }
 
+/**
+ * ScheduledTasksPage renders the cron task management table with a creation
+ * form, inline enabled toggle, and delete confirmation dialog.
+ */
 export function ScheduledTasksPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ScheduledTaskCreateRequest>({

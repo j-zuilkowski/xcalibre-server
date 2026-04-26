@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { AdminUser, Role } from "@autolibre/shared";
+import type { AdminUser, Role } from "@xs/shared";
 import { UsersPage } from "../features/admin/UsersPage";
 import { apiClient } from "../lib/api-client";
 

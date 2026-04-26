@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../lib/api-client";
 import { formatBytes } from "./admin-utils";
 
-const UPDATE_BANNER_DISMISS_KEY = "autolibre.update-banner-dismissed";
+const UPDATE_BANNER_DISMISS_KEY = "xcalibre-server.update-banner-dismissed";
 const UPDATE_BANNER_TTL_MS = 24 * 60 * 60 * 1000;
 
 function StatCard({

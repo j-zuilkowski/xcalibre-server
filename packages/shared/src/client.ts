@@ -1,3 +1,23 @@
+/**
+ * ApiClient — isomorphic HTTP client for the xcalibre-server backend.
+ *
+ * Used by both the web app (React + Vite) and the mobile app (Expo).
+ * Wraps every `fetch` call with:
+ * - Automatic `Authorization: Bearer <token>` injection
+ * - Silent token refresh (single retry) when a 401 is received
+ * - `onUnauthorized` callback invocation when refresh also fails (triggers logout)
+ * - `Content-Type: application/json` for non-multipart bodies
+ * - Error conversion: non-2xx responses throw an {@link ApiError}
+ *
+ * On mobile the `getToken` callback reads from Expo SecureStore; on web it
+ * reads from in-memory state maintained by the auth context.
+ *
+ * All methods are async and throw {@link ApiError} on non-2xx responses.
+ * Callers should catch and handle API errors; never surface raw error text to users.
+ *
+ * URL helpers (`coverUrl`, `downloadUrl`, `streamUrl`) return absolute URLs
+ * by prepending `baseUrl` — pass these directly to `expo-image` or `expo-file-system`.
+ */
 import type {
   ApiError,
   AdminTag,
@@ -71,18 +91,62 @@ import type {
   ValidationResult,
 } from "./types";
 
+/**
+ * Optional callbacks passed to the {@link ApiClient} constructor.
+ * Used by the mobile auth layer to keep Expo SecureStore up to date after
+ * a silent token refresh.
+ */
 type ClientOptions = {
+  /**
+   * Returns the stored refresh token.
+   * On mobile this reads from Expo SecureStore (`"refresh_token"` key).
+   */
   getRefreshToken?: () => string | null;
+  /**
+   * Called after a successful token refresh with the new token pair.
+   * On mobile this persists both tokens back to Expo SecureStore.
+   */
   onRefreshTokens?: (tokens: RefreshResponse) => void;
 };
 
+/** Returns true when `value` should be serialized into a query string parameter. */
 function isPresentParam(value: unknown): boolean {
   return !(value === undefined || value === null || (typeof value === "string" && value.length === 0));
 }
 
+/**
+ * HTTP client for the xcalibre-server REST API.
+ *
+ * @example
+ * ```ts
+ * const client = new ApiClient(
+ *   "https://mylibre.example.com",
+ *   () => SecureStore.getItem("access_token"),
+ *   () => router.replace("/login"),
+ *   {
+ *     getRefreshToken: () => SecureStore.getItem("refresh_token"),
+ *     onRefreshTokens: (tokens) => {
+ *       SecureStore.setItem("access_token", tokens.access_token);
+ *       SecureStore.setItem("refresh_token", tokens.refresh_token);
+ *     },
+ *   },
+ * );
+ * ```
+ */
 export class ApiClient {
+  // In-memory cache so that a refresh_token received during login can be used
+  // for silent renewal even when no persistent storage callback is provided.
   private refreshTokenCache: string | null = null;
 
+  /**
+   * @param baseUrl - Root URL of the xcalibre-server server, e.g. "https://mylibre.example.com".
+   *   Trailing slashes are stripped automatically.
+   * @param getToken - Returns the current access token or null when unauthenticated.
+   *   Called before every request.
+   * @param onUnauthorized - Called when a 401 cannot be recovered by refreshing.
+   *   Should navigate the user to the login screen.
+   * @param options - Optional refresh-token callbacks.
+   */
   constructor(
     private readonly baseUrl: string,
     private readonly getToken: () => string | null,
@@ -90,6 +154,17 @@ export class ApiClient {
     private readonly options: ClientOptions = {},
   ) {}
 
+  /**
+   * POST /api/v1/auth/login
+   *
+   * Authenticates with username + password credentials.
+   * Returns an {@link AuthSession} on success, or a
+   * {@link LoginTotpRequiredResponse} when the account has TOTP enabled.
+   * Callers must discriminate the union: `"totp_required" in response`.
+   *
+   * Does **not** throw on 401 — the caller should surface credential errors.
+   * Does NOT set the auth header (credentials are the payload).
+   */
   async login(req: LoginRequest): Promise<LoginResponse> {
     const response = await this.requestJson<LoginResponse>(
       "/api/v1/auth/login",
@@ -105,6 +180,11 @@ export class ApiClient {
     return response;
   }
 
+  /**
+   * POST /api/v1/auth/register
+   * Creates a new user account. Returns the created {@link User}.
+   * Throws if registration is disabled on the server or the username/email is taken.
+   */
   async register(req: RegisterRequest): Promise<User> {
     return this.requestJson<User>(
       "/api/v1/auth/register",
@@ -116,6 +196,14 @@ export class ApiClient {
     );
   }
 
+  /**
+   * POST /api/v1/auth/refresh
+   *
+   * Exchanges a refresh token for a new token pair.
+   * Called automatically by the internal retry logic when a 401 is received.
+   * Also invokes `options.onRefreshTokens` so callers can persist the new tokens.
+   * Both the old refresh token and the old access token are invalidated on success.
+   */
   async refresh(refreshToken: string): Promise<RefreshResponse> {
     const response = await this.requestJson<RefreshResponse>(
       "/api/v1/auth/refresh",
@@ -130,6 +218,11 @@ export class ApiClient {
     return response;
   }
 
+  /**
+   * POST /api/v1/auth/logout
+   * Revokes the provided refresh token on the server and clears the in-memory cache.
+   * On mobile the caller should also clear Expo SecureStore after this resolves.
+   */
   async logout(refreshToken: string): Promise<void> {
     await this.requestJson<void>("/api/v1/auth/logout", {
       method: "POST",
@@ -138,14 +231,24 @@ export class ApiClient {
     this.refreshTokenCache = null;
   }
 
+  /**
+   * GET /api/v1/auth/me
+   * Returns the currently authenticated user. Alias: {@link getMe}.
+   */
   async me(): Promise<User> {
     return this.requestJson<User>("/api/v1/auth/me");
   }
 
+  /**
+   * GET /api/v1/auth/providers
+   * Returns which OAuth providers (Google, GitHub) are configured on the server.
+   * Used to conditionally render OAuth sign-in buttons on the login screen.
+   */
   async getAuthProviders(): Promise<AuthProvidersResponse> {
     return this.requestJson<AuthProvidersResponse>("/api/v1/auth/providers");
   }
 
+  /** GET /api/v1/libraries — Returns all libraries the current user has access to. */
   async listLibraries(): Promise<Library[]> {
     return this.requestJson<Library[]>("/api/v1/libraries");
   }
@@ -174,6 +277,11 @@ export class ApiClient {
     return this.me();
   }
 
+  /**
+   * GET /api/v1/users/me/stats
+   * Returns aggregated reading statistics for the current user.
+   * Used by the mobile Stats screen and the Profile tab summary row.
+   */
   async getUserStats(): Promise<UserStats> {
     return this.requestJson<UserStats>("/api/v1/users/me/stats");
   }
@@ -185,12 +293,23 @@ export class ApiClient {
     });
   }
 
+  /**
+   * GET /api/v1/auth/totp/setup
+   * Initiates TOTP setup for the current user.
+   * Returns a base32 secret and an `otpauth://` URI suitable for rendering as a QR code.
+   * Requires confirmation via {@link confirmTotp} before TOTP is activated.
+   */
   async setupTotp(): Promise<{ secret_base32: string; otpauth_uri: string }> {
     return this.requestJson<{ secret_base32: string; otpauth_uri: string }>("/api/v1/auth/totp/setup", {
       method: "GET",
     });
   }
 
+  /**
+   * POST /api/v1/auth/totp/confirm
+   * Activates TOTP for the current user by verifying the first code from the authenticator app.
+   * Returns a list of one-time backup codes that the user should store securely.
+   */
   async confirmTotp(code: string): Promise<{ backup_codes: string[] }> {
     return this.requestJson<{ backup_codes: string[] }>("/api/v1/auth/totp/confirm", {
       method: "POST",
@@ -238,6 +357,13 @@ export class ApiClient {
     );
   }
 
+  /**
+   * POST /api/v1/auth/totp/verify
+   * Completes the TOTP challenge step of login.
+   * @param token - The temporary `totp_token` received in {@link LoginTotpRequiredResponse}.
+   * @param code - The 6-digit code from the user's authenticator app.
+   * @returns A full {@link AuthSession} on success.
+   */
   async verifyTotp(token: string, code: string): Promise<AuthSession> {
     return this.requestJson<AuthSession>("/api/v1/auth/totp/verify", {
       method: "POST",
@@ -252,6 +378,11 @@ export class ApiClient {
     });
   }
 
+  /**
+   * POST /api/v1/auth/totp/verify-backup
+   * Like {@link verifyTotp} but accepts a single-use backup recovery code instead of a TOTP.
+   * The consumed backup code is invalidated after use.
+   */
   async verifyTotpBackup(token: string, code: string): Promise<AuthSession> {
     return this.requestJson<AuthSession>("/api/v1/auth/totp/verify-backup", {
       method: "POST",
@@ -266,6 +397,12 @@ export class ApiClient {
     });
   }
 
+  /**
+   * GET /api/v1/books
+   * Returns a paginated list of books matching the given filters.
+   * Used by the library grid (infinite scroll) and offline sync (via `since`).
+   * All params are serialized as query string entries; arrays use repeated keys.
+   */
   async listBooks(params: ListBooksParams): Promise<PaginatedResponse<BookSummary>> {
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
@@ -282,6 +419,16 @@ export class ApiClient {
     return this.requestJson<PaginatedResponse<BookSummary>>(`/api/v1/books${suffix}`);
   }
 
+  /**
+   * GET /api/v1/search or GET /api/v1/search/semantic
+   *
+   * Searches the library using full-text (Meilisearch/SQLite FTS5) by default,
+   * or vector semantic search when `params.semantic === true`.
+   * The `semantic` flag is stripped before building the query string; it only
+   * controls which endpoint path is used.
+   *
+   * @returns Paginated {@link SearchResultItem} list. Semantic results include a `score` field.
+   */
   async search(params: SearchQuery): Promise<PaginatedResponse<SearchResultItem>> {
     const { semantic, ...searchParams } = params;
     const search = new URLSearchParams();
@@ -358,6 +505,10 @@ export class ApiClient {
     );
   }
 
+  /**
+   * GET /api/v1/books/:id
+   * Returns the full {@link Book} record including formats, tags, and identifiers.
+   */
   async getBook(id: string): Promise<Book> {
     return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(id)}`);
   }
@@ -610,6 +761,11 @@ export class ApiClient {
     return this.requestJson<LlmHealth>("/api/v1/llm/health");
   }
 
+  /**
+   * GET /api/v1/books/:id/progress
+   * Returns the current reading position for the authenticated user, or null if
+   * no progress has been recorded yet (404 is swallowed and returned as null).
+   */
   async getReadingProgress(id: string): Promise<ReadingProgress | null> {
     try {
       return await this.requestJson<ReadingProgress>(
@@ -624,6 +780,11 @@ export class ApiClient {
     }
   }
 
+  /**
+   * PATCH /api/v1/books/:id/progress
+   * Creates or updates the reading position for the authenticated user.
+   * Called by both readers (EPUB and PDF) after a debounced position change.
+   */
   async patchReadingProgress(id: string, patch: ReadingProgressPatch): Promise<ReadingProgress> {
     return this.requestJson<ReadingProgress>(`/api/v1/books/${encodeURIComponent(id)}/progress`, {
       method: "PATCH",
@@ -631,10 +792,21 @@ export class ApiClient {
     });
   }
 
+  /**
+   * GET /api/v1/books/:id/annotations
+   * Returns all annotations the current user has created for this book.
+   * Called on EPUB reader mount to populate the highlight/note overlays.
+   */
   async listBookAnnotations(bookId: string): Promise<BookAnnotation[]> {
     return this.requestJson<BookAnnotation[]>(`/api/v1/books/${encodeURIComponent(bookId)}/annotations`);
   }
 
+  /**
+   * POST /api/v1/books/:id/annotations
+   * Creates a new annotation. The EPUB reader uses optimistic updates: a
+   * temporary annotation is inserted locally before this resolves, then
+   * replaced with the server-assigned ID on success.
+   */
   async createBookAnnotation(bookId: string, payload: CreateBookAnnotationRequest): Promise<BookAnnotation> {
     return this.requestJson<BookAnnotation>(`/api/v1/books/${encodeURIComponent(bookId)}/annotations`, {
       method: "POST",
@@ -642,6 +814,12 @@ export class ApiClient {
     });
   }
 
+  /**
+   * PATCH /api/v1/books/:id/annotations/:annotationId
+   * Updates an annotation's color and/or note text. Supports optimistic updates
+   * in the EPUB reader: the local state is patched immediately, then reconciled
+   * with the server response (or rolled back on failure).
+   */
   async patchBookAnnotation(
     bookId: string,
     annotationId: string,
@@ -656,6 +834,11 @@ export class ApiClient {
     );
   }
 
+  /**
+   * DELETE /api/v1/books/:id/annotations/:annotationId
+   * Deletes an annotation. The EPUB reader removes it from local state
+   * optimistically and re-adds it if the request fails.
+   */
   async deleteBookAnnotation(bookId: string, annotationId: string): Promise<void> {
     await this.requestJson<void>(
       `/api/v1/books/${encodeURIComponent(bookId)}/annotations/${encodeURIComponent(annotationId)}`,
@@ -915,16 +1098,30 @@ export class ApiClient {
     );
   }
 
+  /**
+   * Returns the absolute URL for a book's cover image.
+   * Pass this directly to `expo-image`'s `source.uri` prop.
+   * The backend serves the cover at `/api/v1/books/:id/cover`.
+   */
   coverUrl(bookId: string): string {
     return this.url(`/api/v1/books/${encodeURIComponent(bookId)}/cover`);
   }
 
+  /**
+   * Returns the absolute URL for downloading a specific format file.
+   * Used by the download queue: passed to `FileSystem.createDownloadResumable`
+   * along with a `Authorization: Bearer` header.
+   */
   downloadUrl(bookId: string, format: string): string {
     return this.url(
       `/api/v1/books/${encodeURIComponent(bookId)}/formats/${encodeURIComponent(format)}/download`,
     );
   }
 
+  /**
+   * Returns the absolute URL for streaming a specific format for online reading.
+   * Used when no local file is available and the reader should stream from the server.
+   */
   streamUrl(bookId: string, format: string): string {
     return this.url(
       `/api/v1/books/${encodeURIComponent(bookId)}/formats/${encodeURIComponent(format)}/stream`,
@@ -935,6 +1132,20 @@ export class ApiClient {
     return `${this.baseUrl.replace(/\/$/, "")}${path}`;
   }
 
+  /**
+   * Core HTTP helper used by every public method.
+   *
+   * Injects the `Authorization: Bearer` header, sets `Content-Type: application/json`
+   * for non-FormData bodies, handles the 401 → refresh → retry cycle, and converts
+   * non-2xx responses to {@link ApiError}.
+   *
+   * @param options.retryOnUnauthorized - When false, a 401 is not retried (used for
+   *   auth endpoints where a 401 is a credential error, not a token expiry).
+   * @param options.authorizationToken - Override the token from `getToken()`; used
+   *   during the retry to inject the newly refreshed access token.
+   * @param options.notifyUnauthorized - When false, `onUnauthorized` is not called
+   *   even if the request ultimately fails with 401 (used for auth endpoints).
+   */
   private async requestJson<T>(
     path: string,
     init: RequestInit = {},
@@ -985,6 +1196,11 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 
+  /**
+   * Attempts a silent token refresh using the stored refresh token.
+   * Returns the new access token on success, or null if no refresh token is
+   * available or if the refresh request itself fails.
+   */
   private async tryRefreshToken(): Promise<string | null> {
     const refreshToken = this.getRefreshToken();
     if (!refreshToken) {
@@ -999,10 +1215,15 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Retrieves the refresh token from the options callback (Expo SecureStore on
+   * mobile) or falls back to the in-memory cache populated at login time.
+   */
   private getRefreshToken(): string | null {
     return this.options.getRefreshToken?.() ?? this.refreshTokenCache;
   }
 
+  /** Caches the refresh token in memory so it can be used without a storage callback. */
   private rememberRefreshToken(refreshToken: string): void {
     this.refreshTokenCache = refreshToken;
   }

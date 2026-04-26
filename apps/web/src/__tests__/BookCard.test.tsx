@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
-import type { BookSummary } from "@autolibre/shared";
+import type { BookSummary } from "@xs/shared";
 import { BookCard } from "../features/library/BookCard";
 
 const baseBook: BookSummary = {

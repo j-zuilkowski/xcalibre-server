@@ -1,3 +1,28 @@
+/**
+ * ProfilePage — user profile settings.
+ *
+ * Route: /profile
+ *
+ * Sections:
+ *   - Current user info card: username, email, and TOTP status display.
+ *   - Two-factor authentication card:
+ *       Disabled state — "Enable 2FA" button triggers POST /api/v1/auth/totp/setup,
+ *         which returns a `secret_base32` and `otpauth_uri`.  The URI is
+ *         rendered as a QRCode (qrcode.react) alongside the manual entry code.
+ *       Confirm state — user enters their 6-digit code; POST /api/v1/auth/totp/confirm
+ *         validates it and returns backup codes shown once in a grid with
+ *         per-code clipboard copy buttons.
+ *       Enabled state — "Disable 2FA" opens a modal requiring the current
+ *         password, then calls POST /api/v1/auth/totp/disable.
+ *
+ * ProfileSidebar provides the left navigation shared across profile sub-pages.
+ *
+ * API calls:
+ *   GET  /api/v1/users/me
+ *   POST /api/v1/auth/totp/setup
+ *   POST /api/v1/auth/totp/confirm
+ *   POST /api/v1/auth/totp/disable
+ */
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -5,6 +30,10 @@ import { QRCodeSVG } from "qrcode.react";
 import { apiClient } from "../../lib/api-client";
 import { ProfileSidebar } from "./ProfileSidebar";
 
+/**
+ * ProfilePage renders the user settings page with TOTP setup, confirmation,
+ * backup codes, and disable flows.
+ */
 export function ProfilePage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

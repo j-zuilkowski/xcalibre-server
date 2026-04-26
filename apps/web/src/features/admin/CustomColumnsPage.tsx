@@ -1,7 +1,7 @@
 import { useId, useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { CustomColumnType } from "@autolibre/shared";
+import type { CustomColumnType } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Dialog } from "../../components/ui/Dialog";
 

@@ -1,3 +1,32 @@
+/**
+ * PdfReader — pdfjs-dist-based PDF reading component.
+ *
+ * pdf.js is loaded via dynamic import so the worker bundle (~900 kB) is only
+ * fetched when the reader opens.  The worker src is set once from
+ * `import.meta.url` so Vite can include it in the build output.
+ *
+ * Page rendering:
+ *   Each page is rendered to an HTML5 <canvas> at the chosen zoom level.
+ *   A separate useEffect renders the canvas whenever `currentPage` or `zoom`
+ *   changes, using a `cancelled` flag to discard stale async renders if the
+ *   user navigates quickly.
+ *
+ * Page-based progress:
+ *   Progress percentage = (currentPage / totalPages) * 100.
+ *   `onProgressChange` is called on every page change; the parent
+ *   (ReaderPage) debounces and persists the value.
+ *   On mount, `initialProgress.page` is used as the starting page; if only
+ *   a percentage is available it is converted to a page number.
+ *
+ * Settings sheet (right): zoom slider (0.8×–1.8×).
+ * TOC sheet (left): placeholder — PDF outline not yet implemented.
+ *
+ * Keyboard navigation: ArrowLeft / ArrowRight change page and smoothly scroll
+ * the viewport, matching the epub reader's key bindings.
+ *
+ * API calls:
+ *   GET /api/v1/books/:id/formats/:format/stream  (PDF binary, credentials included)
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
@@ -19,6 +48,15 @@ function clampPage(page: number, totalPages: number): number {
   return Math.max(1, Math.min(totalPages || 1, page));
 }
 
+/**
+ * PdfReader renders a PDF page on a <canvas> using pdfjs-dist.
+ *
+ * @param book            - Book metadata (id, title, authors).
+ * @param format          - Format string (e.g. "pdf").
+ * @param initialProgress - Saved page number and/or percentage for resuming.
+ * @param onProgressChange - Called on each page change with the new percentage
+ *                          and page number.
+ */
 export function PdfReader({ book, format, initialProgress, onProgressChange }: ReaderComponentProps) {
   const { t } = useTranslation();
   const streamUrl = useMemo(() => apiClient.streamUrl(book.id, format), [book.id, format]);

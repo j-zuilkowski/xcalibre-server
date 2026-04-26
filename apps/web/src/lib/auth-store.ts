@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AuthSession, User } from "@autolibre/shared";
+import type { AuthSession, User } from "@xs/shared";
 
 type AuthState = {
   access_token: string | null;

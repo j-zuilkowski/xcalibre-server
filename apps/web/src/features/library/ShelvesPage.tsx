@@ -1,7 +1,31 @@
+/**
+ * ShelvesPage — personal reading shelves manager.
+ *
+ * Route: /shelves
+ *
+ * Layout:
+ *   - Left sidebar: shelf list with book-count badges and a "Create" button
+ *     that expands an inline form (name + public toggle).  The first shelf
+ *     in the list is auto-selected on load.
+ *   - Main area: ShelfBooksGrid for the selected shelf — a 2–6 column
+ *     cover grid with a "Remove" overlay button on each book.
+ *
+ * Shelf creation: POST /api/v1/shelves; on success the newly created shelf
+ * is selected and the shelves list is invalidated.
+ *
+ * Book removal: DELETE /api/v1/shelves/:id/books/:bookId; invalidates both
+ * ["shelf-books", shelfId] and ["shelves"] so the sidebar count updates.
+ *
+ * API calls:
+ *   GET    /api/v1/shelves                    — shelf list
+ *   GET    /api/v1/shelves/:id/books          — books for selected shelf
+ *   POST   /api/v1/shelves                    — create shelf
+ *   DELETE /api/v1/shelves/:id/books/:bookId  — remove book from shelf
+ */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { Shelf } from "@autolibre/shared";
+import type { Shelf } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { BookCard } from "./BookCard";
 
@@ -54,6 +78,10 @@ function ShelfBooksGrid({
   );
 }
 
+/**
+ * ShelvesPage renders the two-panel shelves view: a sidebar shelf list and
+ * a book grid for the active shelf.
+ */
 export function ShelvesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

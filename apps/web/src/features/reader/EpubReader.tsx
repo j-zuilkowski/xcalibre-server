@@ -1,5 +1,53 @@
+/**
+ * EpubReader — epub.js-based reading component.
+ *
+ * Loaded via dynamic import (`import("epubjs")`) so the ~400 kB bundle is
+ * only fetched when the reader is actually opened.  If the module fails to
+ * load, `engineUnavailable` is set and a fallback message is shown.
+ *
+ * CFI-based progress:
+ *   epub.js emits a "relocated" event with `location.start.percentage` and
+ *   `location.start.cfi` on every page turn.  The CFI is persisted to the
+ *   server via `onProgressChange` (debounced by the parent ReaderPage).
+ *   On mount, `initialProgress.cfi` is passed to `rendition.display()` so the
+ *   reader resumes at the exact character position.
+ *
+ * Annotation lifecycle:
+ *   1. On mount, annotations are loaded from GET /api/v1/books/:id/annotations
+ *      and each non-bookmark annotation is rendered via
+ *      `rendition.annotations.add("highlight", cfiRange, …, className)`.
+ *   2. Text selection fires epub.js "selected" event → `resolveSelectionMenuAnchor`
+ *      computes overlay coordinates relative to the iframe, then a floating
+ *      colour picker / note input appears (SelectionMenuState).
+ *   3. Clicking an existing highlight fires "markClicked" → an AnnotationMenuState
+ *      is shown allowing colour change, note edit, or delete.
+ *   4. All mutations call the API and then update local React state via
+ *      `upsertAnnotation` / `removeAnnotation` so the list stays consistent
+ *      without a full refetch.
+ *
+ * TOC panel (Sheet, left side):
+ *   - Chapters tab: epub nav loaded from `book.loaded.navigation`.
+ *   - Annotations tab: annotations grouped and sorted by chapter using
+ *     `chapterLabelForAnnotation`, which extracts the chapter token from the
+ *     CFI bracket notation (e.g. `[chap01ref]`).
+ *
+ * Settings (Sheet, right side): font family, font size (14–24 px), line
+ * height (1.2–2.4), margin (0–40 px), and theme.  Settings are persisted
+ * per-user to localStorage and applied to the epub.js rendition immediately.
+ *
+ * Keyboard shortcuts: ← / → for page navigation, Esc to close panels or exit
+ * the reader, ? to toggle the help overlay.  The handler skips editable
+ * targets (input / textarea / contenteditable) so note fields still work.
+ *
+ * API calls:
+ *   GET    /api/v1/books/:id/annotations
+ *   POST   /api/v1/books/:id/annotations
+ *   PATCH  /api/v1/books/:id/annotations/:annotationId
+ *   DELETE /api/v1/books/:id/annotations/:annotationId
+ *   GET    /api/v1/books/:id/formats/:format/stream  (epub binary)
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AnnotationColor, BookAnnotation } from "@autolibre/shared";
+import type { AnnotationColor, BookAnnotation } from "@xs/shared";
 import { useAuthStore } from "../../lib/auth-store";
 import { apiClient } from "../../lib/api-client";
 import { useTranslation } from "react-i18next";
@@ -242,6 +290,19 @@ function annotationPreview(annotation: BookAnnotation): string {
   return annotation.cfi_range;
 }
 
+/**
+ * EpubReader renders a paginated epub.js reading surface with annotation
+ * support, a floating toolbar, and reader settings.
+ *
+ * @param book           - Book metadata (id, title, authors).
+ * @param format         - Format string (e.g. "epub"), used for the stream URL.
+ * @param streamUrl      - Optional override stream URL; defaults to
+ *                         `/api/v1/books/:id/formats/:format/stream`.
+ * @param initialProgress - CFI + percentage from last saved session.
+ * @param onProgressChange - Callback invoked on every epub.js "relocated"
+ *                          event; parent is responsible for debouncing and
+ *                          persisting to the server.
+ */
 export function EpubReader({
   book,
   format,
@@ -271,6 +332,8 @@ export function EpubReader({
   const [settings, setSettings] = useState<EpubSettings>(() => readSettings(user?.id ?? null));
   const settingsRef = useRef(settings);
 
+  // Keep a ref in sync so the epub.js "markClicked" event handler can read
+  // the latest annotations without closing over a stale closure.
   useEffect(() => {
     annotationsRef.current = annotations;
   }, [annotations]);

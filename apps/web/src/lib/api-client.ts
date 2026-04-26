@@ -1,8 +1,10 @@
-import { ApiClient } from "@autolibre/shared";
+import { ApiClient } from "@xs/shared";
 import { useAuthStore } from "./auth-store";
 
+const apiBaseUrl = import.meta.env.VITE_API_URL ?? "";
+
 export const apiClient = new ApiClient(
-  "",
+  apiBaseUrl,
   () => useAuthStore.getState().access_token,
   () => useAuthStore.getState().clearAuth(),
   {

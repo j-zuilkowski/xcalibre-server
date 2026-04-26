@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { BookSummary, PaginatedResponse } from "@autolibre/shared";
+import type { BookSummary, PaginatedResponse } from "@xs/shared";
 import { LibraryPage } from "../features/library/LibraryPage";
 import { apiClient } from "../lib/api-client";
 

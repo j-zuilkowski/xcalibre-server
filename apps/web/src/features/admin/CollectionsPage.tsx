@@ -1,7 +1,45 @@
+/**
+ * CollectionsPage — admin collection CRUD with book membership management.
+ *
+ * Route: /admin/collections
+ *
+ * A "collection" is a curated group of books tagged with a domain
+ * (technical / electronics / culinary / legal / academic / narrative) and an
+ * optional public flag.  Collections are used by the semantic search chunk
+ * index.
+ *
+ * Layout:
+ *   - Create form row: name, description, domain selector, public checkbox,
+ *     "New collection" submit.
+ *   - Collections table: name, domain, book count + chunk count, public,
+ *     Edit / Delete actions.
+ *   - Edit sheet (shadcn Sheet, right side): opens when the admin clicks Edit.
+ *     Loads collection detail via GET /api/v1/collections/:id to populate
+ *     the edit form and the current book list.
+ *     Book picker: live search of /api/v1/books with a 10-result preview;
+ *     "Add" / "Added" buttons call POST/DELETE /api/v1/collections/:id/books.
+ *
+ * `editingCollectionId` drives both the Sheet open state and the collection
+ * detail query.  The edit form fields are initialised from `editCollection`
+ * inside a `useEffect` keyed on `editCollection.id` to avoid re-initialising
+ * when unrelated fields change.
+ *
+ * Delete uses `window.confirm` (browser native) rather than a Dialog component.
+ *
+ * API calls:
+ *   GET    /api/v1/collections
+ *   GET    /api/v1/collections/:id
+ *   POST   /api/v1/collections
+ *   PATCH  /api/v1/collections/:id
+ *   DELETE /api/v1/collections/:id
+ *   POST   /api/v1/collections/:id/books   (add books)
+ *   DELETE /api/v1/collections/:id/books/:bookId
+ *   GET    /api/v1/books  (book picker search)
+ */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { CollectionDetail, CollectionDomain, CollectionSummary, BookSummary } from "@autolibre/shared";
+import type { CollectionDetail, CollectionDomain, CollectionSummary, BookSummary } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
 
@@ -18,6 +56,10 @@ function bookAuthorsLabel(book: BookSummary): string {
   return book.authors.map((author) => author.name).join(", ") || "Unknown author";
 }
 
+/**
+ * CollectionsPage renders the collection list table and an edit sheet for
+ * managing metadata and book membership of each collection.
+ */
 export function CollectionsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

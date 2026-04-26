@@ -1,5 +1,5 @@
 {
-  "app_name": "Autolibre",
+  "app_name": "Xcalibre-server",
   "common": {
     "actions": "Aktionen",
     "active": "Aktiv",
@@ -54,11 +54,11 @@
   },
   "nav": {
     "admin_panel": "Admin",
-  "downloads": "Downloads",
-  "library": "Bibliothek",
-  "import_history": "Import-Verlauf",
-  "reading_stats": "Lese-Statistiken",
-  "profile": "Profil",
+    "downloads": "Downloads",
+    "library": "Bibliothek",
+    "import_history": "Import-Verlauf",
+    "reading_stats": "Lese-Statistiken",
+    "profile": "Profil",
     "search": "Suche",
     "shelves": "Regale"
   },
@@ -139,7 +139,11 @@
     "show_archived": "Archivierte anzeigen",
     "sort": "Sortieren",
     "title": "Titel",
-    "unable_to_load": "Bibliothek konnte nicht geladen werden."
+    "unable_to_load": "Bibliothek konnte nicht geladen werden.",
+    "format": "Format",
+    "series": "Series",
+    "tag": "Fiction",
+    "language": "English"
   },
   "downloads": {
     "activity": "Download-Aktivität",

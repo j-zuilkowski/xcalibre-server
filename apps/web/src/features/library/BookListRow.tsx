@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { BookSummary } from "@autolibre/shared";
+import type { BookSummary } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { CoverPlaceholder } from "./CoverPlaceholder";
 

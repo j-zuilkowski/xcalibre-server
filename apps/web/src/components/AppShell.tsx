@@ -1,3 +1,29 @@
+/**
+ * AppShell — persistent chrome rendered for every authenticated route.
+ *
+ * Layout:
+ *   - Fixed collapsible sidebar (12 px collapsed / 192 px expanded on hover)
+ *     with icon-only nav links that reveal labels on hover.
+ *   - Fixed top bar containing the SearchBar, an optional library switcher
+ *     (only rendered when the user belongs to >1 library), and a user-avatar
+ *     menu button.
+ *   - <Outlet /> fills the remaining content area.
+ *
+ * State:
+ *   - `theme` — "light" | "sepia" | "dark", persisted to localStorage under
+ *     the key "calibre-web.theme" and applied as `data-theme` on <html>.
+ *   - `menuOpen` — controls the dropdown user menu; closed on pointer-down
+ *     outside the menu ref (avoids a focus-loss race on mobile).
+ *
+ * API calls:
+ *   - GET /api/v1/libraries (listLibraries) — fetches library list, cached 60 s.
+ *   - POST /api/v1/users/me/default-library (setDefaultLibrary) — switches the
+ *     active library, updates Zustand auth store, then reloads the page so all
+ *     in-flight queries are re-fetched against the new library context.
+ *
+ * Auth: reads `user`, `access_token`, and `refresh_token` from useAuthStore.
+ * Sign-out clears the store and pushes to /login.
+ */
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -52,6 +78,13 @@ function isAdmin(roleName: string | undefined): boolean {
   return roleName?.toLowerCase() === "admin";
 }
 
+/**
+ * AppShell renders the global navigation shell.
+ *
+ * Renders a collapsible sidebar, a fixed top bar with SearchBar and library
+ * switcher, and a user menu.  The active route's page is rendered via
+ * <Outlet />.
+ */
 export function AppShell() {
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();

@@ -1,5 +1,31 @@
+/**
+ * SearchPage — full-text and semantic book search.
+ *
+ * Route: /search
+ *
+ * Two search modes, selected via tab buttons:
+ *   - Library tab  — calls GET /api/v1/search with `semantic: false`; backed
+ *     by Meilisearch full-text index.
+ *   - Semantic tab — calls the same endpoint with `semantic: true`; requires
+ *     the Meilisearch semantic/vector index to be built.  The tab is disabled
+ *     when GET /api/v1/search/status returns `semantic: false`.
+ *
+ * Both modes support the same filter chips (author, series, tag, language,
+ * format) and a collection picker populated from GET /api/v1/collections.
+ * BookCard results show a `score` badge in semantic mode (passed as a prop
+ * from the search response).
+ *
+ * State: URL-driven (same pattern as LibraryPage) — all filter/sort/tab/page
+ * state is serialised to the query string so search results are shareable.
+ * `popstate` listener keeps state in sync with browser navigation.
+ *
+ * API calls:
+ *   GET /api/v1/search/status      — checks if semantic search is available
+ *   GET /api/v1/collections        — populates collection filter selector
+ *   GET /api/v1/search             — paginated search results
+ */
 import { useEffect, useMemo, useState } from "react";
-import type { ListBooksParams, SearchQuery } from "@autolibre/shared";
+import type { ListBooksParams, SearchQuery } from "@xs/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
@@ -90,6 +116,11 @@ function toSearch(state: SearchState): string {
   return params.toString();
 }
 
+/**
+ * SearchPage renders the full-text and semantic search interface with filter
+ * chips, collection picker, sort control, and a paginated BookCard results
+ * grid.
+ */
 export function SearchPage() {
   const { t } = useTranslation();
   const [searchState, setSearchState] = useState<SearchState>(() =>

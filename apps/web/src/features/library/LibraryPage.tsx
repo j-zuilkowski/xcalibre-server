@@ -1,5 +1,30 @@
+/**
+ * LibraryPage — main ebook cover-grid / list view.
+ *
+ * Route: /library
+ *
+ * Features:
+ *   - Cover grid (default) or compact list view, toggled by the user and
+ *     preserved in the URL (`?view=list`).
+ *   - Filter chips for author, series, tag, language, and format.
+ *     Each chip toggles the corresponding URL parameter; active state drives
+ *     both the chip style and the API query.
+ *   - Sort selector (title / author / date added / rating).
+ *   - "Show archived" toggle.
+ *   - Keyboard navigation within the grid: Arrow keys move focus between
+ *     BookCard elements; column count is derived from computed grid columns.
+ *   - Client-side pagination (PAGE_SIZE = 24); page number kept in URL.
+ *
+ * State: all filter/sort/pagination state lives in a single `LibrarySearchState`
+ * object that is serialised to / parsed from the URL search string.
+ * `window.history.replaceState` is used (no TanStack Router navigate) because
+ * the library uses popstate to keep the grid in sync with browser back/forward.
+ *
+ * API calls:
+ *   - GET /api/v1/books (listBooks) — paginated book list.
+ */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { ListBooksParams } from "@autolibre/shared";
+import type { ListBooksParams } from "@xs/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
@@ -93,6 +118,13 @@ function toSearch(state: LibrarySearchState): string {
   return params.toString();
 }
 
+/**
+ * LibraryPage renders the full library browsing experience.
+ *
+ * Manages filter chips, sort, view mode, archived toggle, and paginated
+ * BookCard grid / BookListRow list.  All state is URL-driven so the page
+ * is shareable and survives browser back/forward navigation via popstate.
+ */
 export function LibraryPage() {
   const { t } = useTranslation();
   const [searchState, setSearchState] = useState<LibrarySearchState>(() =>

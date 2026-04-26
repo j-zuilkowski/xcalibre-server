@@ -1,13 +1,43 @@
+/**
+ * TagsPage — admin global tag management.
+ *
+ * Route: /admin/tags
+ *
+ * Features:
+ *   - Search input with 250 ms debounce (`useDebouncedValue`) — resets to
+ *     page 1 on each new debounced query to avoid stale pagination.
+ *   - Paginated tag table (PAGE_SIZE = 20): name, book count, confirmed count.
+ *   - Inline rename: clicking a tag name activates an input in the same cell;
+ *     Enter saves, Escape cancels.  409 conflict → "Tag name already exists."
+ *   - Merge: opens an inline TagAutocomplete in the Actions cell; selecting a
+ *     target and confirming calls POST /api/v1/admin/tags/:id/merge with the
+ *     target tag ID.
+ *   - Delete: opens a Dialog confirmation showing how many books will be
+ *     affected.
+ *
+ * All mutations invalidate the ["admin-tags-management"] query on success.
+ *
+ * API calls:
+ *   GET    /api/v1/admin/tags  (with q, page, page_size params)
+ *   PATCH  /api/v1/admin/tags/:id/rename
+ *   POST   /api/v1/admin/tags/:id/merge
+ *   DELETE /api/v1/admin/tags/:id
+ */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AdminTagWithCount, ApiError, TagLookupItem } from "@autolibre/shared";
+import type { AdminTagWithCount, ApiError, TagLookupItem } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Dialog } from "../../components/ui/Dialog";
 import { TagAutocomplete } from "./TagAutocomplete";
 
 const PAGE_SIZE = 20;
 
+/**
+ * useDebouncedValue returns a value that only updates after `delayMs` ms of
+ * stability, used to avoid firing a query on every keystroke in the search
+ * input.
+ */
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
 
@@ -19,6 +49,10 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/**
+ * TagsPage renders the admin global tag table with inline rename, in-row merge
+ * autocomplete, and delete confirmation dialog.
+ */
 export function TagsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

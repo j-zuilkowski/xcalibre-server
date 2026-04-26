@@ -1,7 +1,25 @@
+/**
+ * RegisterPage — first-admin-only account creation form.
+ *
+ * Route: /register  (public)
+ *
+ * This page is only useful before any admin account exists.  The backend
+ * enforces a single-use policy — POST /api/v1/auth/register returns 409 if an
+ * admin already exists, and `getErrorMessage` surfaces that as a translated
+ * "account exists" error.
+ *
+ * On successful registration the user is immediately logged in
+ * (POST /api/v1/auth/login with the same credentials) and navigated to
+ * /library.
+ *
+ * API calls:
+ *   POST /api/v1/auth/register
+ *   POST /api/v1/auth/login
+ */
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import type { ApiError } from "@autolibre/shared";
+import type { ApiError } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 
@@ -57,6 +75,11 @@ const inputStyle: CSSProperties = {
   boxSizing: "border-box",
 };
 
+/**
+ * RegisterPage renders the first-admin registration form.
+ * After successful registration it immediately logs in and redirects to
+ * /library.
+ */
 export function RegisterPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -76,7 +99,7 @@ export function RegisterPage() {
       await apiClient.register({ username, email, password });
       const response = await apiClient.login({ username, password });
       setAuth(response);
-      await navigate({ to: "/" });
+      await navigate({ to: "/library" });
     } catch (err) {
       setError(getErrorMessage(err, t("auth.unable_to_create_account"), t));
     } finally {

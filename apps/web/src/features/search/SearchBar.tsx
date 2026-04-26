@@ -1,8 +1,32 @@
+/**
+ * SearchBar — inline quick-search dropdown in the AppShell top bar.
+ *
+ * Renders a rounded search input that opens a floating dropdown when focused.
+ * The dropdown shows:
+ *   - Recent searches (up to 5, stored per-user in localStorage under the key
+ *     `calibre-web.recent-searches:<userId>`).
+ *   - Live query suggestions fetched from
+ *     GET /api/v1/search/suggestions?q=…&limit=5, enabled only when the
+ *     input has a non-empty trimmed value.
+ *   - "Search" and "See all results →" actions.
+ *
+ * Close behaviour: `handleBlur` sets a 120 ms timeout before closing, so
+ * clicking a dropdown item (which triggers blur) has time to fire the click
+ * handler first.  `onMouseDown` with `preventDefault()` on each dropdown
+ * button prevents the input from losing focus before the click is processed.
+ *
+ * Committing a search: saves the query to localStorage recent searches,
+ * navigates to /search?q=…, and closes the dropdown.
+ *
+ * API calls:
+ *   GET /api/v1/search/suggestions  (enabled only when dropdown is open and
+ *                                    query.trim().length > 0)
+ */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { BookSummary } from "@autolibre/shared";
+import type { BookSummary } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import { CoverPlaceholder } from "../library/CoverPlaceholder";
@@ -107,6 +131,12 @@ function SearchMiniCard({ book }: { book: BookSummary }) {
   );
 }
 
+/**
+ * SearchBar renders the top-bar inline search input and suggestion dropdown.
+ *
+ * Manages its own open/close state, recent-searches persistence, and live
+ * suggestion fetching.  On submit, navigates to /search with the query.
+ */
 export function SearchBar() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);

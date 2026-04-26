@@ -1,7 +1,39 @@
+/**
+ * AuthorPage — author detail view.
+ *
+ * Route: /authors/$id
+ *
+ * Layout:
+ *   - Sidebar: square author photo (with hover upload overlay for editors),
+ *     name, sort name, truncatable bio (expand/collapse at 160 chars),
+ *     birth/death years, website link, OpenLibrary link.
+ *     Editors see an "Edit profile" button; admins see an additional
+ *     "Merge author" button.
+ *   - Main: paginated BookCard grid (PAGE_SIZE = 24) for the author's books.
+ *
+ * Drawer (slide-in panel, shown when drawerMode is "edit" or "merge"):
+ *   - Edit mode: form for bio, born, died, website_url, openlibrary_id.
+ *     Saves via PATCH /api/v1/authors/:id/profile, then invalidates the
+ *     author-detail query cache.
+ *   - Merge mode: AuthorAutocomplete to pick a target author, then calls
+ *     POST /api/v1/authors/:id/merge — the current author's books are
+ *     re-attributed to the target and the user is navigated there.
+ *
+ * Photo upload: clicking the hover button opens a hidden file input; the file
+ * is uploaded via POST /api/v1/authors/:id/photo (multipart/form-data).
+ * The cache-bust `?v=dataUpdatedAt` param on the <img> forces a refetch
+ * without needing to invalidate the image URL separately.
+ *
+ * API calls:
+ *   GET   /api/v1/authors/:id  (with page / page_size params)
+ *   PATCH /api/v1/authors/:id/profile
+ *   POST  /api/v1/authors/:id/photo
+ *   POST  /api/v1/authors/:id/merge
+ */
 import { type CSSProperties, type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AdminAuthor, AuthorDetail, AuthorProfilePatch } from "@autolibre/shared";
+import type { AdminAuthor, AuthorDetail, AuthorProfilePatch } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import { BookCard } from "./BookCard";
@@ -53,6 +85,13 @@ function authorBooksHeading(count: number): string {
   return `${count} book${count === 1 ? "" : "s"}`;
 }
 
+/**
+ * AuthorPage renders the full author profile, paginated book grid, and
+ * optional edit/merge drawer.
+ *
+ * @param authorId - Optional explicit author ID.  Falls back to parsing
+ *   `/authors/:id` from the current URL path when not provided.
+ */
 export function AuthorPage({ authorId }: AuthorPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

@@ -1,3 +1,15 @@
+/**
+ * Application entry point.
+ *
+ * Bootstrap order:
+ * 1. i18n is initialised asynchronously (loads locale JSON from /locales/).
+ *    Errors are silently swallowed so a network failure never blocks the app.
+ * 2. The React tree is mounted only after i18n resolves to avoid a flash of
+ *    untranslated text.
+ * 3. Provider hierarchy: I18nextProvider → QueryClientProvider → RouterProvider.
+ *    All server-state fetching goes through TanStack Query; routing through
+ *    TanStack Router (file-based routes defined in router.tsx).
+ */
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";

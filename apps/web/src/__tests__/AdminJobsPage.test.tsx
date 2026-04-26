@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AdminJob, PaginatedResponse } from "@autolibre/shared";
+import type { AdminJob, PaginatedResponse } from "@xs/shared";
 import { AdminJobsPage } from "../features/admin/AdminJobsPage";
 import { apiClient } from "../lib/api-client";
 

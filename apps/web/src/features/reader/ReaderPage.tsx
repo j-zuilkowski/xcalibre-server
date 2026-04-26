@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { ReadingProgressPatch } from "@autolibre/shared";
+import type { ReadingProgressPatch } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { AudioReader } from "./AudioReader";
 import { ComicReader } from "./ComicReader";

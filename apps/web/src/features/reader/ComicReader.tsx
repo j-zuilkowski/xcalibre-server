@@ -1,3 +1,28 @@
+/**
+ * ComicReader — CBZ/CBR page-by-page image reader.
+ *
+ * The backend extracts individual page images from the archive and exposes
+ * them via GET /api/v1/books/:id/comic/pages, which returns a list of page
+ * URLs.  Each URL is fetched individually (with the bearer token attached) and
+ * converted to an object URL so no cookie or CORS wrangling is needed.
+ *
+ * Pre-fetching: when the current page finishes loading, the next page is
+ * pre-fetched in the background (`ensurePage(currentIndex + 1)`).  A `cacheRef`
+ * Map stores object URLs so each page is only fetched once per session.
+ *
+ * Cleanup: the `useEffect` cleanup at unmount revokes all cached object URLs
+ * to avoid memory leaks when the reader is closed.
+ *
+ * Navigation: prev/next buttons in the header, and ArrowLeft/ArrowRight
+ * keyboard shortcuts.
+ *
+ * Progress: reported as (currentIndex + 1) / totalPages * 100 on each page
+ * change.
+ *
+ * API calls:
+ *   GET /api/v1/books/:id/comic/pages  (page list)
+ *   GET <page.url>  (individual page image, auth header attached)
+ */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComicReaderProps } from "./types";
@@ -17,6 +42,12 @@ function authHeaders(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * ComicReader renders a single-page comic viewer with pre-fetch caching.
+ *
+ * @param bookId          - ID of the book to display.
+ * @param onProgressChange - Optional callback for persisting reading position.
+ */
 export function ComicReader({ bookId, onProgressChange }: ComicReaderProps) {
   const { t } = useTranslation();
   const token = useAuthStore((state) => state.access_token);

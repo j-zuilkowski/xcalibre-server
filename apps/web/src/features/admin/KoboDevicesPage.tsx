@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { KoboDevice } from "@autolibre/shared";
+import type { KoboDevice } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { formatDateTime } from "./admin-utils";
 

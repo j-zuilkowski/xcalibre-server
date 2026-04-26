@@ -1,3 +1,38 @@
+/**
+ * TanStack Router route tree for xcalibre-server.
+ *
+ * Route hierarchy:
+ *   rootRoute
+ *   └── protectedRoute  (ProtectedRoute — redirects unauthenticated users to /login)
+ *       ├── /library        — LibraryPage
+ *       ├── /downloads      — DownloadHistoryPage
+ *       ├── /search         — SearchPage
+ *       ├── /shelves        — ShelvesPage
+ *       ├── /profile        — ProfilePage
+ *       ├── /profile/stats  — StatsPage
+ *       ├── /profile/import — ImportPage (user)
+ *       ├── /profile/webhooks — WebhooksPage
+ *       ├── /books/$id      — BookDetailPage
+ *       ├── /authors/$id    — AuthorPage
+ *       ├── /books/$id/read/$format — ReaderPage
+ *       └── /admin          — AdminLayout
+ *           ├── /admin/dashboard
+ *           ├── /admin/users
+ *           ├── /admin/tags
+ *           ├── /admin/authors
+ *           ├── /admin/collections
+ *           ├── /admin/import
+ *           ├── /admin/jobs
+ *           ├── /admin/scheduled-tasks
+ *           ├── /admin/libraries
+ *           ├── /admin/custom-columns
+ *           └── /admin/kobo-devices
+ *   ├── /login    — LoginPage  (public)
+ *   └── /register — RegisterPage  (public, first-admin only)
+ *
+ * The router instance is exported as `router` and consumed by RouterProvider
+ * in main.tsx.  The `routeTree` export is used for type-safe navigation.
+ */
 import { Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";

@@ -1,5 +1,5 @@
 {
-  "app_name": "Autolibre",
+  "app_name": "Xcalibre-server",
   "common": {
     "actions": "Acciones",
     "active": "Activo",
@@ -54,11 +54,11 @@
   },
   "nav": {
     "admin_panel": "Admin",
-  "downloads": "Descargas",
-  "library": "Biblioteca",
-  "import_history": "Historial de importación",
-  "reading_stats": "Estadísticas de lectura",
-  "profile": "Perfil",
+    "downloads": "Descargas",
+    "library": "Biblioteca",
+    "import_history": "Historial de importación",
+    "reading_stats": "Estadísticas de lectura",
+    "profile": "Perfil",
     "search": "Buscar",
     "shelves": "Estantes"
   },
@@ -139,7 +139,11 @@
     "show_archived": "Mostrar archivados",
     "sort": "Ordenar",
     "title": "Título",
-    "unable_to_load": "No se pudo cargar la biblioteca."
+    "unable_to_load": "No se pudo cargar la biblioteca.",
+    "format": "EPUB",
+    "series": "Series",
+    "tag": "Fiction",
+    "language": "English"
   },
   "downloads": {
     "activity": "Actividad de descargas",

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Book, ClassifyResult, LlmHealth, User } from "@autolibre/shared";
+import type { Book, ClassifyResult, LlmHealth, User } from "@xs/shared";
 import { BookDetailPage } from "../features/library/BookDetailPage";
 import { apiClient } from "../lib/api-client";
 import { useAuthStore } from "../lib/auth-store";

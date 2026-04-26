@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { PaginatedResponse, SearchResultItem, SearchStatusResponse } from "@autolibre/shared";
+import userEvent from "@testing-library/user-event";
+import type { PaginatedResponse, SearchResultItem, SearchStatusResponse } from "@xs/shared";
 import { SearchPage } from "../features/search/SearchPage";
 import { apiClient } from "../lib/api-client";
 
@@ -94,7 +95,7 @@ describe("SearchPage", () => {
 
     const semanticTab = await screen.findByRole("button", { name: "Semantic" });
     expect(semanticTab.hasAttribute("disabled")).toBe(true);
-    expect(semanticTab.getAttribute("title")).toBe("Semantic search is unavailable right now.");
+    expect(semanticTab.getAttribute("title")).toBe("Semantic search is unavailable.");
   });
 
   test("test_semantic_tab_enabled_when_available", async () => {
@@ -126,7 +127,9 @@ describe("SearchPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Author" }));
 
-    expect(window.location.search).toContain("author_id=author-default");
+    await waitFor(() => {
+      expect(window.location.search).toContain("author_id=author-default");
+    });
   });
 
   test("test_collection_filter_updates_query", async () => {
@@ -147,11 +150,13 @@ describe("SearchPage", () => {
 
     renderPage("/search");
     await screen.findByText("Search");
+    await screen.findByRole("option", { name: "Oracle 19c" });
 
-    fireEvent.change(screen.getByLabelText("Collection"), {
-      target: { value: "collection-1" },
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Collection"), "collection-1");
+
+    await waitFor(() => {
+      expect(window.location.search).toContain("collection_id=collection-1");
     });
-
-    expect(window.location.search).toContain("collection_id=collection-1");
   });
 });

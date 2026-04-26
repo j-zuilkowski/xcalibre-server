@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { TagLookupItem } from "@autolibre/shared";
+import type { TagLookupItem } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 
 type TagAutocompleteProps = {

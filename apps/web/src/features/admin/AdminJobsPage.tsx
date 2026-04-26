@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { AdminJob } from "@autolibre/shared";
+import type { AdminJob } from "@xs/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";

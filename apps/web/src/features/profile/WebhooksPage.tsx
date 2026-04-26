@@ -1,6 +1,38 @@
+/**
+ * WebhooksPage — personal webhook CRUD and delivery history.
+ *
+ * Route: /profile/webhooks
+ *
+ * The form serves dual purpose: creating a new webhook (when `editingWebhook`
+ * is null) or editing an existing one (when set).  The signing secret is
+ * write-once — it cannot be retrieved or changed after creation, so the edit
+ * form hides the secret field and shows a read-only note.
+ *
+ * Delivery test: "Test" button fires POST /api/v1/webhooks/:id/test and
+ * stores the result locally in `testResults[webhookId]`.  The test mutation
+ * catches API errors and converts them to a synthetic WebhookTestResponse with
+ * `delivered: false` so the UI always gets a displayable result rather than
+ * throwing.
+ *
+ * Delete confirmation uses the shadcn Dialog component with focus trap;
+ * `initialFocusRef` points to the Cancel button so keyboard users land there.
+ *
+ * Webhook status badge logic (`webhookStatusLabel`):
+ *   - Disabled   → "Disabled"
+ *   - Has error  → "Needs attention"
+ *   - Delivered  → "Healthy"
+ *   - Enabled    → "Enabled"
+ *
+ * API calls:
+ *   GET    /api/v1/webhooks
+ *   POST   /api/v1/webhooks
+ *   PATCH  /api/v1/webhooks/:id
+ *   DELETE /api/v1/webhooks/:id
+ *   POST   /api/v1/webhooks/:id/test
+ */
 import { useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApiError, Webhook, WebhookCreateRequest, WebhookEventName, WebhookTestResponse, WebhookUpdateRequest } from "@autolibre/shared";
+import type { ApiError, Webhook, WebhookCreateRequest, WebhookEventName, WebhookTestResponse, WebhookUpdateRequest } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { Dialog } from "../../components/ui/Dialog";
 import { formatDateTime } from "../admin/admin-utils";
@@ -60,6 +92,10 @@ function extractApiErrorMessage(error: unknown): string {
   return details?.message ?? details?.error ?? apiError?.message ?? "Request failed";
 }
 
+/**
+ * WebhooksPage renders the webhook management interface: a create/edit form,
+ * a delivery history table, and a delete confirmation dialog.
+ */
 export function WebhooksPage() {
   const queryClient = useQueryClient();
   const [formState, setFormState] = useState<WebhookFormState>(DEFAULT_FORM_STATE);

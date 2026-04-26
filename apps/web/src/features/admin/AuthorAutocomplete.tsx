@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AdminAuthor } from "@autolibre/shared";
+import type { AdminAuthor } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 
 type AuthorAutocompleteProps = {

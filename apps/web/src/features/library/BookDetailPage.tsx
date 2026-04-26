@@ -1,3 +1,59 @@
+/**
+ * BookDetailPage — full book detail view.
+ *
+ * Route: /books/$id
+ *
+ * Layout zones:
+ *   - Hero: cover image (or placeholder), title, authors, series info, star
+ *     rating, action buttons (Read / Mark read / Archive / Download picker /
+ *     Add-to-shelf menu), and an admin "•••" overflow menu.
+ *   - Metadata strip: language, publication year, confirmed tags (each tag
+ *     navigates to /library?tag=... via pushLibraryTagFilter), formats list.
+ *   - Collapsible sections (shadcn Collapsible): Description, Formats,
+ *     Identifiers, Series, Custom fields, History (admin only), AI (when LLM
+ *     is enabled).
+ *
+ * AI panel (visible only when GET /api/v1/llm/health returns enabled=true):
+ *   - Classify tab — calls POST /api/v1/books/:id/classify, returns tag
+ *     suggestions; each suggestion can be individually confirmed or rejected,
+ *     or all confirmed at once.  Mutations update the query cache optimistically
+ *     via `queryClient.setQueryData`.
+ *   - Validate tab — calls POST /api/v1/books/:id/validate, shows
+ *     severity badge and per-field issue list with fix suggestions.
+ *   - Derive tab — calls POST /api/v1/books/:id/derive, shows a summary,
+ *     related titles, and discussion questions.
+ *
+ * Merge modal (admin only): searches the library for a duplicate book, shows
+ * a side-by-side comparison of the primary vs. duplicate, and calls
+ * POST /api/v1/books/:id/merge on confirm.  After merge, navigates to the
+ * surviving book and invalidates ["books"] and ["book", id] caches.
+ *
+ * Metadata lookup panel: fetches from OpenLibrary or Google Books via
+ * GET /api/v1/books/:id/metadata-lookup?source=... and lets the user apply
+ * individual fields (title, authors, description, pubdate, isbn13) with a
+ * PATCH /api/v1/books/:id call each time.
+ *
+ * Custom fields: loaded via GET /api/v1/books/:id/custom-values, editable
+ * in-place (blur-to-save) when the user has can_edit permission.
+ *
+ * API calls (all through apiClient):
+ *   GET  /api/v1/books/:id
+ *   GET  /api/v1/books/:id/custom-values
+ *   GET  /api/v1/shelves
+ *   GET  /api/v1/llm/health
+ *   PATCH /api/v1/books/:id
+ *   PATCH /api/v1/books/:id/custom-values
+ *   POST /api/v1/books/:id/read-state
+ *   POST /api/v1/books/:id/archive-state
+ *   POST /api/v1/books/:id/classify
+ *   POST /api/v1/books/:id/validate
+ *   POST /api/v1/books/:id/derive
+ *   POST /api/v1/books/:id/merge
+ *   POST /api/v1/books/:id/tags/confirm
+ *   POST /api/v1/books/:id/tags/confirm-all
+ *   POST /api/v1/shelves/:id/books
+ *   GET  /api/v1/books/:id/metadata-lookup
+ */
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -11,7 +67,7 @@ import type {
   FormatRef,
   TagSuggestion,
   ValidationResult,
-} from "@autolibre/shared";
+} from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 import {
@@ -271,6 +327,13 @@ function CollapsibleSection({
   );
 }
 
+/**
+ * BookDetailPage renders the full detail view for a single book.
+ *
+ * @param bookId - Optional explicit book ID.  When not provided, the ID is
+ *   parsed from the URL path (`/books/:id/...`).  This lets the component be
+ *   used both as a TanStack Router outlet and embedded directly with a prop.
+ */
 export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const { t } = useTranslation();
   const resolvedBookId = resolveBookId(bookId);

@@ -1,3 +1,31 @@
+/**
+ * DjvuReader — server-side-extracted DJVU page display.
+ *
+ * The djvu.js library is vendored at `/public/djvu.min.js` and loaded via a
+ * dynamic Vite import.  `/* @vite-ignore *\/` suppresses the missing-import
+ * warning since the file is served as a static asset, not processed by Vite.
+ *
+ * Because the djvu.js API is not standardised across versions, `loadDjvuModule`
+ * walks several possible export shapes (`DjVu.App`, `djvu.App`, `.App`).
+ * Similarly, `renderWithBestEffort` tries `renderPage`, `drawPage`, `setPage`,
+ * and `gotoPage` in order, throwing only if none are available.
+ *
+ * Initialisation flow:
+ *   1. Fetch the DJVU binary from the stream URL with the bearer token.
+ *   2. Load the djvu.js module and instantiate the App.
+ *   3. Call `loadDocument` or `load` depending on the API shape.
+ *   4. Determine page count, set initial page, render to <canvas>.
+ *
+ * Page rendering: a separate useEffect rerenders the canvas whenever
+ * `currentPage` changes (after initial load).  If the target page fails it
+ * retries with `page - 1` as a best-effort fallback.
+ *
+ * Progress: reported as percentage on each page change.
+ * Keyboard: ArrowLeft / ArrowRight navigate pages.
+ *
+ * API calls:
+ *   GET /api/v1/books/:id/formats/:format/stream  (DJVU binary)
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuthStore } from "../../lib/auth-store";
@@ -78,6 +106,14 @@ async function renderWithBestEffort(app: DjvuApp, canvas: HTMLCanvasElement, pag
   throw new Error("djvu renderer unavailable");
 }
 
+/**
+ * DjvuReader renders DJVU pages via the vendored djvu.js library.
+ *
+ * @param bookId              - Book ID, used for the stream URL.
+ * @param format              - Format string (e.g. "djvu").
+ * @param initialProgressPage - Page number to resume from.
+ * @param onProgressChange    - Optional callback for persisting position.
+ */
 export function DjvuReader({ bookId, format, initialProgressPage, onProgressChange }: DjvuReaderProps) {
   const { t } = useTranslation();
   const token = useAuthStore((state) => state.access_token);

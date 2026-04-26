@@ -1,6 +1,28 @@
+/**
+ * StatsPage — personal reading statistics dashboard.
+ *
+ * Route: /profile/stats
+ *
+ * Sections:
+ *   - Four metric cards: books read (total), books read this year, current
+ *     reading streak (days), and books in progress.
+ *   - Session summary row: total reading sessions and average progress per
+ *     session.
+ *   - Monthly books bar chart: 12-month SVG bar chart (960×280 viewBox),
+ *     bar height proportional to the month's book count, teal gradient bars,
+ *     month labels below.
+ *   - Top authors and top tags: ranked lists with teal numbered badges.
+ *   - Formats breakdown: proportional stacked bar + legend chips.
+ *
+ * All data comes from a single GET /api/v1/users/me/stats endpoint returning
+ * a `UserStats` object.
+ *
+ * API calls:
+ *   GET /api/v1/users/me/stats
+ */
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { UserStats } from "@autolibre/shared";
+import type { UserStats } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { ProfileSidebar } from "./ProfileSidebar";
 
@@ -30,6 +52,10 @@ function formatPercent(value: number, t: (key: string) => string): string {
   return `${value.toFixed(1)} ${t("stats.pp")}`;
 }
 
+/**
+ * StatsPage renders the reading statistics dashboard with metric cards, a
+ * monthly bar chart, top authors/tags lists, and a format breakdown strip.
+ */
 export function StatsPage() {
   const { t } = useTranslation();
 

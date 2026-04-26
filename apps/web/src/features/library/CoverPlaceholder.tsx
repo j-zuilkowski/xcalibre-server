@@ -32,6 +32,7 @@ export function CoverPlaceholder({ title, className }: CoverPlaceholderProps) {
     <div
       data-testid="cover-placeholder"
       data-color-index={colorIndex}
+      role="img"
       className={`aspect-[2/3] w-full overflow-hidden rounded-lg ${className ?? ""}`.trim()}
       style={{ backgroundColor: color }}
       aria-label={`${title} placeholder cover`}

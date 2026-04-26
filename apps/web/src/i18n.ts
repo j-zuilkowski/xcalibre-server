@@ -4,7 +4,7 @@ import { initReactI18next } from "react-i18next";
 export const SUPPORTED_LANGUAGES = ["en", "fr", "de", "es"] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
-const STORAGE_KEY = "autolibre.language";
+const STORAGE_KEY = "xcalibre-server.language";
 const TRANSLATION_NAMESPACE = "translation";
 
 function normalizeLanguage(value: string | null | undefined): SupportedLanguage {

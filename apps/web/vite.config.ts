@@ -60,8 +60,9 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
   },
   server: {
+    host: "127.0.0.1",
     proxy: {
-      "/api": "http://localhost:8083",
+      "/api": "http://127.0.0.1:8084",
     },
   },
 });

@@ -1,8 +1,37 @@
+/**
+ * LoginPage — credential entry and TOTP challenge form.
+ *
+ * Route: /login  (public, no ProtectedRoute wrapper)
+ *
+ * Two-step login flow:
+ *   Step 1 ("credentials"): username + password form.
+ *     - Calls POST /api/v1/auth/login.
+ *     - If the response contains `totp_required`, the server has issued a
+ *       short-lived `totp_token` — the UI transitions to step 2.
+ *     - Otherwise the full token pair is stored via `useAuthStore.setAuth`
+ *       and the user is navigated to /library.
+ *
+ *   Step 2 ("totp"): 6-digit authenticator code or 8-char backup code.
+ *     - Calls POST /api/v1/auth/totp/verify or .../totp/verify-backup.
+ *     - Input autofocuses on transition to this step.
+ *     - Toggle between authenticator and backup code modes without leaving
+ *       the step.
+ *
+ * OAuth buttons: rendered only when GET /api/v1/auth/providers returns
+ * `google: true` or `github: true`.  Each button is a plain <a> pointing to
+ * the backend OAuth initiation endpoint so the browser follows the redirect.
+ *
+ * API calls:
+ *   GET  /api/v1/auth/providers
+ *   POST /api/v1/auth/login
+ *   POST /api/v1/auth/totp/verify
+ *   POST /api/v1/auth/totp/verify-backup
+ */
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { ApiError } from "@autolibre/shared";
+import type { ApiError } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
 
@@ -58,6 +87,10 @@ const inputStyle: CSSProperties = {
   boxSizing: "border-box",
 };
 
+/**
+ * LoginPage renders the two-step authentication form (credentials → TOTP)
+ * and optional OAuth provider buttons.
+ */
 export function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((state) => state.setAuth);

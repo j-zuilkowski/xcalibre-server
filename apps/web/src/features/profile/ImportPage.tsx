@@ -1,3 +1,29 @@
+/**
+ * ImportPage (profile) — Goodreads and StoryGraph reading-history CSV import.
+ *
+ * Route: /profile/import
+ *
+ * Workflow:
+ *   1. User selects an import source tab (Goodreads or StoryGraph).
+ *   2. User drops or picks a .csv export file via a drag-and-drop zone.
+ *   3. Clicking "Start import" calls the appropriate mutation:
+ *      - Goodreads  → POST /api/v1/import/goodreads  (multipart)
+ *      - StoryGraph → POST /api/v1/import/storygraph (multipart)
+ *      Both return `{ job_id }`.
+ *   4. `statusQuery` polls GET /api/v1/import/:jobId/status every 2 seconds
+ *      while status is "pending" or "running".  Polling stops automatically
+ *      when the job reaches a terminal state.
+ *   5. Completed state shows matched / unmatched counts and a collapsible
+ *      list of unmatched titles for manual reconciliation.
+ *
+ * State is scoped per source tab — switching tabs does not reset the other
+ * tab's file selection or job ID.
+ *
+ * API calls:
+ *   POST /api/v1/import/goodreads
+ *   POST /api/v1/import/storygraph
+ *   GET  /api/v1/import/:jobId/status
+ */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -33,6 +59,10 @@ const SOURCE_OPTIONS: Array<{ key: ImportSource; label: string }> = [
   { key: "storygraph", label: "StoryGraph" },
 ];
 
+/**
+ * ImportPage renders the Goodreads / StoryGraph CSV import wizard with a
+ * drag-and-drop file zone and a live job-status progress section.
+ */
 export function ImportPage() {
   const { t } = useTranslation();
   const [activeSource, setActiveSource] = useState<ImportSource>("goodreads");
@@ -70,6 +100,8 @@ export function ImportPage() {
     },
   });
 
+  // Poll every 2 s while the job is running; refetchInterval returns false
+  // once the job reaches a terminal state so the query stops on its own.
   const statusQuery = useQuery({
     queryKey: ["profile-import-status", activeSource, jobId],
     queryFn: () => apiClient.getReadingImportStatus(jobId as string),

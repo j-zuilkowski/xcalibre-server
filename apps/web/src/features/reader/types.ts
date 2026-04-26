@@ -1,4 +1,4 @@
-import type { Book, ReadingProgress } from "@autolibre/shared";
+import type { Book, ReadingProgress } from "@xs/shared";
 
 export type ReaderProgressUpdate = {
   percentage: number;
