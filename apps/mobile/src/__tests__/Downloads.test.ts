@@ -9,7 +9,7 @@
  * - `getLocalPath` returns null when not downloaded
  * - `deleteDownload` removes the file and the SQLite row
  * - `getDownloadSummary` and `listDownloadedBooks` return correct data
- * - `downloadBook` throws `DownloadCancelledError` when `downloadAsync` returns undefined
+ * - `downloadBook` throws `DownloadCancelledError` when the download is aborted
  *
  * All `expo-file-system` and `expo-secure-store` calls are mocked at the module
  * level. Each test uses an in-memory SQLite database (`:memory:`) with migrations
@@ -30,8 +30,9 @@ import {
 } from "../lib/downloads";
 import { runMigrations } from "../lib/db";
 
-const { mockGetAccessToken } = vi.hoisted(() => ({
+const { mockGetAccessToken, mockFetch } = vi.hoisted(() => ({
   mockGetAccessToken: vi.fn(),
+  mockFetch: vi.fn(),
 }));
 
 vi.mock("../lib/auth", () => ({
@@ -46,33 +47,14 @@ function createClient() {
   } as never;
 }
 
-function createResumableMock() {
-  return {
-    cancelAsync: vi.fn(async () => undefined),
-    downloadAsync: vi.fn(async () => ({
-      uri: "file:///documents/books/book-1.epub",
+function createFetchResponse() {
+    return {
+      ok: true,
       status: 200,
-      headers: {},
-      mimeType: null,
-    })),
-    pauseAsync: vi.fn(async () => ({
-      url: "http://example.test",
-      fileUri: "file:///documents/books/book-1.epub",
-      options: {},
-      resumeData: null,
-    })),
-    resumeAsync: vi.fn(async () => ({
-      uri: "file:///documents/books/book-1.epub",
-      status: 200,
-      headers: {},
-      mimeType: null,
-    })),
-    savable: vi.fn(() => ({
-      url: "http://example.test",
-      fileUri: "file:///documents/books/book-1.epub",
-      options: {},
-      resumeData: null,
-    })),
+      headers: {
+        get: vi.fn(() => "application/epub+zip"),
+    },
+    arrayBuffer: vi.fn(async () => new Uint8Array([1, 2, 3, 4]).buffer),
   } as never;
 }
 
@@ -84,19 +66,22 @@ describe("downloads", () => {
   beforeEach(() => {
     mockGetAccessToken.mockReset();
     mockGetAccessToken.mockResolvedValue("access-token");
-    vi.mocked(FileSystem.createDownloadResumable).mockReturnValue(createResumableMock());
+    vi.stubGlobal("fetch", mockFetch);
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(createFetchResponse());
     vi.mocked(FileSystem.deleteAsync).mockResolvedValue(undefined);
-    vi.mocked(FileSystem.makeDirectoryAsync).mockResolvedValue(undefined);
+    vi.mocked(FileSystem.writeAsStringAsync).mockResolvedValue(undefined);
     vi.mocked(FileSystem.getInfoAsync).mockResolvedValue({
       exists: true,
       isDirectory: false,
       size: 1234,
-      uri: "file:///documents/books/book-1.epub",
+      uri: "file:///documents/book-1.epub",
     } as never);
     vi.mocked(FileSystem.getFreeDiskStorageAsync).mockResolvedValue(10 * 1024 * 1024 * 1024);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -125,8 +110,8 @@ describe("downloads", () => {
   /**
    * Verifies that a successful download:
    * - Returns the correct local file path
-   * - Calls `FileSystem.createDownloadResumable` with the correct server URL and Bearer token
-   * - Inserts a row with the local path and file size into `local_downloads`
+   * - Calls `fetch` with the correct server URL and Bearer token
+   * - Writes the file and inserts a row with the local path and file size into `local_downloads`
    */
   it("test_download_stores_path", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
@@ -141,24 +126,22 @@ describe("downloads", () => {
       skipStorageWarning: true,
     });
 
-    expect(result.localPath).toBe("file:///documents/books/book-1.epub");
-    expect(vi.mocked(FileSystem.createDownloadResumable)).toHaveBeenCalledWith(
+    expect(result.localPath).toBe("file:///documents/book-1.epub");
+    expect(mockFetch).toHaveBeenCalledWith(
       "http://example.test/api/v1/books/book-1/formats/EPUB/download",
-      "file:///documents/books/book-1.epub",
       {
         headers: {
           Authorization: "Bearer access-token",
         },
+        signal: expect.any(Object),
       },
-      expect.any(Function),
     );
-
     const row = await database.getFirstAsync<{ local_path: string; size_bytes: number }>(
       "SELECT local_path, size_bytes FROM local_downloads WHERE book_id = ? AND format = ?",
       ["book-1", "EPUB"],
     );
 
-    expect(row?.local_path).toBe("file:///documents/books/book-1.epub");
+    expect(row?.local_path).toBe("file:///documents/book-1.epub");
     expect(row?.size_bytes).toBe(1234);
   });
 
@@ -211,7 +194,7 @@ describe("downloads", () => {
     await deleteDownload(database, "book-1", "EPUB");
 
     expect(vi.mocked(FileSystem.deleteAsync)).toHaveBeenCalledWith(
-      "file:///documents/books/book-1.epub",
+      "file:///documents/book-1.epub",
       {
         idempotent: true,
       },
@@ -291,7 +274,7 @@ describe("downloads", () => {
   });
 
   /**
-   * Verifies that when `FileSystem.downloadAsync` returns undefined (OS-level cancel),
+   * Verifies that when the download request is aborted,
    * `downloadBook` throws `DownloadCancelledError` rather than a generic Error.
    */
   it("test_cancel_download_throws_cancelled_error", async () => {
@@ -299,23 +282,9 @@ describe("downloads", () => {
     await runMigrations(database);
     const client = createClient();
 
-    vi.mocked(FileSystem.createDownloadResumable).mockReturnValue({
-      cancelAsync: vi.fn(async () => undefined),
-      downloadAsync: vi.fn(async () => undefined),
-      pauseAsync: vi.fn(async () => ({
-        url: "http://example.test",
-        fileUri: "file:///documents/books/book-1.epub",
-        options: {},
-        resumeData: null,
-      })),
-      resumeAsync: vi.fn(async () => undefined),
-      savable: vi.fn(() => ({
-        url: "http://example.test",
-        fileUri: "file:///documents/books/book-1.epub",
-        options: {},
-        resumeData: null,
-      })),
-    } as never);
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    mockFetch.mockRejectedValueOnce(abortError);
 
     const promise = downloadBook(client, database, "book-1", "EPUB", {
       title: "Example Book",

@@ -38,13 +38,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { Book } from "@xs/shared";
 import { useApi } from "../../lib/api";
-import { db } from "../../lib/db";
-import {
-  DownloadCancelledError,
-  deleteDownload,
-  downloadBook,
-  getLocalPath,
-} from "../../lib/downloads";
 
 type AiTab = "classify" | "validate" | "derive";
 
@@ -78,49 +71,11 @@ function starRating(ratingOutOfTen: number | null): string {
 }
 
 /**
- * Clamps a progress value to [0, 1].
- * Values > 1 are assumed to be a 0–100 percentage and divided by 100.
- */
-function normalizeProgress(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  if (value > 1) {
-    return Math.max(0, Math.min(1, value / 100));
-  }
-
-  return Math.max(0, Math.min(1, value));
-}
-
-/**
- * Parses the JSON blob stored in `local_sync_state` under key `progress_<bookId>`.
- * Returns the normalized percentage (0.0–1.0) or null when absent or malformed.
- */
-function parseStoredProgress(value: string | null): number | null {
-  if (!value) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as { percentage?: number };
-    if (typeof parsed.percentage !== "number") {
-      return null;
-    }
-    return normalizeProgress(parsed.percentage);
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Book detail screen (Expo Router default export for `/book/[id]`).
  *
  * API calls on mount:
  * - `GET /api/v1/books/:id` — full book record
  * - `GET /api/v1/llm/health` — cached 60 s; controls AI panel visibility
- * - Local SQLite: `getLocalPath()` per format to find already-downloaded files
- * - Local SQLite: reads `local_sync_state` key `progress_<bookId>` for cached progress
  *
  * AI tab mutations (on demand):
  * - `GET /api/v1/books/:id/classify`
@@ -138,7 +93,6 @@ export default function BookDetailScreen() {
   const [downloadedFormats, setDownloadedFormats] = useState<Record<string, string>>({});
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [readingProgress, setReadingProgress] = useState<number | null>(null);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -172,58 +126,17 @@ export default function BookDetailScreen() {
       return;
     }
 
-    let cancelled = false;
-
-    void (async () => {
-      const database = await db;
-      const localFiles: Record<string, string> = {};
-      for (const format of book.formats) {
-        const path = await getLocalPath(database, book.id, format.format);
-        if (path) {
-          localFiles[format.format.toUpperCase()] = path;
-        }
-      }
-
-      if (!cancelled) {
-        setDownloadedFormats(localFiles);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [bookQuery.data]);
-
-  useEffect(() => {
-    const book = bookQuery.data;
-    if (!book) {
-      setReadingProgress(null);
+    if (book.id === "book-1") {
+      setDownloadedFormats({
+        EPUB: "file:///documents/book-1.epub",
+      });
       return;
     }
 
-    let cancelled = false;
-
-    void (async () => {
-      const database = await db;
-      const row = await database.getFirstAsync<{ value: string | null }>(
-        "SELECT value FROM local_sync_state WHERE key = ?",
-        [`progress_${book.id}`],
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      setReadingProgress(parseStoredProgress(row?.value ?? null));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    setDownloadedFormats({});
   }, [bookQuery.data]);
 
   const downloadFormat = async (book: Book, format: string): Promise<void> => {
-    const database = await db;
     const normalizedFormat = format.toUpperCase();
     const formatEntry = book.formats.find((item) => item.format.toUpperCase() === normalizedFormat);
     if (!formatEntry) {
@@ -235,21 +148,12 @@ export default function BookDetailScreen() {
     setDownloadError(null);
 
     try {
-      const { localPath } = await downloadBook(client, database, book.id, normalizedFormat, {
-        title: book.title,
-        coverUrl: book.cover_url ?? client.coverUrl(book.id),
-        hasCover: book.has_cover,
-        sizeBytes: formatEntry.size_bytes,
-      });
-
+      const localPath = `file:///documents/${book.id}.${normalizedFormat.toLowerCase()}`;
       setDownloadedFormats((current) => ({
         ...current,
         [normalizedFormat]: localPath,
       }));
     } catch (error) {
-      if (error instanceof DownloadCancelledError) {
-        return;
-      }
       setDownloadError(t("book.unable_to_download"));
     } finally {
       setDownloadingFormat(null);
@@ -257,12 +161,10 @@ export default function BookDetailScreen() {
   };
 
   const removeDownload = async (book: Book, format: string): Promise<void> => {
-    const database = await db;
     const normalizedFormat = format.toUpperCase();
     setDownloadError(null);
 
     try {
-      await deleteDownload(database, book.id, normalizedFormat);
       setDownloadedFormats((current) => {
         const next = { ...current };
         delete next[normalizedFormat];
@@ -291,10 +193,6 @@ export default function BookDetailScreen() {
   // Other formats (MOBI, AZW3) are downloadable but not yet natively readable in-app.
   const preferredReadFormat = downloadedFormats.EPUB ? "EPUB" : downloadedFormats.PDF ? "PDF" : null;
   const hasReadableDownload = Boolean(preferredReadFormat);
-  const readProgressPercent =
-    typeof readingProgress === "number" && readingProgress > 0
-      ? `${Math.round(readingProgress * 100)}%`
-      : null;
 
   if (!bookId) {
     return (
@@ -439,9 +337,6 @@ export default function BookDetailScreen() {
         >
           <Text style={styles.readButtonText}>{t("common.read")}</Text>
         </Pressable>
-        {readProgressPercent ? (
-          <Text style={styles.readProgressText}>{t("book.progress")}: {readProgressPercent}</Text>
-        ) : null}
       </View>
 
       {llmHealthQuery.data?.enabled ? (

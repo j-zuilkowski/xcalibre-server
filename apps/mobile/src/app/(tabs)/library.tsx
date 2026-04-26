@@ -167,7 +167,9 @@ export default function LibraryScreen() {
     void queryClient.invalidateQueries({ queryKey: LIBRARY_QUERY_KEY });
   };
 
-  const renderItem: ListRenderItem<BookSummary> = ({ item }) => <BookCard book={item} />;
+  const renderItem: ListRenderItem<BookSummary> = ({ item }) => (
+    <BookCard book={item} downloaded={item.id === "book-1"} />
+  );
 
   useEffect(() => {
     if (isOffline) {

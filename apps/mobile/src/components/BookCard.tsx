@@ -8,9 +8,10 @@ import { useApi } from "../lib/api";
 
 type BookCardProps = {
   book: BookSummary;
+  downloaded?: boolean;
 };
 
-export function BookCard({ book }: BookCardProps) {
+export function BookCard({ book, downloaded = false }: BookCardProps) {
   const router = useRouter();
   const client = useApi();
   const { t } = useTranslation();
@@ -44,6 +45,11 @@ export function BookCard({ book }: BookCardProps) {
             </Text>
           </View>
         )}
+        {downloaded ? (
+          <View style={styles.downloadedBadge}>
+            <Text style={styles.downloadedBadgeText}>Downloaded</Text>
+          </View>
+        ) : null}
       </View>
       <Text numberOfLines={2} style={styles.title}>
         {book.title}
@@ -82,6 +88,21 @@ const styles = StyleSheet.create({
     color: "#71717a",
     fontSize: 38,
     fontWeight: "700",
+  },
+  downloadedBadge: {
+    position: "absolute",
+    right: 8,
+    top: 8,
+    borderRadius: 999,
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  downloadedBadgeText: {
+    color: "#f8fafc",
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
   },
   title: {
     marginTop: 8,

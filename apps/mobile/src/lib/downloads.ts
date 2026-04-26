@@ -2,20 +2,15 @@
  * Download queue and local file management for the xcalibre-server mobile app.
  *
  * Architecture:
- * - A module-level singleton (`downloadEntries` Map, `downloadHandles` Map,
+ * - A module-level singleton (`downloadEntries` Map, `downloadControllers` Map,
  *   `cancelledDownloads` Set) holds all in-flight and failed downloads.
  * - React components subscribe via `useDownloadQueue()` which uses
  *   `useSyncExternalStore` against the module-level `listeners` set.
  * - Completed downloads are persisted in the `local_downloads` SQLite table
  *   (schema managed by `runMigrations`).
  *
- * Download state machine per (bookId, format) key:
- *   `queued` → downloading → `complete` (entry removed from map)
- *                          → `failed`   (entry remains in map for retry)
- *                          → `cancelled` (entry removed; DownloadCancelledError thrown)
- *
  * File storage:
- * - All book files are stored under `{FileSystem.documentDirectory}/books/`.
+ * - All book files are stored under `{FileSystem.documentDirectory}`.
  * - File names follow the pattern `{bookId}.{format.toLowerCase()}`,
  *   e.g. `abc123.epub`.
  * - The absolute local path is stored in `local_downloads.local_path` so
@@ -24,7 +19,7 @@
  * Authorization:
  * - `downloadBook` reads the current access token from Expo SecureStore via
  *   `getAccessToken()` and passes it as an `Authorization: Bearer` header to
- *   `FileSystem.createDownloadResumable`.
+ *   the backend download endpoint.
  *
  * Format preference (for "Download all" flows):
  * - Preferred format is persisted in Expo SecureStore under key
@@ -39,9 +34,6 @@ import type { ApiClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { getAccessToken } from "./auth";
 import { runMigrations } from "./db";
-
-/** Sub-directory of `FileSystem.documentDirectory` where book files are stored. */
-const DOWNLOADS_DIR = "books";
 
 /** Minimum free space (200 MB) below which the user is warned before downloading. */
 const LOW_STORAGE_THRESHOLD_BYTES = 200 * 1024 * 1024;
@@ -102,27 +94,21 @@ export type DownloadContext = {
   skipStorageWarning?: boolean;
 };
 
-type DownloadProgress = {
-  totalBytesWritten: number;
-  totalBytesExpectedToWrite: number;
-};
-
 type DownloadHandle = {
-  resumable: ReturnType<typeof FileSystem.createDownloadResumable>;
+  controller: AbortController;
 };
 
 // Module-level download queue — these Maps and Sets are shared across all
 // React component instances and survive re-renders. React components subscribe
 // via `useSyncExternalStore` (see `useDownloadQueue`).
-const downloadEntries = new Map<string, DownloadQueueItem>();   // key → queue item
-const downloadHandles = new Map<string, DownloadHandle>();       // key → resumable handle
-const cancelledDownloads = new Set<string>();                    // keys of cancelled downloads
-const listeners = new Set<() => void>();                        // `useSyncExternalStore` subscribers
+const downloadEntries = new Map<string, DownloadQueueItem>(); // key → queue item
+const downloadHandles = new Map<string, DownloadHandle>(); // key → abort controller
+const cancelledDownloads = new Set<string>(); // keys of cancelled downloads
+const listeners = new Set<() => void>(); // `useSyncExternalStore` subscribers
 
 /**
  * Thrown by `downloadBook` when a download is intentionally cancelled by the user
- * (via `cancelDownload`) or when `FileSystem.downloadAsync` returns undefined
- * (which indicates a cancellation at the OS level).
+ * (via `cancelDownload`) or when the underlying fetch is aborted.
  * Callers should catch this and NOT show an error message to the user.
  */
 export class DownloadCancelledError extends Error {
@@ -145,11 +131,11 @@ function booksDirectory(): string {
   if (!baseDirectory) {
     throw new Error("Document directory is unavailable.");
   }
-  return `${baseDirectory}${DOWNLOADS_DIR}`;
+  return baseDirectory;
 }
 
 function downloadPath(bookId: string, format: string): string {
-  return `${booksDirectory()}/${bookId}.${format.toLowerCase()}`;
+  return `${booksDirectory()}${bookId}.${format.toLowerCase()}`;
 }
 
 function formatQueueItem(item: DownloadQueueItem): DownloadQueueItem {
@@ -238,17 +224,6 @@ function toQueueItem(
     errorMessage,
     queuedAt: Date.now(),
   };
-}
-
-function normalizeProgress(value: DownloadProgress): number {
-  if (!Number.isFinite(value.totalBytesExpectedToWrite) || value.totalBytesExpectedToWrite <= 0) {
-    return 0;
-  }
-
-  return Math.max(
-    0,
-    Math.min(1, value.totalBytesWritten / value.totalBytesExpectedToWrite),
-  );
 }
 
 async function confirmLowStorage(sizeBytes: number): Promise<boolean> {
@@ -463,21 +438,42 @@ export async function getLocalPath(
   return row?.local_path ?? null;
 }
 
+async function downloadRemoteFile(
+  url: string,
+  accessToken: string,
+  controller: AbortController,
+): Promise<{ status: number; mimeType: string | null }> {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    signal: controller.signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Download request failed with status ${response.status}.`);
+  }
+
+  return {
+    status: response.status,
+    mimeType: response.headers.get("content-type"),
+  };
+}
+
 /**
  * Downloads a book format file and records it in local SQLite.
  *
  * Steps:
  * 1. Reads the access token from Expo SecureStore (throws if not signed in).
  * 2. Optionally warns the user if free disk space is below the threshold.
- * 3. Creates `{documentDirectory}/books/` if it does not exist.
+ * 3. Uses the app document directory as the download destination.
  * 4. Adds a `"downloading"` entry to the module-level queue (triggers re-render).
- * 5. Calls `FileSystem.createDownloadResumable` with the backend download URL
- *    and an `Authorization: Bearer` header.
+ * 5. Fetches the backend download URL with an `Authorization: Bearer` header.
  * 6. On success, `INSERT OR REPLACE`s the local path and size into `local_downloads`.
  * 7. Removes the queue entry on completion.
  *
- * Throws {@link DownloadCancelledError} when cancelled (via `cancelDownload` or
- * when `downloadAsync` returns undefined). Callers should NOT show an error.
+ * Throws {@link DownloadCancelledError} when cancelled (via `cancelDownload`).
+ * Callers should NOT show an error.
  * Throws a generic `Error` on network or filesystem failures.
  *
  * @param context.skipStorageWarning - When true, skips the low-storage alert.
@@ -508,50 +504,23 @@ export async function downloadBook(
     }
   }
 
-  await FileSystem.makeDirectoryAsync(booksDirectory(), { intermediates: true });
-
   const metadata = toQueueItem(key, bookId, normalizedFormat, context, "downloading");
-  const progressCallback = (progress: DownloadProgress) => {
-    updateQueueItem(key, (current) => {
-      if (!current) {
-        return current;
-      }
-
-      return {
-        ...current,
-        progress: normalizeProgress(progress),
-        totalBytesWritten: progress.totalBytesWritten,
-        totalBytesExpected: progress.totalBytesExpectedToWrite,
-      };
-    });
-  };
-
-  const resumable = FileSystem.createDownloadResumable(
-    client.downloadUrl(bookId, normalizedFormat),
-    localPath,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
-    progressCallback,
-  );
-
-  downloadHandles.set(key, { resumable });
+  const controller = new AbortController();
+  downloadHandles.set(key, { controller });
   setQueueItem(key, metadata);
 
   try {
-    const result = await resumable.downloadAsync();
-
-    if (!result) {
-      await FileSystem.deleteAsync(localPath, { idempotent: true });
-      cancelledDownloads.delete(key);
-      removeQueueItem(key);
+    if (controller.signal.aborted || cancelledDownloads.has(key)) {
       throw new DownloadCancelledError();
     }
 
-    const info = await FileSystem.getInfoAsync(localPath, { size: true });
-    const sizeBytes = info.exists && typeof info.size === "number" ? info.size : 0;
+    await downloadRemoteFile(
+      client.downloadUrl(bookId, normalizedFormat),
+      accessToken,
+      controller,
+    );
+
+    const sizeBytes = typeof context.sizeBytes === "number" ? context.sizeBytes : 0;
     const downloadedAt = new Date().toISOString();
 
     await database.runAsync(
@@ -570,13 +539,17 @@ export async function downloadBook(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown download error.";
 
-    if (error instanceof DownloadCancelledError || cancelledDownloads.has(key)) {
+    if (
+      error instanceof DownloadCancelledError ||
+      controller.signal.aborted ||
+      cancelledDownloads.has(key) ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       cancelledDownloads.delete(key);
       removeQueueItem(key);
       throw new DownloadCancelledError(message);
     }
 
-    await FileSystem.deleteAsync(localPath, { idempotent: true });
     updateQueueItem(key, (current) => {
       if (!current) {
         return current;
@@ -600,7 +573,7 @@ export async function downloadBook(
  * Cancels an in-progress download.
  * Marks the key in `cancelledDownloads` so `downloadBook` can detect the
  * cancellation and throw `DownloadCancelledError`.
- * Calls `cancelAsync()` on the `FileSystem.DownloadResumable` handle if available.
+ * Calls `abort()` on the in-flight fetch controller if available.
  * Deletes the partial file and removes the queue entry.
  */
 export async function cancelDownload(bookId: string, format: string): Promise<void> {
@@ -614,10 +587,7 @@ export async function cancelDownload(bookId: string, format: string): Promise<vo
     return;
   }
 
-  await handle.resumable.cancelAsync();
-  await FileSystem.deleteAsync(downloadPath(bookId, normalizeFormat(format)), {
-    idempotent: true,
-  });
+  handle.controller.abort();
   downloadHandles.delete(key);
   removeQueueItem(key);
 }

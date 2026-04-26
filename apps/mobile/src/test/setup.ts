@@ -37,26 +37,26 @@ vi.mock("expo-file-system", () => {
   const resumable = {
     cancelAsync: vi.fn(async () => undefined),
     downloadAsync: vi.fn(async () => ({
-      uri: "file:///documents/books/book-1.epub",
+      uri: "file:///documents/book-1.epub",
       status: 200,
       headers: {},
       mimeType: null,
     })),
     pauseAsync: vi.fn(async () => ({
       url: "http://example.test",
-      fileUri: "file:///documents/books/book-1.epub",
+      fileUri: "file:///documents/book-1.epub",
       options: {},
       resumeData: null,
     })),
     resumeAsync: vi.fn(async () => ({
-      uri: "file:///documents/books/book-1.epub",
+      uri: "file:///documents/book-1.epub",
       status: 200,
       headers: {},
       mimeType: null,
     })),
     savable: vi.fn(() => ({
       url: "http://example.test",
-      fileUri: "file:///documents/books/book-1.epub",
+      fileUri: "file:///documents/book-1.epub",
       options: {},
       resumeData: null,
     })),
@@ -64,12 +64,17 @@ vi.mock("expo-file-system", () => {
 
   return {
     documentDirectory: "file:///documents/",
+    EncodingType: {
+      Base64: "base64",
+      UTF8: "utf8",
+    },
     downloadAsync: vi.fn(async (_uri: string, fileUri: string) => ({
       uri: fileUri,
       status: 200,
       headers: {},
       mimeType: null,
     })),
+    writeAsStringAsync: vi.fn(async () => undefined),
     deleteAsync: vi.fn(async () => undefined),
     makeDirectoryAsync: vi.fn(async () => undefined),
     getInfoAsync: vi.fn(async (fileUri: string) => ({
