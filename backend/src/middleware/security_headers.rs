@@ -5,8 +5,9 @@
 //! - `X-Frame-Options: DENY` — blocks framing by all origins.
 //! - `Referrer-Policy: strict-origin-when-cross-origin` — limits referrer leakage.
 //! - `Content-Security-Policy` — restricts resource loading to `'self'` plus
-//!   `'unsafe-inline'` for style-src (required by shadcn/ui CSS variables)
-//!   and `data:/blob:` for cover images and epub.js web workers.
+//!   `'unsafe-inline'` for script-src and style-src (required by epub.js and
+//!   shadcn/ui CSS variables) and `data:/blob:` for cover images and epub.js
+//!   web workers.
 //! - `Permissions-Policy` — disables camera, microphone, and geolocation.
 //!
 //! Rate limiting uses `tower-governor` with a `ClientIpKeyExtractor` that
@@ -44,7 +45,7 @@ const X_CONTENT_TYPE_OPTIONS_VALUE: &str = "nosniff";
 const X_FRAME_OPTIONS_VALUE: &str = "DENY";
 const REFERRER_POLICY_VALUE: &str = "strict-origin-when-cross-origin";
 const CONTENT_SECURITY_POLICY_VALUE: &str = concat!(
-    "default-src 'self'; script-src 'self'; ",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; ",
     // shadcn/ui theme variables are applied through inline styles.
     "style-src 'self' 'unsafe-inline'; ",
     "img-src 'self' data: blob:; worker-src 'self' blob:"

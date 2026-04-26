@@ -17,9 +17,10 @@
 //!
 //! # LLM endpoint SSRF protection
 //! LLM endpoints are validated against private/loopback ranges **at startup** via
-//! [`validate_llm_endpoints`]. If validation passes once, subsequent calls are safe
-//! because the endpoint is immutable.  If endpoints become runtime-configurable in a
-//! future version, they must be re-validated on each use.
+//! [`validate_llm_endpoints`]. Private endpoints log a warning and do not block
+//! startup so home NAS deployments can intentionally point at LAN-hosted model
+//! servers. Runtime callers can still use [`validate_llm_endpoint`] for strict
+//! rejection during config edits.
 //!
 //! # Security invariants enforced at startup
 //! - `jwt_secret` must decode to ≥ 32 bytes.
@@ -32,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     net::IpAddr,
+    net::ToSocketAddrs,
     path::{Path, PathBuf},
 };
 
@@ -699,23 +701,19 @@ fn decode_base64_secret(secret: &str) -> Result<Vec<u8>, base64::DecodeError> {
 }
 
 // LLM endpoints are validated at config load/startup, not on each request.
-// If LLM endpoints become runtime-configurable later, they must be validated per request.
+// Private/loopback endpoints are warned about at startup but not blocked so local
+// model servers remain usable by default.
 fn validate_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
     for endpoint in llm_endpoints(config) {
         if endpoint.trim().is_empty() {
             continue;
         }
-        let url = reqwest::Url::parse(endpoint)
-            .map_err(|e| anyhow::anyhow!("invalid LLM endpoint URL: {e}"))?;
-        match url.scheme() {
-            "http" | "https" => {}
-            _ => anyhow::bail!("invalid LLM endpoint URL: only http and https are allowed"),
-        }
-        let host = url.host_str().unwrap_or("");
-        if !config.llm.allow_private_endpoints && is_private_or_loopback_host(host) {
-            anyhow::bail!(
-                "LLM endpoint {} points to a private/loopback address. Set llm.allow_private_endpoints = true to use local model servers (LM Studio, Ollama, etc.).",
-                endpoint
+        let endpoint_info = inspect_llm_endpoint(endpoint)?;
+        if endpoint_info.private_or_loopback && !config.llm.allow_private_endpoints {
+            tracing::warn!(
+                endpoint = %endpoint,
+                resolved_ips = ?endpoint_info.resolved_ips,
+                "LLM endpoint resolves to a private/loopback address; startup continues because llm.allow_private_endpoints = false"
             );
         }
     }
@@ -733,35 +731,62 @@ fn llm_endpoints(config: &AppConfig) -> [&str; 2] {
 ///
 /// Called when an admin updates the LLM config via the API (as opposed to startup
 /// validation which uses [`validate_llm_endpoints`] over all configured endpoints).
-/// Returns [`crate::AppError::BadRequest`] for invalid URLs or blocked addresses.
+/// Returns [`crate::AppError::BadRequest`] for invalid URLs and
+/// [`crate::AppError::SsrfBlocked`] for private/loopback addresses when those are
+/// not explicitly allowed.
 pub fn validate_llm_endpoint(
     url: &str,
     allow_private_endpoints: bool,
 ) -> Result<(), crate::AppError> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| crate::AppError::BadRequest)?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        _ => return Err(crate::AppError::BadRequest),
-    }
-
-    let host = parsed.host_str().ok_or(crate::AppError::BadRequest)?;
-    if !allow_private_endpoints && is_private_or_loopback_host(host) {
-        return Err(crate::AppError::BadRequest);
+    let endpoint_info = inspect_llm_endpoint(url).map_err(|_| crate::AppError::BadRequest)?;
+    if endpoint_info.private_or_loopback && !allow_private_endpoints {
+        return Err(crate::AppError::SsrfBlocked);
     }
 
     Ok(())
 }
 
-fn is_private_or_loopback_host(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
+struct LlmEndpointInfo {
+    private_or_loopback: bool,
+    resolved_ips: Vec<IpAddr>,
+}
+
+fn inspect_llm_endpoint(endpoint: &str) -> anyhow::Result<LlmEndpointInfo> {
+    let parsed = reqwest::Url::parse(endpoint)
+        .map_err(|e| anyhow::anyhow!("invalid LLM endpoint URL: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => anyhow::bail!("invalid LLM endpoint URL: only http and https are allowed"),
     }
 
-    let Ok(ip) = host.parse::<IpAddr>() else {
-        return false;
-    };
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("LLM endpoint URL must include a host"))?;
 
-    is_private_or_loopback(ip)
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(LlmEndpointInfo {
+            private_or_loopback: is_private_or_loopback(ip),
+            resolved_ips: vec![ip],
+        });
+    }
+
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("LLM endpoint URL must include a port or known scheme"))?;
+    let resolved_ips = (host, port)
+        .to_socket_addrs()
+        .map_err(|err| anyhow::anyhow!("failed to resolve LLM endpoint host {host}: {err}"))?
+        .map(|addr| addr.ip())
+        .collect::<Vec<_>>();
+
+    if resolved_ips.is_empty() {
+        anyhow::bail!("failed to resolve LLM endpoint host {host}");
+    }
+
+    Ok(LlmEndpointInfo {
+        private_or_loopback: resolved_ips.iter().copied().any(is_private_or_loopback),
+        resolved_ips,
+    })
 }
 
 /// Returns `true` for RFC 1918 private, loopback, link-local, and documentation ranges.

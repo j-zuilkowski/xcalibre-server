@@ -13,7 +13,7 @@ const REFERRER_POLICY: &str = "referrer-policy";
 const CONTENT_SECURITY_POLICY: &str = "content-security-policy";
 const PERMISSIONS_POLICY: &str = "permissions-policy";
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
-const EXPECTED_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:";
+const EXPECTED_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:";
 
 fn assert_security_headers(response: &TestResponse) {
     assert_header(response, X_CONTENT_TYPE_OPTIONS, "nosniff");

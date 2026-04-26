@@ -179,7 +179,41 @@ async fn test_llm_endpoint_allows_localhost_when_flag_set() {
 
 #[tokio::test]
 async fn test_llm_endpoint_allows_public_https() {
-    let result = backend::config::validate_llm_endpoint("https://api.openai.com/v1", false);
+    let result = backend::config::validate_llm_endpoint("https://1.1.1.1/v1", false);
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_llm_private_endpoint_does_not_block_startup() {
+    let _guard = env_lock().lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[app]
+base_url = "https://example.com"
+storage_path = "/var/lib/calibre"
+
+[database]
+url = "sqlite://books.db"
+
+[auth]
+jwt_secret = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
+[llm]
+enabled = true
+
+[llm.librarian]
+endpoint = "http://localhost:1234/v1"
+"#,
+    )
+    .unwrap();
+
+    std::env::set_var("CONFIG_PATH", &path);
+    let result = backend::config::load_config().await;
+    std::env::remove_var("CONFIG_PATH");
 
     assert!(result.is_ok());
 }
