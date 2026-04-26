@@ -1,6 +1,5 @@
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import * as Localize from "react-native-localize";
 import en from "./locales/en/translation.json";
 import fr from "./locales/fr/translation.json";
 import de from "./locales/de/translation.json";
@@ -23,13 +22,30 @@ function normalizeLanguage(value: string | null | undefined): SupportedLanguage 
     : "en";
 }
 
+function ensurePluralRules(): void {
+  if (typeof Intl === "undefined" || typeof Intl.PluralRules === "function") {
+    return;
+  }
+
+  class FallbackPluralRules {
+    select(): Intl.LDMLPluralRule {
+      return "other";
+    }
+  }
+
+  // Hermes in Expo Go can omit Intl.PluralRules. i18next only needs a basic fallback.
+  // @ts-expect-error - assigning a lightweight runtime fallback into Intl.
+  Intl.PluralRules = FallbackPluralRules;
+}
+
 function detectLanguage(): SupportedLanguage {
-  const locales = Localize.getLocales();
-  return normalizeLanguage(locales[0]?.languageCode ?? locales[0]?.languageTag);
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+  return normalizeLanguage(locale);
 }
 
 export async function initializeI18n() {
   if (!i18next.isInitialized) {
+    ensurePluralRules();
     await i18next.use(initReactI18next).init({
       lng: detectLanguage(),
       fallbackLng: "en",

@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "Calibre",
-    "slug": "calibre",
-    "scheme": "calibre",
+    "name": "Xcalibre",
+    "slug": "xcalibre",
+    "scheme": "xcalibre",
     "version": "1.0.0",
     "platforms": ["ios", "android"],
     "icon": "./assets/icon.png",
     "ios": {
-      "bundleIdentifier": "com.calibreweb.library"
+      "bundleIdentifier": "com.xcalibre.library"
     },
     "android": {
-      "package": "com.calibreweb.library",
+      "package": "com.xcalibre.library",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

@@ -1,4 +1,4 @@
-import type { ApiClient as CalibreClient, BookSummary, DocumentType } from "@xs/shared";
+import type { ApiClient, BookSummary, DocumentType } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { runMigrations } from "./db";
 
@@ -26,7 +26,7 @@ async function getLastSyncAt(database: SQLiteDatabase): Promise<string | null> {
 }
 
 export async function syncLibrary(
-  client: CalibreClient,
+  client: ApiClient,
   database: SQLiteDatabase,
 ): Promise<{ synced: number; total: number }> {
   await runMigrations(database);

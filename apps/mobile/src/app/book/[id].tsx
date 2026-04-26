@@ -67,7 +67,7 @@ function formatBytes(sizeBytes: number): string {
 }
 
 /**
- * Converts a calibre 0–10 rating to a 5-star Unicode string.
+ * Converts a 0–10 rating to a 5-star Unicode string.
  * e.g. 8 → "████☆" (4 filled, 1 empty).
  */
 function starRating(ratingOutOfTen: number | null): string {

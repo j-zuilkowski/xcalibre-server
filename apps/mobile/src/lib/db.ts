@@ -1,8 +1,12 @@
-import * as SQLite from "expo-sqlite";
 import type { SQLiteDatabase } from "expo-sqlite";
 import type { BookSummary, DocumentType, SeriesRef } from "@xs/shared";
 
-export const db = SQLite.openDatabaseAsync("calibre_local.db");
+async function openDatabase(): Promise<SQLiteDatabase> {
+  const SQLite = await import("expo-sqlite");
+  return SQLite.openDatabaseAsync("xcalibre_local.db");
+}
+
+export const db = openDatabase();
 
 const CREATE_LOCAL_BOOKS_TABLE = `
   CREATE TABLE IF NOT EXISTS local_books (

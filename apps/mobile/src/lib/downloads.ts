@@ -35,7 +35,7 @@ import * as FileSystem from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert } from "react-native";
 import { useSyncExternalStore } from "react";
-import type { ApiClient as CalibreClient } from "@xs/shared";
+import type { ApiClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { getAccessToken } from "./auth";
 import { runMigrations } from "./db";
@@ -484,7 +484,7 @@ export async function getLocalPath(
  *   Used by the batch "Download all" shelf flow to avoid one alert per book.
  */
 export async function downloadBook(
-  client: CalibreClient,
+  client: ApiClient,
   database: SQLiteDatabase,
   bookId: string,
   format: string,

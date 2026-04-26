@@ -1,8 +1,8 @@
 import "react-native-gesture-handler";
 
 import { useEffect, useState } from "react";
-import { ActivityIndicator, View } from "react-native";
-import { Slot, useRouter } from "expo-router";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { Slot, useRootNavigationState, useRouter } from "expo-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -14,6 +14,7 @@ import { initializeI18n } from "../i18n";
 
 export default function RootLayout() {
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -27,13 +28,32 @@ export default function RootLayout() {
   }, [router]);
 
   useEffect(() => {
+    if (!rootNavigationState?.key) {
+      return;
+    }
+
     let cancelled = false;
 
     void (async () => {
-      await initializeApi();
-      await runMigrations();
-      await initializeI18n();
-      const accessToken = await getAccessToken();
+      try {
+        await initializeApi();
+      } catch {
+        // Silent fallback: the app can still render login/library without API hydration.
+      }
+
+      try {
+        await runMigrations();
+      } catch {
+        // Silent fallback: Expo Go does not always expose the SQLite methods used in dev.
+      }
+
+      try {
+        await initializeI18n();
+      } catch {
+        // Silent fallback: the default English strings remain usable if i18n boot fails.
+      }
+
+      const accessToken = await getAccessToken().catch(() => null);
 
       if (cancelled) {
         return;
@@ -46,18 +66,17 @@ export default function RootLayout() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, rootNavigationState?.key]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          {ready ? (
-            <Slot />
-          ) : (
+          <Slot />
+          {!ready ? (
             <View
               style={{
-                flex: 1,
+                ...StyleSheet.absoluteFillObject,
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: "#fafafa",
@@ -65,7 +84,7 @@ export default function RootLayout() {
             >
               <ActivityIndicator color="#0f766e" size="large" />
             </View>
-          )}
+          ) : null}
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

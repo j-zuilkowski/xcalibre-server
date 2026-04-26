@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { ApiClient as CalibreClient, type RefreshResponse } from "@xs/shared";
+import { ApiClient, type RefreshResponse } from "@xs/shared";
 import {
   getAccessTokenSync,
   getRefreshTokenSync,
@@ -16,8 +16,8 @@ let baseUrl = DEFAULT_BASE_URL;
 let initialized = false;
 let client = createClient(baseUrl);
 
-function createClient(url: string): CalibreClient {
-  return new CalibreClient(
+function createClient(url: string): ApiClient {
+  return new ApiClient(
     url,
     () => getAccessTokenSync(),
     () => {
@@ -74,6 +74,6 @@ export async function setApiBaseUrl(nextBaseUrl: string): Promise<void> {
   initialized = true;
 }
 
-export function useApi(): CalibreClient {
+export function useApi(): ApiClient {
   return client;
 }

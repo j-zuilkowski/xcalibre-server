@@ -1,4 +1,4 @@
-import type { ApiClient as CalibreClient, ReadingProgress } from "@xs/shared";
+import type { ApiClient, ReadingProgress } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { runMigrations } from "./db";
 
@@ -14,7 +14,7 @@ type ProgressResponse = {
   percentage?: number | null;
 };
 
-type ProgressApiClient = CalibreClient & {
+type ProgressApiClient = ApiClient & {
   get?: (path: string) => Promise<unknown>;
   post?: (path: string, body: Record<string, unknown>) => Promise<unknown>;
 };

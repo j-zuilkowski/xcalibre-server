@@ -1,4 +1,4 @@
-# Codex Desktop App — calibre-web-rs Phase 6: Mobile App
+# Codex Desktop App — xcalibre-server Phase 6: Mobile App
 
 ## What Phase 6 Builds
 
@@ -55,23 +55,23 @@ Deliverables:
 
 apps/mobile/ — new Expo project, wired into pnpm workspace:
   package.json:
-    name: "@calibre/mobile"
+    name: "@xs/mobile"
     extends the root pnpm workspace
     dependencies: expo ~51, expo-router ~3, expo-secure-store, expo-sqlite,
       expo-file-system, nativewind@^4, react-native-safe-area-context,
       react-native-screens, @tanstack/react-query v5, react-native-gesture-handler,
       react-native-reanimated, @expo/vector-icons
     devDependencies: typescript, @types/react, @types/react-native, tailwindcss
-  app.json: name "Calibre", slug "calibre", scheme "calibre",
+  app.json: name "Xcalibre", slug "xcalibre", scheme "xcalibre",
     platforms [ios, android], icon ./assets/icon.png, splash ./assets/splash.png
   tailwind.config.js: content includes app/**/*.tsx, extends zinc/teal-600 theme
     matching web app — import from ../../packages/shared/tailwind.config.base.js if it
     exists, otherwise define inline
   babel.config.js: expo preset + nativewind/babel plugin
-  tsconfig.json: extends expo/tsconfig.base, paths alias for @calibre/shared
+  tsconfig.json: extends expo/tsconfig.base, paths alias for @xs/shared
 
 apps/mobile/src/lib/api.ts:
-  Import CalibreClient from @calibre/shared.
+  Import ApiClient from @xs/shared.
   Export a singleton client instance configured from:
     - AsyncStorage or Expo SecureStore for base URL (user-configurable on first launch)
     - getAccessToken() reads from SecureStore key "access_token"
@@ -137,7 +137,7 @@ apps/mobile/src/__tests__/LoginScreen.test.tsx:
 TDD BUILD LOOP — do not stop until all tests pass:
 
   LOOP:
-    pnpm --filter @calibre/mobile test -- --reporter=verbose 2>&1
+    pnpm --filter @xs/mobile test -- --reporter=verbose 2>&1
 
     If any test fails:
       1. Read the full error for that test.
@@ -148,8 +148,18 @@ TDD BUILD LOOP — do not stop until all tests pass:
 
     If all tests pass: exit loop.
 
+  VISUAL INSPECTION (after tests pass):
+    npx expo start --simulator &
+    @Computer Use — open the iPhone 17 Pro simulator (iOS 26.4)
+    Verify:
+      - Login screen renders with username/password fields and a Sign In button
+      - Signing in with test credentials navigates to the library grid
+      - Library grid shows cover thumbnails with title and author below each card
+      - Pull-to-refresh triggers a reload spinner
+    Kill the Expo process when done.
+
 When done, run:
-  pnpm turbo build --filter=@calibre/mobile 2>&1 | tail -20
+  pnpm turbo build --filter=@xs/mobile 2>&1 | tail -20
   git diff --stat
 ```
 
@@ -171,7 +181,7 @@ Add offline library sync via Expo SQLite and book file downloads via expo-file-s
 Deliverables:
 
 apps/mobile/src/lib/db.ts — local SQLite database:
-  Open DB: SQLite.openDatabaseAsync("calibre_local.db").
+  Open DB: SQLite.openDatabaseAsync("xcalibre_local.db").
   runMigrations(): CREATE TABLE IF NOT EXISTS:
     local_books (id TEXT PK, title TEXT, sort_title TEXT, authors_json TEXT,
       cover_url TEXT, has_cover INTEGER, language TEXT, rating INTEGER,
@@ -182,7 +192,7 @@ apps/mobile/src/lib/db.ts — local SQLite database:
   Export: db singleton, runMigrations()
 
 apps/mobile/src/lib/sync.ts:
-  syncLibrary(client: CalibreClient, db: SQLiteDatabase):
+  syncLibrary(client: ApiClient, db: SQLiteDatabase):
     Read last_sync_at from local_sync_state.
     Call client.listBooks({ since: last_sync_at, page_size: 200 }) — paginate until
       all pages fetched.
@@ -192,7 +202,7 @@ apps/mobile/src/lib/sync.ts:
   On network error: return { synced: 0, total: 0 } — never throw.
 
 apps/mobile/src/lib/downloads.ts:
-  downloadBook(client: CalibreClient, db: SQLiteDatabase,
+  downloadBook(client: ApiClient, db: SQLiteDatabase,
     bookId: string, format: string) -> { localPath: string }
     Build download URL: {baseUrl}/api/v1/books/{bookId}/formats/{format}/download
     Use expo-file-system FileSystem.downloadAsync() to
@@ -235,7 +245,7 @@ apps/mobile/src/__tests__/Downloads.test.ts:
 TDD BUILD LOOP — do not stop until all tests pass:
 
   LOOP:
-    pnpm --filter @calibre/mobile test -- --reporter=verbose 2>&1
+    pnpm --filter @xs/mobile test -- --reporter=verbose 2>&1
 
     If any test fails:
       1. Read the full error for that test.
@@ -245,6 +255,16 @@ TDD BUILD LOOP — do not stop until all tests pass:
       Go back to LOOP.
 
     If all tests pass: exit loop.
+
+  VISUAL INSPECTION (after tests pass):
+    npx expo start --simulator &
+    @Computer Use — open the iPhone 17 Pro simulator (iOS 26.4)
+    Verify:
+      - Downloaded books show a local badge or indicator on the card
+      - Tapping a downloaded book opens it without a network request
+      - Download progress indicator appears while a book is downloading
+      - Sync runs on app resume and updates the library grid
+    Kill the Expo process when done.
 
 When done, run:
   git diff --stat
@@ -312,7 +332,7 @@ apps/mobile/src/__tests__/Progress.test.ts:
 TDD BUILD LOOP — do not stop until all tests pass:
 
   LOOP:
-    pnpm --filter @calibre/mobile test -- --reporter=verbose 2>&1
+    pnpm --filter @xs/mobile test -- --reporter=verbose 2>&1
 
     If any test fails:
       1. Read the full error for that test.
@@ -322,6 +342,17 @@ TDD BUILD LOOP — do not stop until all tests pass:
       Go back to LOOP.
 
     If all tests pass: exit loop.
+
+  VISUAL INSPECTION (after tests pass):
+    npx expo start --simulator &
+    @Computer Use — open the iPhone 17 Pro simulator (iOS 26.4)
+    Verify:
+      - Opening an EPUB book launches the reader with rendered text
+      - Swipe left/right navigates between pages
+      - Reading position persists — close and reopen the book, confirm it reopens at the same page
+      - Opening a PDF book renders the first page correctly
+      - PDF page position persists on close and reopen
+    Kill the Expo process when done.
 
 When done, run:
   git diff --stat
@@ -369,8 +400,8 @@ apps/mobile/eas.json:
   }
 
 apps/mobile/app.json updates:
-  ios.bundleIdentifier: "com.calibreweb.library"
-  android.package: "com.calibreweb.library"
+  ios.bundleIdentifier: "com.xcalibre.library"
+  android.package: "com.xcalibre.library"
   android.versionCode: 1
   version: "1.0.0"
   plugins: ["expo-router", "expo-secure-store", "expo-sqlite", "expo-file-system"]
@@ -384,7 +415,7 @@ apps/mobile/src/app/(tabs)/profile.tsx — profile screen:
 
 apps/mobile/assets/ — placeholder assets:
   icon.png — 1024×1024 zinc-900 background with white book icon (SVG converted)
-  splash.png — 2048×2048 zinc-950 background with teal-600 "Calibre" wordmark centered
+  splash.png — 2048×2048 zinc-950 background with teal-600 "Xcalibre" wordmark centered
   adaptive-icon.png — 1024×1024 for Android adaptive icon
   Note: create simple solid-color placeholders if image generation is not available —
     the build must not fail due to missing assets.
@@ -399,7 +430,7 @@ apps/mobile/src/__tests__/ProfileScreen.test.tsx:
 TDD BUILD LOOP — do not stop until all tests pass:
 
   LOOP:
-    pnpm --filter @calibre/mobile test -- --reporter=verbose 2>&1
+    pnpm --filter @xs/mobile test -- --reporter=verbose 2>&1
 
     If any test fails:
       1. Read the full error for that test.
@@ -409,6 +440,17 @@ TDD BUILD LOOP — do not stop until all tests pass:
       Go back to LOOP.
 
     If all tests pass: exit loop.
+
+  VISUAL INSPECTION (after tests pass):
+    npx expo start --simulator &
+    @Computer Use — open the iPhone 17 Pro simulator (iOS 26.4)
+    Verify:
+      - App feels polished end-to-end: login → library → book detail → reader
+      - No layout overflow or clipped text on iPhone 17 Pro screen size
+      - Dark mode renders correctly throughout (library, detail, reader)
+      - Book detail AI panel shows classify/validate/derive tabs (requires LLM enabled)
+      - App icon and splash screen display correctly on launch
+    Kill the Expo process when done.
 
 When done, run:
   git diff --stat

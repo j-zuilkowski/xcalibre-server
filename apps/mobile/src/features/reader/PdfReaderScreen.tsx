@@ -23,12 +23,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import type { ApiClient as CalibreClient } from "@xs/shared";
+import type { ApiClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
 
 type PdfReaderScreenProps = {
-  client: CalibreClient;
+  client: ApiClient;
   database: SQLiteDatabase;
   bookId: string;
   title: string;

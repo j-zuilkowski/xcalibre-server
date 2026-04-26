@@ -52,7 +52,7 @@ import * as SecureStore from "expo-secure-store";
 import { useTranslation } from "react-i18next";
 import type {
   AnnotationColor,
-  ApiClient as CalibreClient,
+  ApiClient,
   BookAnnotation,
   CreateBookAnnotationRequest,
 } from "@xs/shared";
@@ -78,7 +78,7 @@ const FONT_KEY = "reader_font";   // "Inter" | "Literata"
 const NIGHT_KEY = "reader_night"; // "1" (night mode) | "0" (day mode)
 
 type EpubReaderScreenProps = {
-  client: CalibreClient;
+  client: ApiClient;
   database: SQLiteDatabase;
   bookId: string;
   title: string;
