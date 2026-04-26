@@ -218,6 +218,7 @@ fn bench_database(c: &mut Criterion) {
         tag: None,
         language: None,
         format: None,
+        book_ids: None,
         page: 1,
         page_size: 30,
     };
@@ -269,7 +270,7 @@ fn bench_database(c: &mut Criterion) {
                 let db = db.clone();
                 let book_id = book_id.clone();
                 runtime.block_on(async move {
-                    let book = book_queries::get_book_by_id(&db, &book_id)
+                    let book = book_queries::get_book_by_id(&db, &book_id, None, None)
                         .await
                         .expect("get_book benchmark")
                         .expect("book exists");
