@@ -113,13 +113,15 @@ export function UsersPage() {
 
   useEffect(() => {
     setDrafts((previous) => {
+      let changed = false;
       const next = { ...previous };
       for (const user of users) {
         if (!next[user.id]) {
           next[user.id] = buildDraft(user);
+          changed = true;
         }
       }
-      return next;
+      return changed ? next : previous;
     });
   }, [users]);
 
