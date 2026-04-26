@@ -1,3 +1,15 @@
+//! LLM-backed enrichment routes for xcalibre-server books.
+//!
+//! Routes under `/api/v1/llm/` and per-book routes (`/api/v1/books/:id/classify`, etc.).
+//! All routes require authentication. `classify`, `validate`, `quality`, and `derive`
+//! additionally require `can_edit` role permission. `organize` requires admin.
+//!
+//! Every handler checks `state.chat_client` first and returns 503 Service Unavailable
+//! when `ENABLE_LLM_FEATURES = false` or the client is not configured, so LLM features
+//! degrade gracefully and never block core library operations.
+//!
+//! All LLM calls use a 10-second timeout enforced inside the LLM client layer.
+
 use crate::{
     api::books::{accessible_library_id, load_book_or_not_found},
     db::queries::{books as book_queries, llm as llm_queries},
@@ -18,6 +30,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Short timeout for the LLM health ping — we want a fast response, not a full inference round-trip.
 const HEALTH_TIMEOUT_SECS: u64 = 3;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -95,6 +108,7 @@ struct OrganizeResponse {
     job_id: String,
 }
 
+/// Returns whether the LLM feature is enabled and whether the librarian endpoint responds.
 async fn llm_health(State(state): State<AppState>) -> Result<Json<LlmHealthResponse>, AppError> {
     let endpoint = state.config.llm.librarian.endpoint.trim().to_string();
     let Some(chat_client) = state.chat_client.as_ref() else {
@@ -120,6 +134,8 @@ async fn llm_health(State(state): State<AppState>) -> Result<Json<LlmHealthRespo
     }))
 }
 
+/// Asks the LLM to suggest tags for a book based on its title, authors, and description;
+/// persists the suggestions to `tag_suggestions` for later confirmation.
 async fn classify(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -163,6 +179,7 @@ async fn classify(
     }))
 }
 
+/// Applies the user's accept/reject decision on pending LLM tag suggestions; requires `can_edit`.
 async fn confirm_tags(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -322,6 +339,8 @@ async fn derive(
     }))
 }
 
+/// Enqueues a background organize job to batch-classify all untagged books; admin only.
+/// Returns 202 Accepted with the new job ID.
 async fn organize(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -355,6 +374,7 @@ async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Performs a lightweight GET to `<endpoint>/v1/models` to check if the LLM is reachable.
 async fn ping_models_endpoint(endpoint: &str) -> bool {
     if endpoint.trim().is_empty() {
         return false;

@@ -1,7 +1,7 @@
 import { test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { fileURLToPath } from "node:url";
-import type { AuthSession, Book } from "@autolibre/shared";
+import type { AuthSession, Book } from "@xs/shared";
 import { bootstrapAdminSession, seedAuthState } from "./helpers/auth";
 import { uploadFixtureBook } from "./helpers/books";
 

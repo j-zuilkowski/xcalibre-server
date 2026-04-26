@@ -1,3 +1,20 @@
+//! Reading statistics queries for the user dashboard.
+//! Touches: `book_user_state`, `reading_progress`, `formats`, `book_tags`,
+//! `tags`, `book_authors`, `authors`.
+//!
+//! `get_user_stats` issues multiple targeted scalar/aggregate queries rather
+//! than a single large join to keep each query fast on its individual indexes.
+//!
+//! Streak calculation is done in Rust: `reading_progress.updated_at` dates are
+//! fetched as ordered `YYYY-MM-DD` strings, parsed to `NaiveDate`, and passed
+//! to `compute_streaks` which walks consecutive-day runs.  The current streak
+//! is the run that includes the most recent date; the longest streak is the
+//! global maximum run.
+//!
+//! Monthly chart data: the last 12 calendar months are generated in Rust so
+//! months with zero reads still appear as 0 in the result — the SQL query only
+//! returns months that have at least one read record.
+
 use chrono::{Datelike, NaiveDate, TimeZone, Utc};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -33,6 +50,10 @@ pub struct UserStats {
     pub monthly_books: Vec<MonthlyCount>,
 }
 
+/// Builds the full `UserStats` for `user_id` by issuing ~8 targeted queries.
+/// Top tags include only confirmed (`bt.confirmed = 1`) book–tag associations.
+/// `reading_streak_days` counts consecutive days with any reading progress;
+/// `longest_streak_days` is the historical maximum.
 pub async fn get_user_stats(db: &SqlitePool, user_id: &str) -> anyhow::Result<UserStats> {
     let total_books_read: i64 = sqlx::query_scalar(
         r#"
@@ -214,7 +235,10 @@ pub async fn get_user_stats(db: &SqlitePool, user_id: &str) -> anyhow::Result<Us
         .map(|month| {
             let label = month.label;
             let count = month_counts.remove(&label).unwrap_or(0);
-            MonthlyCount { month: label, count }
+            MonthlyCount {
+                month: label,
+                count,
+            }
         })
         .collect();
 

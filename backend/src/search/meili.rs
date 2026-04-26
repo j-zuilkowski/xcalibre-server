@@ -1,3 +1,32 @@
+//! Meilisearch search backend.
+//!
+//! Communicates with a Meilisearch instance via its HTTP search API.  Books are
+//! indexed as documents in the `books` index.  The document shape is:
+//! `{id, title, authors[], tags[], series?, language?, description?}`.
+//!
+//! # Index management
+//! Documents are upserted via `POST /indexes/books/documents` on every book write.
+//! The index is **not** automatically created — it must exist in Meilisearch before
+//! the first document is pushed (the docker-compose setup handles this via init tasks).
+//!
+//! # Availability caching
+//! [`MeilisearchBackend::is_available`] performs a `/health` check and caches the
+//! result for [`AVAILABILITY_CACHE_TTL`] (30s) to avoid hammering Meilisearch on
+//! every request when it is down.
+//!
+//! # `indexed_at` column
+//! The `books.indexed_at` column is updated by the caller after a successful
+//! `index_book` call. The search backend itself does not touch `indexed_at`.
+//!
+//! # Format filter
+//! The format filter is not supported by the Meilisearch index document shape
+//! (formats are in a separate DB table, not denormalized into the index). Queries
+//! with a format filter log a debug message and skip the filter.
+//!
+//! # Fallback
+//! This backend is always wrapped in [`super::MeiliWithFallbackBackend`] which
+//! falls back to FTS5 on any search or suggest error.
+
 use crate::{
     db::models::Book,
     search::{SearchBackend, SearchHit, SearchPage, SearchQuery},
@@ -58,6 +87,10 @@ struct BookIndexDocument {
 }
 
 impl MeilisearchBackend {
+    /// Connect to Meilisearch and verify reachability with a `/health` check.
+    ///
+    /// Returns `None` if the health check fails, allowing the caller to fall back
+    /// to FTS5 without propagating an error.
     pub async fn new(base_url: String, api_key: Option<String>) -> Option<Self> {
         let base_url = normalize_base_url(base_url);
         let api_key = normalize_api_key(api_key);

@@ -1,3 +1,14 @@
+//! API token CRUD and lookup queries.
+//! Touches: `api_tokens`.
+//!
+//! Token values are never stored in plaintext; `find_by_hash` looks up by the
+//! hex-encoded SHA-256 of the bearer string.  The caller (middleware) is
+//! responsible for verifying `expires_at` and scope after retrieval.
+//!
+//! `touch_last_used` updates `last_used_at` on every authenticated request.
+//! This is best-effort: failures are suppressed by the middleware caller so a
+//! broken write does not interrupt the request.
+
 use anyhow::Context;
 use chrono::Utc;
 use serde::Serialize;
@@ -49,6 +60,8 @@ pub async fn create_token(
         .context("created api token not found")
 }
 
+/// Looks up an API token by its SHA-256 hash.  The caller must check
+/// `expires_at` and token scope before granting access.
 pub async fn find_by_hash(db: &SqlitePool, token_hash: &str) -> anyhow::Result<Option<ApiToken>> {
     let row = sqlx::query(
         r#"

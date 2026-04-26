@@ -1,3 +1,15 @@
+//! Author CRUD, profile management, and merge queries.
+//! Touches: `authors`, `author_profiles`, `book_authors`.
+//!
+//! `merge_authors` reassigns all `book_authors` rows from `source_id` to
+//! `target_id` using a NOT EXISTS guard to skip books that already list the
+//! target author, then deletes the source author and its profile.
+//!
+//! `upsert_author_profile` performs a read-modify-write: it loads the existing
+//! profile first so that `None` patch fields keep their current values rather
+//! than being overwritten with NULL.  Photo path is never cleared by this
+//! function; use `set_author_photo_path` separately.
+
 use crate::db::models::AuthorRef;
 use crate::db::queries::books::BookSummary;
 use anyhow::Context;
@@ -82,6 +94,8 @@ fn photo_url_from_path(author_id: &str, photo_path: Option<String>) -> Option<St
     normalize_optional(photo_path).map(|_| format!("/api/v1/authors/{author_id}/photo"))
 }
 
+/// Returns the author row and its optional profile (LEFT JOIN on
+/// `author_profiles`).  `profile` is `None` when no profile row exists.
 pub async fn get_author_by_id(
     db: &SqlitePool,
     author_id: &str,
@@ -336,6 +350,11 @@ pub async fn list_admin_authors(
     Ok((items, total, page, page_size))
 }
 
+/// Merges `source_id` into `target_id`.  Returns `None` if either author is
+/// not found, or `Some(MergeAuthorResponse)` with the number of books
+/// reassigned.  The source author row and its profile are deleted after
+/// all book links are moved; books that already list the target author are
+/// not duplicated (NOT EXISTS guard on the UPDATE).
 pub async fn merge_authors(
     db: &SqlitePool,
     source_id: &str,
@@ -418,7 +437,9 @@ pub async fn merge_authors(
         .await
         .context("delete source author")?;
 
-    tx.commit().await.context("commit author merge transaction")?;
+    tx.commit()
+        .await
+        .context("commit author merge transaction")?;
 
     Ok(Some(MergeAuthorResponse {
         books_updated,

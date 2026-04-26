@@ -1,3 +1,23 @@
+/**
+ * Downloads screen — manages the local book file cache.
+ *
+ * Route: `/downloads` (accessed from the Profile tab)
+ *
+ * Displays three sections:
+ * 1. "In Progress" — active downloads from the module-level queue in `downloads.ts`.
+ *    Each card shows a progress bar, bytes written/expected, and a Cancel button.
+ * 2. "Downloaded" — completed files grouped by format (EPUB > MOBI > PDF > others).
+ *    Rows are swipeable to reveal a Delete action. Tapping a row opens the reader.
+ * 3. "Failed" — downloads that errored; each card shows the error message and a Retry button.
+ *
+ * Storage usage bar:
+ * - Used bytes: `getDownloadSummary(db)` sums `local_downloads.size_bytes`.
+ * - Free bytes: `FileSystem.getFreeDiskStorageAsync()` (cached 30 s).
+ *
+ * The download queue is a module-level singleton (not React state) subscribed via
+ * `useSyncExternalStore`. The queue signature is used as a `useEffect` dependency
+ * to invalidate the "Downloaded" query when a download completes.
+ */
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -34,6 +54,10 @@ function downloadProgressLabel(progress: number): string {
   return `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
 }
 
+/**
+ * Groups downloaded book rows by format and sorts each group alphabetically by title.
+ * Groups are ordered: EPUB → MOBI → PDF → any other formats alphabetically.
+ */
 function groupDownloadedBooks(items: DownloadedBookRow[]): Array<{ format: string; items: DownloadedBookRow[] }> {
   const groups = new Map<string, DownloadedBookRow[]>();
 
@@ -254,6 +278,15 @@ function DownloadedRow({
   );
 }
 
+/**
+ * Downloads screen (Expo Router default export for `/downloads`).
+ *
+ * The queue state comes from `useDownloadQueue()` which subscribes to the
+ * module-level `downloadEntries` map via `useSyncExternalStore`.
+ * A stable `queueSignature` string (bookId:status pairs joined by "|") is used
+ * as a `useEffect` dependency to trigger a query invalidation whenever the
+ * queue changes — ensuring the "Downloaded" section updates after a download completes.
+ */
 export default function DownloadsScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();

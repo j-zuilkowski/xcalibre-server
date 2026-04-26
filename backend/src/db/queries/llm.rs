@@ -1,3 +1,19 @@
+//! LLM job queue queries.
+//! Touches: `llm_jobs`, `books`, `book_tags`, `tags`.
+//!
+//! The queue is designed for a single background worker: `claim_next_pending_job`
+//! uses a CTE-based UPDATE…RETURNING to atomically mark one row as `running`
+//! and return it, avoiding the read-modify-write race that would occur with a
+//! separate SELECT + UPDATE.
+//!
+//! Enqueue functions guard against duplicate pending/running jobs for the same
+//! (job_type, book_id) pair using a NOT EXISTS sub-select so idempotent
+//! re-triggers are safe.
+//!
+//! `insert_tag_suggestions` writes LLM-proposed tags with `confirmed = 0`;
+//! those tags are invisible in the default book list until confirmed by
+//! `confirm_tags` or `confirm_all_pending_tags`.
+
 use crate::{llm::classify::TagSuggestion, metrics};
 use chrono::Utc;
 use serde::Serialize;
@@ -26,6 +42,8 @@ pub struct JobRow {
     pub error_text: Option<String>,
 }
 
+/// Enqueues a `semantic_index` job for `book_id` if no pending or running job
+/// already exists for that book.  Returns `true` when a new row was inserted.
 pub async fn enqueue_semantic_index_job(db: &SqlitePool, book_id: &str) -> anyhow::Result<bool> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -185,6 +203,10 @@ pub async fn enqueue_semantic_index_jobs_for_all_books(db: &SqlitePool) -> anyho
     Ok(enqueued)
 }
 
+/// Atomically claims the oldest pending job (any type) by setting its status
+/// to `running`.  Uses a CTE + UPDATE…RETURNING so only one worker ever
+/// claims a given job even under concurrent calls.  Returns `None` when the
+/// queue is empty.
 pub async fn claim_next_pending_job(db: &SqlitePool) -> anyhow::Result<Option<SemanticIndexJob>> {
     let now = Utc::now().to_rfc3339();
     let row = sqlx::query(
@@ -377,6 +399,10 @@ pub async fn mark_running_semantic_jobs_for_book_failed(
     Ok(())
 }
 
+/// Inserts LLM-suggested tags as unconfirmed (`confirmed = 0`) `book_tags`
+/// rows.  Tags that don't exist yet are created with `source = 'llm'`.
+/// Already-confirmed book–tag pairs are skipped (`INSERT OR IGNORE`).
+/// Returns the number of new `book_tags` rows inserted.
 pub async fn insert_tag_suggestions(
     db: &SqlitePool,
     book_id: &str,
@@ -640,6 +666,10 @@ pub async fn cancel_job(db: &SqlitePool, job_id: &str) -> anyhow::Result<bool> {
     .bind(job_id)
     .execute(db)
     .await?;
+    if result.rows_affected() > 0 {
+        metrics::decrement_llm_jobs_queued(result.rows_affected());
+        metrics::increment_llm_jobs_failed(result.rows_affected());
+    }
 
     Ok(result.rows_affected() > 0)
 }

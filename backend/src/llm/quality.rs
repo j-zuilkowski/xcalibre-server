@@ -1,15 +1,33 @@
+//! LLM-powered prose quality scoring for book descriptions.
+//!
+//! Sends the book title and description to the LLM and asks for a `0.0–1.0` quality
+//! score plus a list of formatting/content/style issues.
+//!
+//! # Fallback behaviour
+//! On any LLM error, returns `score = 0.5` with an empty issues list (neutral score,
+//! not "bad"). Quality checks are advisory — they must never block operations.
+//! LLM errors are silently swallowed; callers never see them.
+
 use crate::llm::chat::ChatClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+/// A single prose quality issue reported by the LLM.
+///
+/// `issue_type` is one of `"formatting"`, `"content"`, `"style"`, or `"other"`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct QualityIssue {
     pub issue_type: String,
+    /// `"warning"` or `"error"`.
     pub severity: String,
     pub message: String,
 }
 
+/// Result of a prose quality check.
+///
+/// `score` is clamped to `[0.0, 1.0]`; non-finite values fall back to `0.5`.
+/// `model_id` records which model produced the result for audit/display.
 #[derive(Clone, Debug, Serialize)]
 pub struct QualityResult {
     pub score: f32,
@@ -23,6 +41,9 @@ struct RawQualityResult {
     issues: Vec<QualityIssue>,
 }
 
+/// Ask the LLM to score the prose quality of a book's title + description.
+///
+/// Returns a [`QualityResult`] in all cases; errors produce `score = 0.5` and no issues.
 pub async fn check_quality(client: &ChatClient, title: &str, description: &str) -> QualityResult {
     let model_id = client.model_id().to_string();
     let user_message = format!(

@@ -1,3 +1,28 @@
+//! Authentication middleware and JWT helpers.
+//!
+//! `require_auth` is an Axum middleware function that populates the
+//! `AuthenticatedUser` request extension.  It supports three auth paths:
+//!
+//! 1. **Proxy auth** (`auth.proxy.enabled = true`): reads a configured request
+//!    header set by a trusted reverse-proxy (e.g. Authelia).  The remote IP
+//!    must be within `trusted_cidrs`.  If the username is unknown the user is
+//!    auto-provisioned; a valid email from the proxy's email header is required
+//!    for provisioning (missing email returns 401 rather than silently failing).
+//!
+//! 2. **JWT session token** (`Authorization: Bearer <jwt>`): validated with
+//!    `validate_access_token`.  A token whose `totp_pending = true` is
+//!    rejected with 403 — those tokens may only be used on the TOTP-confirm
+//!    endpoint via `require_totp_pending`.
+//!
+//! 3. **API token** (opaque bearer string that is not a valid JWT): hashed
+//!    with SHA-256 and looked up in `api_tokens`.  Expiry and scope are
+//!    checked here; `touch_last_used` is called on success.  GET requests are
+//!    permitted with any scope; non-GET requests require at least write scope.
+//!
+//! `require_totp_pending` is a separate middleware for the TOTP confirmation
+//! route: it accepts only `totp_pending = true` JWTs and verifies a matching
+//! `sessions` row has not expired.
+
 use crate::{
     auth::{require_admin_scope, require_write_scope, TokenScope},
     db::queries::{api_tokens as api_token_queries, auth as auth_queries},
@@ -83,6 +108,8 @@ where
     }
 }
 
+/// Issues a normal HS256 JWT with `totp_pending = false`.  TTL is expressed
+/// in minutes; the `jti` claim is a fresh UUID to allow future revocation.
 pub fn issue_access_token(
     user_id: &str,
     jwt_secret: &str,
@@ -105,6 +132,9 @@ pub fn issue_access_token(
     .map_err(|_| AppError::Internal)
 }
 
+/// Validates a JWT and returns its claims.  Returns `AppError::Forbidden` if
+/// the token is valid but has `totp_pending = true` (those tokens must use
+/// `validate_totp_pending_token` instead).
 pub fn validate_access_token(token: &str, jwt_secret: &str) -> Result<AccessTokenClaims, AppError> {
     decode::<AccessTokenClaims>(
         token,
@@ -122,6 +152,9 @@ pub fn validate_access_token(token: &str, jwt_secret: &str) -> Result<AccessToke
     })
 }
 
+/// Issues a short-lived JWT with `totp_pending = true` (TTL =
+/// `TOTP_PENDING_TTL_MINS` = 5 min).  This token gates the TOTP confirm
+/// endpoint and is rejected everywhere else.
 pub fn issue_totp_pending_token(user_id: &str, jwt_secret: &str) -> Result<String, AppError> {
     let now = Utc::now();
     let claims = AccessTokenClaims {
@@ -381,6 +414,8 @@ fn proxy_email(headers: &axum::http::HeaderMap, header_name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Returns `true` if `remote_ip` falls within any CIDR in `trusted_cidrs`.
+/// An empty `trusted_cidrs` list unconditionally returns `false`.
 pub fn is_trusted_proxy(remote_ip: IpAddr, trusted_cidrs: &[String]) -> bool {
     if trusted_cidrs.is_empty() {
         return false;

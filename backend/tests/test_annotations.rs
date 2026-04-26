@@ -198,7 +198,10 @@ async fn test_list_annotations_excludes_other_users() {
     let response = ctx
         .server
         .get(&format!("/api/v1/books/{}/annotations", book.id))
-        .add_header(axum::http::header::AUTHORIZATION, auth_header(&user_a_token))
+        .add_header(
+            axum::http::header::AUTHORIZATION,
+            auth_header(&user_a_token),
+        )
         .await;
 
     assert_status!(response, 200);

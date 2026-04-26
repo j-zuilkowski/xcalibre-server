@@ -1,3 +1,20 @@
+//! HTTP client wrapper for OpenAI-compatible chat completion APIs.
+//!
+//! This module provides [`ChatClient`], a thin layer over `reqwest` that talks to any
+//! server exposing the `/v1/chat/completions` endpoint (LM Studio, Ollama, vLLM, etc.).
+//!
+//! # Key invariants
+//! - **10-second hard timeout** on every request. Callers must treat a timeout as a
+//!   silent fallback — LLM errors must never surface to end users.
+//! - **`llm.enabled = false` by default**: [`ChatClient::new`] returns `None` when LLM
+//!   features are disabled or the endpoint is blank.
+//! - **Vision capability detection**: [`ChatClient::supports_vision`] probes `/v1/models`
+//!   and inspects the response for capability flags (`modalities`, `image_input`, etc.).
+//!   Results are not cached; callers may cache them if needed.
+//! - **SSRF**: endpoint URLs are validated for private/loopback ranges at config load
+//!   time (see `config::validate_llm_endpoints`). Runtime URL construction here is
+//!   safe because the endpoint is immutable after construction.
+
 use crate::config::AppConfig;
 use anyhow::Context;
 use base64::Engine;
@@ -6,6 +23,10 @@ use std::time::Duration;
 
 const LLM_TIMEOUT_SECS: u64 = 10;
 
+/// HTTP client for a single OpenAI-compatible chat completion endpoint.
+///
+/// Constructed via [`ChatClient::new`] which returns `None` when LLM features
+/// are disabled. Clone is cheap (inner `reqwest::Client` is Arc-backed).
 #[derive(Clone)]
 pub struct ChatClient {
     endpoint: String,
@@ -42,6 +63,10 @@ struct ChatChoiceMessage {
 }
 
 impl ChatClient {
+    /// Construct a client from application config.
+    ///
+    /// Returns `None` when `llm.enabled = false` or `llm.librarian.endpoint` is blank,
+    /// meaning the caller should treat LLM features as unavailable and fall back silently.
     pub fn new(config: &AppConfig) -> Option<Self> {
         if !config.llm.enabled {
             return None;
@@ -65,18 +90,29 @@ impl ChatClient {
         })
     }
 
+    /// Returns `true` when both endpoint and model are non-empty.
     pub fn is_configured(&self) -> bool {
         !self.endpoint.is_empty() && !self.model.is_empty()
     }
 
+    /// The model identifier sent in every request body (e.g. `"mistral-7b-instruct"`).
     pub fn model_id(&self) -> &str {
         &self.model
     }
 
+    /// The base endpoint URL (e.g. `"http://localhost:1234"`).
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
+    /// Send a text-only chat completion request and return the assistant reply.
+    ///
+    /// The configured system prompt is always prepended as the first message.
+    ///
+    /// # Errors
+    /// Returns an error on network failure, non-2xx HTTP status, missing `choices[0]`,
+    /// or empty content. The 10-second reqwest timeout produces a timeout error.
+    /// Callers should treat all errors as transient and fall back silently.
     pub async fn complete(&self, user_message: &str) -> anyhow::Result<String> {
         if !self.is_configured() {
             anyhow::bail!("chat endpoint/model is not configured");
@@ -138,6 +174,14 @@ impl ChatClient {
         Ok(content)
     }
 
+    /// Send a multimodal chat completion request with an embedded image.
+    ///
+    /// The image is base64-encoded and sent as an OpenAI vision `image_url` content block
+    /// using the `data:<mime>;base64,...` URI scheme. Requires a vision-capable model;
+    /// callers should first check [`ChatClient::supports_vision`].
+    ///
+    /// # Errors
+    /// Same error conditions as [`ChatClient::complete`].
     pub async fn complete_with_image(
         &self,
         user_message: &str,
@@ -209,6 +253,15 @@ impl ChatClient {
         Ok(content)
     }
 
+    /// Query `/v1/models` to check whether the configured model supports image input.
+    ///
+    /// Inspects the response for capability fields across several known schemas:
+    /// `modalities`, `image_input`, `imageInput`, `vision`, `vision_enabled`,
+    /// `supports_images`, and nested `capabilities` objects. Returns `false` on any
+    /// parsing uncertainty; the vision path is always opt-in.
+    ///
+    /// Result is **not cached** — call once and cache the result at the call site if
+    /// repeated checks are needed.
     pub async fn supports_vision(&self) -> anyhow::Result<bool> {
         if !self.is_configured() {
             anyhow::bail!("chat endpoint/model is not configured");
@@ -227,14 +280,13 @@ impl ChatClient {
             .error_for_status()
             .context("models endpoint returned non-success status")?;
 
-        let payload: serde_json::Value = response
-            .json()
-            .await
-            .context("parse models response")?;
+        let payload: serde_json::Value = response.json().await.context("parse models response")?;
         Ok(models_response_supports_vision(&payload, &self.model))
     }
 }
 
+/// Normalize the user-supplied endpoint into a full `/v1/chat/completions` URL.
+/// Handles three common forms: bare host, `/v1` suffix, and already-full path.
 fn chat_completions_url(endpoint: &str) -> String {
     let trimmed = endpoint.trim_end_matches('/');
     if trimmed.ends_with("/v1/chat/completions") {
@@ -316,9 +368,9 @@ fn models_response_supports_vision(payload: &serde_json::Value, model_id: &str) 
         return value_supports_vision(payload, model_id);
     };
 
-    entries.iter().any(|entry| {
-        model_matches(entry, model_id) && value_supports_vision(entry, model_id)
-    })
+    entries
+        .iter()
+        .any(|entry| model_matches(entry, model_id) && value_supports_vision(entry, model_id))
 }
 
 fn model_matches(value: &serde_json::Value, model_id: &str) -> bool {
@@ -377,7 +429,9 @@ fn value_supports_vision(value: &serde_json::Value, model_id: &str) -> bool {
             }
             false
         }
-        serde_json::Value::Array(items) => items.iter().any(|item| value_supports_vision(item, model_id)),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(|item| value_supports_vision(item, model_id)),
         serde_json::Value::String(value) => {
             value.eq_ignore_ascii_case("image_input") || value.eq_ignore_ascii_case("vision")
         }

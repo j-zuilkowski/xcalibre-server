@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phase 10 Stage 7 Complete_
-_Last updated: 2026-04-22_
+_Status: Active — Phase 17 Stage 18 Complete_
+_Last updated: 2026-04-24_
 
 ---
 
@@ -21,7 +21,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | 4 | Cover/thumbnail pipeline at ingest time | ✅ Decided | Not on-request |
 | 5 | SQLx migrations from day one | ✅ Decided | Never alter schema manually |
 | 6 | Primary UI target: web browser | ✅ Decided | Browser-based; Axum serves the SPA as static files |
-| 7 | Synology NAS deployment: migrate, not mount | ✅ Decided | `autolibre-migrate` is a first-class CLI tool |
+| 7 | Synology NAS deployment: migrate, not mount | ✅ Decided | `xs-migrate` is a first-class CLI tool |
 | A | Database engine | ✅ Decided | SQLite (default) + MariaDB (optional) — same codebase, config-driven |
 | H | OAuth / SSO | ✅ Decided | Google + GitHub via `oauth2` crate; auto-creates local user on first login |
 | I | LDAP authentication | ✅ Decided | `ldap3` crate; falls back to local auth if LDAP unreachable |
@@ -76,7 +76,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 
 | Feature | v1.0 | Notes |
 |---|---|---|
-| `autolibre-migrate` CLI | ✅ Must | No one can switch without it |
+| `xs-migrate` CLI | ✅ Must | No one can switch without it |
 | Prompt eval framework | ✅ Must | Required if any LLM ships in v1 |
 | LLM classification + tagging | ✅ Should | Core differentiator |
 | Semantic search | ✅ Should | Core differentiator |
@@ -163,7 +163,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 ## Repository Structure
 
 ```
-autolibre/
+xcalibre-server/
 ├── Cargo.toml                  # Rust workspace root
 ├── package.json                # pnpm workspace root
 ├── turbo.json                  # Turborepo pipeline
@@ -181,7 +181,7 @@ autolibre/
 │   │   ├── db/                # sqlx models + queries
 │   │   ├── llm/               # LM Studio client, job queue
 │   │   ├── ingest/            # File parsing, cover extraction
-│   │   └── migrate/           # autolibre-migrate CLI tool
+│   │   └── migrate/           # xs-migrate CLI tool
 │   └── migrations/            # sqlx migration files
 │
 ├── packages/
@@ -216,7 +216,7 @@ autolibre/
 | Target | Approach |
 |---|---|
 | Raspberry Pi / ARM NAS | Docker Compose — `linux/arm64` and `linux/arm/v7` builds |
-| Synology NAS | Docker Compose — run `autolibre-migrate` once to import from Calibre |
+| Synology NAS | Docker Compose — run `xs-migrate` once to import from Calibre |
 | Mac / Windows / Linux | Docker or run Axum binary directly, open browser |
 | iOS | Expo EAS Build → App Store |
 | Android | Expo EAS Build → Play Store / sideload |
@@ -327,7 +327,7 @@ Lives at `/admin/*` in the same SPA. All routes server-side guarded by `Admin` r
 | Users | Create, edit, delete users; assign roles; force password reset; configure upload permission per role |
 | LLM Config | Edit endpoints, models, timeouts, system prompts per role |
 | Prompt Evals | Run eval suite, view model compatibility matrix, promote prompt versions |
-| Migration | Run `autolibre-migrate`, view import log, re-run failed records |
+| Migration | Run `xs-migrate`, view import log, re-run failed records |
 | Jobs | LLM job queue — pending, running, failed, completed |
 | System | App version, DB stats, storage usage, Meilisearch status |
 
@@ -389,7 +389,7 @@ File received
 
 ## Agentic RAG Integration
 
-autolibre is designed to function as a **tool provider** for external agentic AI systems (LangGraph, smolagents, custom agents), in addition to its primary role as a library management UI.
+xcalibre-server is designed to function as a **tool provider** for external agentic AI systems (LangGraph, smolagents, custom agents), in addition to its primary role as a library management UI.
 
 ### The Two-Tier Retrieval Model
 
@@ -434,7 +434,7 @@ PDF:  parse structure → extract text per page → group into logical sections 
 
 ### How Classification Enriches RAG
 
-The LLM features (Phase 5) represent autolibre calling the LLM. The agentic RAG surface represents an external agent calling autolibre. These are complementary:
+The LLM features (Phase 5) represent xcalibre-server calling the LLM. The agentic RAG surface represents an external agent calling xcalibre-server. These are complementary:
 
 - LLM classification enriches metadata → better structured retrieval tier for agents
 - Text extraction enables agents to retrieve actual book content for synthesis
@@ -446,7 +446,7 @@ A typical agentic query: user question → agent calls `search_books` (filter by
 
 ## Cross-Document Synthesis and Derivative Works
 
-Cross-document synthesis is a **first-class architectural goal**, not a side feature. The library is the corpus; the agent is the synthesizer. autolibre's role is to make retrieval precise enough that the agent can produce reliable, grounded derivative works from any domain.
+Cross-document synthesis is a **first-class architectural goal**, not a side feature. The library is the corpus; the agent is the synthesizer. xcalibre-server's role is to make retrieval precise enough that the agent can produce reliable, grounded derivative works from any domain.
 
 **The retrieval layer is domain-agnostic.** Whether the library contains Oracle documentation, electronics datasheets, culinary texts, legal codes, or academic papers — the same chunking, indexing, and retrieval pipeline applies. What changes per domain is the output format and, optionally, the chunking strategy. The synthesis itself is always delegated to the agent.
 
@@ -483,11 +483,11 @@ Target:  question → hybrid_search → procedure/section chunk (400–800 token
 
 **Why heading path matters:** Chunk-level retrieval without provenance produces hallucinations. A chunk tagged with its full heading path (`Oracle Admin Guide 19c > Part III > Chapter 12 > §12.3 Configure RMAN Retention`) gives the agent citable, verifiable source attribution.
 
-### The Planned Synthesis Architecture (Phase 15)
+### The Synthesis Architecture (Phase 15 — Complete)
 
 Three layers, each building on the last:
 
-#### Layer 1 — Sub-Chapter Chunking (Phase 15.1)
+#### Layer 1 — Sub-Chapter Chunking (Phase 15.1) ✅ Complete
 
 New API: `GET /books/:id/chunks?size=600&overlap=100`
 
@@ -514,7 +514,7 @@ Returns overlapping passages instead of full chapters:
 
 Chunks are embedded at ingest and stored in `book_chunks` (replacing the current chapter-level `book_embeddings`). Retrieval operates at chunk level throughout.
 
-#### Layer 2 — Hybrid Retrieval + Reranking (Phase 15.2)
+#### Layer 2 — Hybrid Retrieval + Reranking (Phase 15.2) ✅ Complete
 
 Semantic search alone fails on technical terminology:
 - `ORA-01555` (Oracle error code) — embedding models map this poorly
@@ -527,7 +527,7 @@ Semantic search alone fails on technical terminology:
 
 New endpoint: `GET /api/v1/search/chunks?q=&book_ids[]=&type=procedure&limit=10`
 
-#### Layer 3 — Collections + Cross-Document Synthesis Tool (Phase 15.3)
+#### Layer 3 — Collections + Cross-Document Synthesis Tool (Phase 15.3) ✅ Complete
 
 **Collections:** A `collections` table groups related books (e.g., "Oracle Database 19c Documentation Set" — 50+ guides). A single search query spans the entire collection:
 
@@ -612,7 +612,7 @@ Without LLM, OCR-only retrieval still works — component values and labels are 
 | `svg-schematic` | SVG markup — rendered schematic, browser-viewable | Any |
 | `bom` | Bill of materials: reference, value, footprint, quantity | Procurement |
 
-LLMs with image output capability can generate a schematic as an image directly. This is a natural extension of the synthesis pipeline — the agent retrieves reference designs from the library, reasons about the requirements, and outputs a schematic image alongside or instead of a netlist. The autolibre architecture does not constrain the output modality; that is the agent's decision based on the LLM capabilities it has access to.
+LLMs with image output capability can generate a schematic as an image directly. This is a natural extension of the synthesis pipeline — the agent retrieves reference designs from the library, reasons about the requirements, and outputs a schematic image alongside or instead of a netlist. The xcalibre-server architecture does not constrain the output modality; that is the agent's decision based on the LLM capabilities it has access to.
 
 ### Use Case Examples
 
@@ -686,7 +686,7 @@ Cross-document synthesis is **multi-book, multi-format derivation** where the **
 2. Return structured provenance with every chunk — book, section, chunk index
 3. Provide the `synthesize` MCP tool as a convenience wrapper for structured output formats
 
-The design explicitly separates **retrieval** (autolibre's responsibility) from **synthesis** (the agent's responsibility). This separation is intentional and load-bearing:
+The design explicitly separates **retrieval** (xcalibre-server's responsibility) from **synthesis** (the agent's responsibility). This separation is intentional and load-bearing:
 
 - The server stays stateless with respect to synthesis — it never decides what the output format is
 - Any agent framework (LangGraph, smolagents, Claude, custom scripts) can use the retrieval surface
@@ -863,7 +863,7 @@ semantic_search_relevance  │ ✅ PASS    │ ✅ PASS   │ ❌ FAIL │
 
 ---
 
-## Migration Tool (`autolibre-migrate`)
+## Migration Tool (`xs-migrate`)
 
 First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and imports into the new schema.
 
@@ -897,7 +897,7 @@ First-class CLI binary, not a script. Reads Calibre's SQLite DB (read-only) and 
 - [x] Docker build + docker-compose + Caddyfile
 
 ### Phase 2 — Migration ✅ Complete
-- [x] `autolibre-migrate` CLI: books, authors, tags, covers
+- [x] `xs-migrate` CLI: books, authors, tags, covers
 - [x] Dry-run mode + idempotency
 - [x] Validation report output
 
@@ -956,7 +956,7 @@ Expose the library as a first-class tool provider for external agentic AI system
 - [x] Documentation: how to connect LangGraph, smolagents, and Claude Desktop to the library
 
 ### Phase 9 — Feature Parity (In Progress)
-Closes the gap between autolibre and calibre-web's full feature set. Four stages:
+Closes the gap between xcalibre-server and calibre-web's full feature set. Four stages:
 
 #### Stage 1 — Quick Wins ✅ In Progress
 - [x] OPDS catalog (`/opds`) — OPDS-PS 1.2, browse unauthenticated, download token-gated
@@ -984,7 +984,7 @@ Closes the gap between autolibre and calibre-web's full feature set. Four stages
 - [x] `libraries` table; `library_id` on `books`; `default_library_id` on `users`
 - [x] Admin library management API + UI
 - [x] Per-user library switcher in header
-- [x] `autolibre-migrate --library-id` flag
+- [x] `xs-migrate --library-id` flag
 
 ### Phase 10 — Extended Features ✅ Complete
 
@@ -1040,6 +1040,149 @@ Closes the gap between autolibre and calibre-web's full feature set. Four stages
 - [x] `DELETE /admin/scheduled-tasks/:id` — delete task
 - [x] In-app update checker: `GET /admin/system/updates` — compares running version against GitHub releases API
 - [x] Admin dashboard banner when a newer release is available
+
+### Phase 11 — Observability + OpenAPI ✅ Complete
+
+#### Stage 1 — Reader Annotations (Web)
+- [x] `book_annotations` table (migration 0015): highlights, notes, bookmarks
+- [x] Web epub reader: text selection → highlight creation, color picker, note editor, delete
+- [x] `GET /api/v1/books/:id/annotations` — list annotations per user per book
+- [x] `POST /api/v1/books/:id/annotations` — create annotation
+- [x] `PATCH /api/v1/books/:id/annotations/:id` — update color/note
+- [x] `DELETE /api/v1/books/:id/annotations/:id` — delete annotation
+- [x] Mobile reader: displays existing annotations (read-only at this stage)
+
+#### Stage 2 — OpenAPI + Prometheus
+- [x] OpenAPI spec via `utoipa` — Swagger UI at `/api/docs`
+- [x] Prometheus metrics endpoint + Grafana dashboard config
+- [x] JSON structured logging
+- [x] `/health` endpoint with DB + Meilisearch liveness checks
+- [x] `X-RateLimit-*` and `Retry-After` headers on rate-limited routes
+
+#### Stage 3 — i18n Completion + Tag Admin
+- [x] Complete FR/DE/ES translations; i18n CI coverage check
+- [x] Deployment runbooks + backup/restore scripts
+- [x] Global tag rename, merge, delete — admin tag management UI + API
+- [x] WebP cover conversion with JPEG fallback (content negotiation)
+- [x] S3 range request support — audio + PDF streaming restored on S3 backend
+
+#### Stage 4 — Reading Statistics
+- [x] Reading streak, monthly books read, top authors/tags
+- [x] `GET /api/v1/users/me/stats` — reading statistics for current user
+
+---
+
+### Phase 12 — Author Profiles + Import ✅ Complete
+
+#### Stage 1 — Goodreads + StoryGraph Import
+- [x] `goodreads_import_log` table (migration 0016): tracks CSV import runs per user
+- [x] `POST /api/v1/users/me/import/goodreads` — import reading history + shelves from CSV
+- [x] Source field: `goodreads` or `storygraph`
+- [x] `GET /api/v1/users/me/import/:id` — import job status
+
+#### Stage 2 — Author Management
+- [x] `author_profiles` table (migration 0017): bio, photo, born/died, website, openlibrary_id
+- [x] Author detail page — bio, photo, book list
+- [x] Author photo upload + serving (JPEG + WebP, placeholder SVG)
+- [x] Admin author merge (consolidate duplicate author records)
+
+#### Stage 3 — Webhooks
+- [x] `webhooks` table (migration 0018): URL, HMAC secret, event filter, enabled flag
+- [x] `webhook_deliveries` table (migration 0018): per-delivery status, retry cursor, response status
+- [x] `POST /api/v1/webhooks` — create webhook
+- [x] HMAC-SHA256 signed payloads; retry with exponential backoff; SSRF guard on URL
+- [x] Admin webhook management UI
+
+#### Stage 4 — Mobile Download Queue + Accessibility
+- [x] Mobile download queue view, batch shelf download, storage management screen
+- [x] WCAG 2.1 AA remediation — keyboard nav, contrast, screen reader labels, semantic HTML
+
+---
+
+### Phase 13 — Author Profiles + Import ✅ Complete
+
+_Renumbered in git history as Phase 13; same content as above Phase 12 stages._
+
+---
+
+### Phase 14 — Author Photos + Mobile Annotations ✅ Complete
+
+- [x] Author photo upload + serving (`GET /api/v1/authors/:id/photo`)
+- [x] WCAG 2.1 AA remediation across web app
+- [x] Mobile download queue — queue view, batch shelf download, storage management
+- [x] Webhook delivery — CRUD, HMAC signing, retry, SSRF guard
+- [x] Author management — profiles, detail page, admin merge
+- [x] Goodreads and StoryGraph CSV import (reading history + shelves)
+- [x] Mobile epub reader: annotation creation — text selection → bottom sheet (highlight/note/bookmark), color/note edit, delete, annotations list panel
+
+---
+
+### Phase 15 — Cross-Document Synthesis Engine ✅ Complete
+
+#### Stage 1 — Sub-Chapter Chunking
+- [x] `book_chunks` table (migration 0019): chunk_index, chapter_index, heading_path, chunk_type, text, word_count, has_image, embedding
+- [x] `book_chunks_fts` virtual FTS5 table (migration 0021) + sync triggers
+- [x] Additional indexes: `idx_book_chunks_created_at` (0023)
+- [x] `chunker.rs` — domain-aware chunking with procedural list detection (never splits numbered sequences)
+- [x] Vision LLM pass for image-heavy pages — description appended to OCR text before embedding
+- [x] `GET /api/v1/books/:id/chunks?size=600&overlap=100` — sub-chapter chunk listing with heading paths and types
+
+#### Stage 2 — Hybrid Retrieval + Reranking
+- [x] `GET /api/v1/search/chunks` — hybrid BM25 (FTS5) + cosine (sqlite-vec) retrieval, RRF fusion
+- [x] Cross-encoder reranking via LLM (gated behind `llm.enabled`); falls back to hybrid-only
+- [x] Filterable by `book_ids[]`, `chunk_type`, `limit` (capped at 100)
+
+#### Stage 3 — Collections + Synthesize MCP Tool
+- [x] `collections` table (migration 0020): name, description, domain hint, owner, public flag
+- [x] `collection_books` junction table (migration 0020)
+- [x] Additional index: `idx_collections_owner_id` (0022)
+- [x] Full collections CRUD: `GET/POST /api/v1/collections`, `GET/PATCH/DELETE /api/v1/collections/:id`
+- [x] `POST /api/v1/collections/:id/books` + `DELETE /api/v1/collections/:id/books/:book_id`
+- [x] `GET /api/v1/collections/:id/search/chunks` — cross-book hybrid chunk search within a collection
+- [x] `synthesize` MCP tool — accepts query, format, collection/book list; 14 supported output formats; full source attribution
+- [x] `llm/synthesize.rs` + `xs-mcp` tool wiring
+
+---
+
+### Phase 16 — Security Remediation ✅ Complete (14 stages)
+
+- [x] S3 path traversal fix — `Path::components()` sanitization (Stage 1)
+- [x] Range header validation — reject out-of-bounds ranges with 416 (Stage 2)
+- [x] Proxy auth IP whitelist — gate `X-Remote-User` on `trusted_cidrs` (Stage 3)
+- [x] HKDF domain-specific salts for TOTP and webhook key derivation (Stage 4)
+- [x] TOTP verify — generate tokens before clearing lockout (Stage 5)
+- [x] Synthesis prompt injection fence — delimit source material with SOURCE delimiters (Stage 6)
+- [x] Webhook payload size cap — reject > 1 MB payloads (Stage 7)
+- [x] Chunk search limit clamped to 100 on all endpoints (Stage 8)
+- [x] LLM endpoint SSRF validation — reject private IPs unless `allow_private_endpoints = true` (Stage 9)
+- [x] Audit and fix `list_books` N+1 — confirmed single GROUP_CONCAT JOIN (Stage 10)
+- [x] Enforce `SameSite=Strict` on refresh token cookie (Stage 11)
+- [x] Annotation cross-user rejection tests — PATCH and DELETE by non-owner (Stage 13)
+- [x] S3 path traversal unit tests — `sanitize_relative_path` coverage (Stage 14)
+
+---
+
+### Phase 17 — Security Hardening ✅ Complete (18 stages)
+
+- [x] `require_admin` guard on all admin routes (Stage 1)
+- [x] Proxy auth deny-by-default when `trusted_cidrs` is empty (Stage 2)
+- [x] Webhook URL SSRF validation at creation time (Stage 3)
+- [x] Rate limiting applied to TOTP verify and backup endpoints (Stage 4)
+- [x] Synthesis `custom_prompt` fenced inside SOURCE delimiters to prevent injection (Stage 5)
+- [x] Atomic ownership check in collection mutations (Stage 6)
+- [x] Backup code format check moved inside transaction (prevent timing oracle) (Stage 7)
+- [x] Invalidate stale pending TOTP tokens on re-authentication (Stage 8)
+- [x] API token expiry enforcement + revocation on user delete — `expires_at` column (migration 0025) (Stage 9)
+- [x] API token scope enforcement (`read`/`write`/`admin`) — `scope` column (migration 0026) (Stage 10)
+- [x] `idx_collections_owner_id` index (Stage 11)
+- [x] `idx_book_chunks_created_at` index (Stage 12)
+- [x] Webhook payload size cap enforced at enqueue time (Stage 13)
+- [x] `sessions` table (migration 0024): session_type, token_hash, expires_at (Stage 14+)
+- [x] `OsRng` in `generate_backup_code` for consistency (Stage 14)
+- [x] Single metadata syscall per range request (Stage 15)
+- [x] Startup warning when `base_url` is HTTP and `https_only = false` (Stage 16)
+- [x] OAuth state token bound to client IP via HMAC (Stage 17)
+- [x] Proxy auth provisioning rejects requests when email header is missing (Stage 18)
 
 ---
 

@@ -1,3 +1,18 @@
+//! Core book catalogue queries.  Touches: `books`, `book_authors`, `authors`,
+//! `book_tags`, `tags`, `formats`, `identifiers`, `series`, `book_user_state`,
+//! `reading_progress`, `custom_columns`, `book_custom_values`, `audit_log`.
+//!
+//! The `list_books` and `list_book_summaries_by_ids` functions use a
+//! GROUP_CONCAT pattern to fetch authors and tags in a single SQL pass instead
+//! of N+1 per-book queries: subqueries produce JSON objects with
+//! `json_object(...)`, concatenate them with `GROUP_CONCAT`, and the result is
+//! wrapped in `[...]` and parsed by `serde_json`.  This keeps the page query
+//! to two round-trips (count + data) regardless of page size.
+//!
+//! FTS5 full-text search is applied via the `books_fts` virtual table when a
+//! query term is present; terms are sanitised and rewritten with trailing `*`
+//! for prefix matching.
+
 use crate::db::models::{AuthorRef, Book, FormatRef, Identifier, SeriesRef, TagRef};
 use anyhow::{bail, Context};
 use chrono::Utc;
@@ -187,6 +202,8 @@ pub struct BulkUpdateBooksResult {
     pub errors: Vec<String>,
 }
 
+/// Returns the role and capability flags for `user_id`, or `None` if the user
+/// does not exist.  Errors on database failure.
 pub async fn role_permissions_for_user(
     db: &SqlitePool,
     user_id: &str,
@@ -216,6 +233,18 @@ pub async fn role_permissions_for_user(
         can_download: row.get::<i64, _>("can_download") != 0,
     }))
 }
+/// Paginated book list with optional filtering, full-text search, and sorting.
+///
+/// Two SQL queries are issued: a COUNT for pagination metadata, then the data
+/// page with GROUP_CONCAT author/tag aggregation.  When `params.q` is set the
+/// `books_fts` virtual table is joined for FTS5 prefix matching.
+///
+/// When `params.user_id` is supplied, per-user `is_read`, `is_archived`, and
+/// `progress_percentage` are joined from `book_user_state` and
+/// `reading_progress`.  Tag-restriction rows in `user_tag_restrictions` are
+/// evaluated as block/allow filters inside `apply_list_filters`.
+///
+/// Page size is clamped to 1–100 (default 30).
 pub async fn list_books<'e, E>(db: E, params: &ListBooksParams) -> anyhow::Result<BookListPage>
 where
     E: Copy,
@@ -284,6 +313,9 @@ where
     })
 }
 
+/// Fetches `BookSummary` rows for a specific ordered set of IDs.  The result
+/// preserves the caller-supplied `book_ids` order and silently omits IDs not
+/// found in the database.  Returns an empty `Vec` when `book_ids` is empty.
 pub async fn list_book_summaries_by_ids<'e, E>(
     db: E,
     book_ids: &[String],
@@ -509,6 +541,10 @@ fn book_summary_from_row(row: &SqliteRow) -> anyhow::Result<BookSummary> {
     })
 }
 
+/// Returns the fully-hydrated `Book` for `book_id`, or `None` if not found.
+/// When `library_id` is supplied the query also filters by `books.library_id`.
+/// Authors, tags, formats, and identifiers are each fetched in separate queries
+/// after the main row is located.
 pub async fn get_book_by_id(
     db: &SqlitePool,
     book_id: &str,
@@ -597,6 +633,10 @@ pub async fn get_book_by_id(
         indexed_at: row.get("indexed_at"),
     }))
 }
+/// Returns `true` if any of the candidate `identifiers` with an ISBN id_type
+/// already exist in the `identifiers` table for a different book.
+/// `exclude_book_id` exempts the book currently being edited from the check.
+/// ISBN values are normalised to upper-case alphanumeric before comparison.
 pub async fn has_duplicate_isbn(
     db: &SqlitePool,
     identifiers: &[IdentifierInput],
@@ -636,10 +676,21 @@ pub async fn has_duplicate_isbn(
     Ok(false)
 }
 
+/// Delegates to [`book_insert::insert_uploaded_book_impl`].
+/// Thin public entry point so callers do not need to import the `book_insert`
+/// module directly.
 pub async fn insert_uploaded_book(db: &SqlitePool, input: UploadBookInput) -> anyhow::Result<Book> {
     crate::db::queries::book_insert::insert_uploaded_book_impl(db, input).await
 }
 
+/// Applies a partial update to a book inside a transaction, writing one
+/// `audit_log` row per changed field.  Returns the updated `Book` on success,
+/// or `None` if the book does not exist.
+///
+/// Validates that `rating` is in 0–10 before any writes.  If authors are
+/// changed the entire `book_authors` set is replaced.  `sort_title` is
+/// auto-mirrored from `title` when it was previously equal to `title` and no
+/// explicit `sort_title` patch is provided.
 pub async fn patch_book_with_audit(
     db: &SqlitePool,
     book_id: &str,
@@ -900,6 +951,10 @@ pub async fn patch_book_with_audit(
     get_book_by_id(db, book_id, library_id, user_id).await
 }
 
+/// Applies the same set of field changes to multiple books in a single
+/// transaction.  Each book ID is processed independently; a missing book
+/// records an error entry in `BulkUpdateBooksResult.errors` rather than
+/// aborting the entire batch.  Returns the count of successfully updated rows.
 pub async fn bulk_update_books(
     db: &SqlitePool,
     input: BulkUpdateBooksInput,
@@ -989,6 +1044,22 @@ pub async fn bulk_update_books(
     Ok(BulkUpdateBooksResult { updated, errors })
 }
 
+/// Merges `duplicate_id` into `primary_id` in a single transaction.
+///
+/// The merge strategy for each related table:
+/// - **formats**: non-conflicting formats (different `format` string) are moved;
+///   conflicting formats stay on primary and the duplicate format is dropped.
+/// - **identifiers**: same dedup by `lower(id_type)`; orphaned duplicate rows deleted.
+/// - **authors**: duplicate authors appended after existing primary authors;
+///   `INSERT OR IGNORE` prevents duplicate `(book_id, author_id)` pairs.
+/// - **tags**: `ON CONFLICT DO UPDATE SET confirmed = MAX(...)` preserves
+///   confirmed status when either side had confirmed = 1.
+/// - **reading_progress**: per-user, keeps the record with the higher
+///   `percentage`; format IDs are remapped to primary equivalents by format string.
+/// - **shelf_books**, **book_user_state**: merged with `INSERT OR IGNORE` /
+///   `ON CONFLICT` taking the most-progressed state.
+/// - The duplicate book row is then hard-deleted; remaining related rows
+///   cascade via FK.
 pub async fn merge_books(
     db: &SqlitePool,
     primary_id: &str,
@@ -1296,6 +1367,11 @@ pub async fn merge_books(
     Ok(())
 }
 
+/// Deletes the book row and records a `delete` audit log entry.  Returns the
+/// list of format file paths that the caller should remove from disk, or `None`
+/// if the book was not found.  Collecting paths before deletion means the
+/// caller always knows which files to clean up even when formats have already
+/// been orphaned.
 pub async fn delete_book_and_collect_paths(
     db: &SqlitePool,
     book_id: &str,
@@ -1379,6 +1455,8 @@ pub async fn delete_book_and_collect_paths(
     Ok(Some(format_paths))
 }
 
+/// Looks up the on-disk path and metadata for a specific format of `book_id`.
+/// Format matching is case-insensitive (`upper(format) = upper(?)`).
 pub async fn find_format_file(
     db: &SqlitePool,
     book_id: &str,
@@ -1406,6 +1484,8 @@ pub async fn find_format_file(
     }))
 }
 
+/// Returns the `cover_path` column value only when `has_cover = 1` and the
+/// path is non-null.  Used by the cover-serve handler to locate the image file.
 pub async fn find_book_cover_path(
     db: &SqlitePool,
     book_id: &str,
@@ -1427,6 +1507,9 @@ pub async fn find_book_cover_path(
     Ok(row.map(|row| row.get("cover_path")))
 }
 
+/// Sets `has_cover = 1` and stores `cover_path` for the given book, bumping
+/// `last_modified`.  Called after a cover image has been successfully written
+/// to the storage path.
 pub async fn set_book_cover_path(
     db: &SqlitePool,
     book_id: &str,
@@ -1450,6 +1533,9 @@ pub async fn set_book_cover_path(
     Ok(())
 }
 
+/// Fuzzy-matches books by title/sort_title LIKE and at least one author
+/// name LIKE.  Returns at most 2 IDs, ordered by title; used for duplicate
+/// detection during Goodreads/StoryGraph import.
 pub async fn find_book_ids_by_title_and_author_like(
     db: &SqlitePool,
     title: &str,
@@ -1558,6 +1644,8 @@ async fn load_book_formats(db: &SqlitePool, book_id: &str) -> anyhow::Result<Vec
         .collect())
 }
 
+/// Returns all identifiers for `book_id`, ordered by `id_type` for stable
+/// output.  Used in the book detail response.
 pub async fn get_book_identifiers(
     db: &SqlitePool,
     book_id: &str,
@@ -1584,6 +1672,7 @@ pub async fn get_book_identifiers(
         .collect())
 }
 
+/// Lists all custom column definitions ordered by label.
 pub async fn list_custom_columns(db: &SqlitePool) -> anyhow::Result<Vec<CustomColumn>> {
     let rows = sqlx::query(
         r#"
@@ -1648,6 +1737,9 @@ pub async fn delete_custom_column(db: &SqlitePool, column_id: &str) -> anyhow::R
     Ok(result.rows_affected() > 0)
 }
 
+/// Returns the custom column values for a book.  A LEFT JOIN against
+/// `custom_columns` ensures every defined column appears in the result (with
+/// `value = None` when no value has been set for that book).
 pub async fn get_book_custom_values(
     db: &SqlitePool,
     book_id: &str,
@@ -1687,6 +1779,11 @@ pub async fn get_book_custom_values(
         .collect())
 }
 
+/// Upserts custom column values for `book_id`.  A null or empty JSON value
+/// deletes the existing row; other values are written with
+/// `ON CONFLICT DO UPDATE`.  Errors if any `column_id` is not found in
+/// `custom_columns` or if the value type does not match the column's
+/// `column_type`.
 pub async fn upsert_book_custom_values(
     db: &SqlitePool,
     book_id: &str,
@@ -2042,6 +2139,10 @@ fn split_authors(raw: &str) -> Vec<String> {
         .collect()
 }
 
+// Sanitise a user-supplied search string into a safe FTS5 MATCH expression.
+// Non-alphanumeric characters (except whitespace and *) are replaced with
+// spaces to prevent FTS5 syntax errors.  Each remaining term is suffixed with
+// * for prefix matching: "calibre web" becomes "calibre* web*".
 fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
     let raw = raw?.trim();
     if raw.is_empty() {
@@ -2439,5 +2540,4 @@ fn looks_like_isbn(value: &str) -> bool {
     normalize_isbn_value(value).is_some()
 }
 
-#[allow(dead_code)]
 fn _debug_row(_row: &SqliteRow) {}

@@ -1,4 +1,4 @@
-# autolibre — Claude Context
+# xcalibre-server — Claude Context
 
 ## Project
 Rust rewrite of calibre-web. Self-hosted ebook library manager.
@@ -9,7 +9,7 @@ Design spec: docs/DESIGN.md
 Skills reference: docs/SKILLS.md
 
 ## Status
-Phase 11 complete. All open items shipped: mobile search (Stage 1), 2FA/TOTP (Stage 2), S3 storage backend (Stage 3). 33 DB tables across 14 migrations.
+Phase 17 Stage 18 complete. All 18 security hardening stages shipped. 41 DB tables across 26 migrations.
 
 ## Stack
 - Backend: Rust, Axum 0.7, sqlx 0.7, SQLite default / MariaDB optional
@@ -25,7 +25,9 @@ Phase 11 complete. All open items shipped: mobile search (Stage 1), 2FA/TOTP (St
 - `evals/fixtures/` — LLM prompt eval fixtures
 
 ## Non-Negotiable Constraints
-- TDD: tests written first, implementation makes them pass
+- TDD: tests written first, implementation makes them pass — this applies to both Rust backend tests and React RTL frontend tests
+- Frontend: every component introduced in a phase must have a corresponding `.test.tsx` in the same phase. Mock only at the network boundary (MSW). Never mock React hooks or TanStack Query internals.
+- Phase file fidelity: any change made during a build (bug fix, API shape adjustment, component refactor, config change) must be reflected back in the corresponding phase file before committing. The phase files are the source of truth for how the system is built — a future clean build from the phase files must arrive at the same working state as the current codebase.
 - `cargo clippy -- -D warnings` must pass at zero warnings
 - `cargo audit` must pass at zero vulnerabilities
 - All LLM calls: 10s timeout, silent fallback, never surface errors to users
@@ -43,8 +45,8 @@ Phase 11 complete. All open items shipped: mobile search (Stage 1), 2FA/TOTP (St
 - Start of any new session: `/engineering:standup` to reorient on progress
 - Full skills reference: docs/SKILLS.md
 
-## MCP Tools (autolibre-dev server)
-Register once: `claude mcp add autolibre-dev node tools/mcp_server.js`
+## MCP Tools (xcalibre-server-dev server)
+Register once: `claude mcp add xcalibre-server-dev node tools/mcp_server.js`
 - `run_tests [filter]` — run cargo tests, optionally filtered
 - `cargo_check` — fast compile check
 - `cargo_clippy` — lint with -D warnings
@@ -54,9 +56,9 @@ Register once: `claude mcp add autolibre-dev node tools/mcp_server.js`
 - `run_migrations` — apply sqlx migrations
 
 ## Library MCP Server (for agents)
-Build: `cargo build --release -p autolibre-mcp`
+Build: `cargo build --release -p xs-mcp`
 Register with Claude Code:
-`claude mcp add autolibre-library ./target/release/autolibre-mcp --env CONFIG_PATH=./config.toml`
+`claude mcp add xcalibre-server-library ./target/release/xs-mcp --env CONFIG_PATH=./config.toml`
 Exposes: `search_books`, `get_book_metadata`, `list_chapters`, `get_book_text`, `semantic_search`
 
 ## Code Style

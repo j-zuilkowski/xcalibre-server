@@ -1,3 +1,18 @@
+//! TOTP secret storage and backup code management.
+//! Touches: `users` (totp_secret, totp_enabled), `totp_backup_codes`.
+//!
+//! TOTP secrets are stored encrypted (the encryption/decryption happens in the
+//! service layer before calling these functions).  Backup codes are stored as
+//! bcrypt/SHA-256 hashes; the plaintext is only ever returned once at setup.
+//!
+//! `find_unused_backup_code` and `find_unused_backup_code_in_tx` are
+//! identical in SQL; the transaction variant is used when the caller needs to
+//! atomically consume the code with `mark_backup_code_used` in the same
+//! transaction.
+//!
+//! `disable_totp` clears the secret and all backup codes in a single
+//! transaction.
+
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 
@@ -10,6 +25,9 @@ pub struct TotpBackupCodeRecord {
     pub created_at: String,
 }
 
+/// Stores an encrypted TOTP secret and sets `totp_enabled = 0` (pending
+/// confirmation).  The secret becomes active only after `enable_totp` is called
+/// following successful TOTP code verification.
 pub async fn set_totp_setup_secret(
     db: &SqlitePool,
     user_id: &str,
@@ -91,6 +109,8 @@ pub async fn insert_totp_backup_code(
     Ok(())
 }
 
+/// Looks up an unused backup code by user and hash.  Returns `None` if the
+/// code does not exist or has already been consumed (`used_at IS NOT NULL`).
 pub async fn find_unused_backup_code(
     db: &SqlitePool,
     user_id: &str,
@@ -143,6 +163,9 @@ pub async fn find_unused_backup_code_in_tx(
     }))
 }
 
+/// Stamps `used_at` on the backup code row to prevent replay.  Must be called
+/// inside the same transaction as `find_unused_backup_code_in_tx` to avoid a
+/// TOCTOU race.
 pub async fn mark_backup_code_used(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     code_id: &str,

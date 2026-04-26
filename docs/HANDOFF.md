@@ -1,8 +1,8 @@
-# Codex Task: calibre-web-rs — Phase 1 Backend Foundation (TDD)
+# Codex Task: xcalibre-server — Phase 1 Backend Foundation (TDD)
 
 ## Objective
 
-Scaffold a new Rust repository at `~/Documents/localProject/calibre-web-rs` for a complete
+Scaffold a new Rust repository at `~/Documents/localProject/xcalibre-server` for a complete
 rewrite of calibre-web. This is a TDD project: **write all tests first**, then implement until
 they pass. Phase 1 covers the backend foundation — config, database, auth, books CRUD, file
 serving, cover pipeline, and security middleware.
@@ -42,7 +42,7 @@ All reference docs are in the `docs/` directory of this repo:
 ## Repository Structure to Create
 
 ```
-calibre-web-rs/
+xcalibre-server/
 ├── Cargo.toml                        # workspace root
 ├── package.json                      # pnpm workspace root (placeholder for Phase 3)
 ├── turbo.json                        # Turborepo config (placeholder)
@@ -268,11 +268,11 @@ volumes:
 
 ### 10. `CLAUDE.md` for the new repo
 
-Create `calibre-web-rs/CLAUDE.md` with this exact content — it will be auto-loaded
+Create `xcalibre-server/CLAUDE.md` with this exact content — it will be auto-loaded
 by Claude Code in every future session on this repo:
 
 ```markdown
-# calibre-web-rs — Claude Context
+# xcalibre-server — Claude Context
 
 ## Project
 Rust rewrite of calibre-web. Self-hosted ebook library manager.
@@ -314,8 +314,8 @@ Skills reference: docs/SKILLS.md
 - Start of any new session: `/engineering:standup` to reorient on progress
 - Full skills reference: docs/SKILLS.md
 
-## MCP Tools (calibre-dev server)
-Register once: `claude mcp add calibre-dev node tools/mcp_server.js`
+## MCP Tools (xcalibre-server-dev server)
+Register once: `claude mcp add xcalibre-server-dev node tools/mcp_server.js`
 - `run_tests [filter]` — run cargo tests, optionally filtered
 - `cargo_check` — fast compile check
 - `cargo_clippy` — lint with -D warnings
@@ -355,7 +355,7 @@ jobs:
 
 ### `.claude/settings.json` — Hooks + Permissions Allowlist
 
-Create this file at `calibre-web-rs/.claude/settings.json`. It configures automatic
+Create this file at `xcalibre-server/.claude/settings.json`. It configures automatic
 quality gates and eliminates permission prompts for routine commands.
 
 ```json
@@ -427,11 +427,11 @@ quality gates and eliminates permission prompts for routine commands.
 ### `tools/mcp_server.js` — Dev MCP Server
 
 Exposes development tools to Claude Code as callable MCP tools. Register in Claude Code
-settings after scaffolding by running: `claude mcp add calibre-dev node tools/mcp_server.js`
+settings after scaffolding by running: `claude mcp add xcalibre-server-dev node tools/mcp_server.js`
 
 ```javascript
 #!/usr/bin/env node
-// MCP server for calibre-web-rs development tooling
+// MCP server for xcalibre-server development tooling
 // Exposes cargo, db, and codex controls as Claude Code tools
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -448,7 +448,7 @@ const ROOT = path.resolve(__dirname, "..");
 const BACKEND = path.join(ROOT, "backend");
 
 const server = new McpServer({
-  name: "calibre-dev",
+  name: "xcalibre-server-dev",
   version: "1.0.0",
 });
 
@@ -600,7 +600,7 @@ await server.connect(transport);
 **`tools/package.json`** (required by the MCP server):
 ```json
 {
-  "name": "calibre-dev-mcp",
+  "name": "xs-dev-mcp",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
@@ -612,8 +612,8 @@ await server.connect(transport);
 
 After scaffolding, register the MCP server with:
 ```bash
-cd ~/Documents/localProject/calibre-web-rs/tools && npm install
-claude mcp add calibre-dev node tools/mcp_server.js
+cd ~/Documents/localProject/xcalibre-server/tools && npm install
+claude mcp add xcalibre-server-dev node tools/mcp_server.js
 ```
 
 ---

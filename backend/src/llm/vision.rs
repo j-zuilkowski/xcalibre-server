@@ -1,8 +1,31 @@
-use crate::{
-    ingest::chunker::ChunkDomain,
-    llm::LlmClient,
-};
+//! Vision LLM pass for image-heavy document pages.
+//!
+//! Sends a page image to the configured LLM (must support vision / multimodal input)
+//! and returns a textual description that is appended to the chunk text before indexing.
+//!
+//! # Domain-aware prompting
+//! The prompt is tailored by [`ChunkDomain`]:
+//! - `Technical` / `Electronics`: exhaustive component/net description for RAG fidelity.
+//! - All other domains: generic image description covering text, layout, and meaning.
+//!
+//! # Gating
+//! Callers (in `ingest/text.rs`) must check both:
+//! 1. `chunk.is_image_heavy == true` (PDF page has fewer than 80 words)
+//! 2. `chat_client.supports_vision().await == true`
+//!
+//! If either check fails, the vision pass is skipped and the chunk text is stored as-is.
+//! The vision pass is best-effort — a failure logs a warning and does not abort ingest.
 
+use crate::{ingest::chunker::ChunkDomain, llm::LlmClient};
+
+/// Describe the visual content of a page image using the vision LLM.
+///
+/// `page_image_bytes` may be JPEG or PNG; the MIME type is auto-detected from the
+/// magic bytes. Returns the description string or an error if the LLM response is empty.
+///
+/// # Errors
+/// Returns `Err` when the LLM call fails or returns an empty response.
+/// The caller logs the error as a warning and continues ingest without the description.
 pub async fn describe_image_page(
     llm: &LlmClient,
     page_image_bytes: &[u8],

@@ -1,8 +1,19 @@
+//! Liveness and readiness health check for xcalibre-server.
+//!
+//! Exposes `GET /health` — no authentication required, intended for use by container
+//! orchestrators and load balancers. Returns 200 OK when the DB is reachable and
+//! 503 Service Unavailable when the DB query fails.
+//!
+//! Meilisearch status is reported as a sub-component: "disabled" when not configured,
+//! "degraded" when configured but unavailable (falls back to FTS5 backend), "ok" otherwise.
+//! Meilisearch degradation does not affect the top-level HTTP status.
+
 use crate::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+/// Top-level health response including overall status, version, and per-component checks.
 #[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
     status: &'static str,
@@ -11,6 +22,7 @@ pub struct HealthResponse {
     search: ComponentStatus,
 }
 
+/// Status of a single infrastructure component, with an optional error message for degraded state.
 #[derive(Serialize, ToSchema)]
 pub struct ComponentStatus {
     status: &'static str,
@@ -32,6 +44,8 @@ pub struct ComponentStatus {
         (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
     )
 )]
+/// Executes a `SELECT 1` DB probe and checks Meilisearch availability, then returns a
+/// structured status payload; HTTP status is 503 only if the DB probe fails.
 pub(crate) async fn health_handler(
     State(state): State<AppState>,
 ) -> (StatusCode, Json<HealthResponse>) {

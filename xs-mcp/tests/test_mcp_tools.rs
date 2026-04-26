@@ -1,5 +1,5 @@
 use anyhow::Context;
-use autolibre_mcp::tools::CalibreMcpServer;
+use xs_mcp::tools::CalibreMcpServer;
 use backend::config::AppConfig;
 use chrono::Utc;
 use rmcp::{model::CallToolRequestParams, ServiceExt};

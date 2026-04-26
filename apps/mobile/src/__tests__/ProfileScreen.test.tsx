@@ -5,12 +5,14 @@ import ProfileScreen from "../app/(tabs)/profile";
 
 const {
   mockGetMe,
+  mockGetUserStats,
   mockReplace,
   mockClearTokens,
   mockGetApiBaseUrl,
   mockQueryData,
 } = vi.hoisted(() => ({
   mockGetMe: vi.fn(),
+  mockGetUserStats: vi.fn(),
   mockReplace: vi.fn(),
   mockClearTokens: vi.fn(),
   mockGetApiBaseUrl: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock("../lib/api", async (importOriginal) => {
     ...actual,
     useApi: () => ({
       getMe: mockGetMe,
+      getUserStats: mockGetUserStats,
     }),
     getApiBaseUrl: mockGetApiBaseUrl,
   };
@@ -85,6 +88,7 @@ function allText(tree: ReactTestRenderer): string[] {
 describe("ProfileScreen", () => {
   beforeEach(() => {
     mockGetMe.mockReset();
+    mockGetUserStats.mockReset();
     mockReplace.mockReset();
     mockClearTokens.mockReset();
     mockGetApiBaseUrl.mockReset();
@@ -94,6 +98,20 @@ describe("ProfileScreen", () => {
       email: "reader@example.com",
       default_library_id: "default",
       totp_enabled: false,
+    });
+    mockGetUserStats.mockResolvedValue({
+      total_books_read: 12,
+      books_read_this_year: 8,
+      books_read_this_month: 3,
+      books_in_progress: 2,
+      total_reading_sessions: 44,
+      reading_streak_days: 7,
+      longest_streak_days: 19,
+      average_progress_per_session: 0.42,
+      formats_read: { EPUB: 10, PDF: 2 },
+      top_tags: [],
+      top_authors: [],
+      monthly_books: [],
     });
     mockClearTokens.mockResolvedValue(undefined);
     mockQueryData.data = {

@@ -1,3 +1,16 @@
+//! Shelf (reading list) CRUD and book membership management for xcalibre-server.
+//!
+//! Routes under `/api/v1/shelves/`. All routes require a valid JWT.
+//!
+//! A shelf is owned by one user. Read operations (`get_shelf`, `list_shelf_books`) use
+//! `ensure_visible` — public shelves are readable by any authenticated user, while private
+//! shelves return 404 for non-owners (not 403, to avoid leaking existence). Write operations
+//! (`delete_shelf`, `add_book_to_shelf`, `remove_book_from_shelf`) use `ensure_owner`
+//! which strictly enforces ownership.
+//!
+//! Adding a book to a shelf validates that the book is accessible in the caller's library
+//! before insertion; duplicate inserts return 409 Conflict.
+
 use crate::{
     api::books::accessible_library_id, db::queries::shelves as shelf_queries,
     middleware::auth::AuthenticatedUser, AppError, AppState,
@@ -267,6 +280,7 @@ async fn list_shelf_books(
     }))
 }
 
+/// Returns 403 Forbidden if the caller is not the shelf owner; 404 if the shelf does not exist.
 async fn ensure_owner(state: &AppState, user_id: &str, shelf_id: &str) -> Result<(), AppError> {
     let Some(shelf) = shelf_queries::get_shelf(&state.db, shelf_id)
         .await
@@ -282,6 +296,8 @@ async fn ensure_owner(state: &AppState, user_id: &str, shelf_id: &str) -> Result
     Ok(())
 }
 
+/// Returns 404 (not 403) for private shelves the caller does not own, to avoid leaking
+/// the shelf's existence to unauthorized users.
 async fn ensure_visible(state: &AppState, user_id: &str, shelf_id: &str) -> Result<(), AppError> {
     let Some(shelf) = shelf_queries::get_shelf(&state.db, shelf_id)
         .await

@@ -1,15 +1,42 @@
+//! Prometheus metrics integration.
+//!
+//! Wraps `axum-prometheus` and the `metrics` crate to expose operational gauges,
+//! counters, and histograms at the `/metrics` endpoint.
+//!
+//! # Metric names
+//! All xcalibre-server-specific metrics are prefixed `xcalibre-server_`:
+//! - `xcalibre_server_llm_jobs_queued` — pending LLM jobs gauge
+//! - `xcalibre_server_llm_jobs_running` — in-flight LLM jobs gauge
+//! - `xcalibre_server_llm_jobs_failed_total` — cumulative failure counter
+//! - `xcalibre_server_import_jobs_active` — concurrent import operations gauge
+//! - `xcalibre_server_search_unindexed_books` — books not yet in search index
+//! - `xcalibre_server_db_pool_connections` — DB connection pool size
+//! - `xcalibre_server_storage_bytes_total` — total bytes across all format files
+//!
+//! HTTP request metrics (latency, count, status) are automatically collected by
+//! `axum-prometheus` via the Axum layer returned by [`prometheus_layer`].
+//!
+//! # Noop mode
+//! In test builds and when `XCS_DISABLE_METRICS=1` is set, a noop backend
+//! is used so tests don't pollute a global registry.  [`MetricsHandle::render`]
+//! returns a minimal placeholder in noop mode.
+//!
+//! # Refresh cadence
+//! [`refresh_database_size_metrics`] is called by the scheduler after each loop
+//! iteration (~every 30–60 seconds) to sync gauges from DB counts.
+
 use axum_prometheus::PrometheusMetricLayer;
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::SqlitePool;
 use std::{env, sync::OnceLock, time::Instant};
 
-pub const LLM_JOBS_QUEUED: &str = "autolibre_llm_jobs_queued";
-pub const LLM_JOBS_RUNNING: &str = "autolibre_llm_jobs_running";
-pub const LLM_JOBS_FAILED: &str = "autolibre_llm_jobs_failed_total";
-pub const IMPORT_JOBS_ACTIVE: &str = "autolibre_import_jobs_active";
-pub const SEARCH_INDEX_LAG: &str = "autolibre_search_unindexed_books";
-pub const DB_POOL_SIZE: &str = "autolibre_db_pool_connections";
-pub const STORAGE_BYTES: &str = "autolibre_storage_bytes_total";
+pub const LLM_JOBS_QUEUED: &str = "xcalibre_server_llm_jobs_queued";
+pub const LLM_JOBS_RUNNING: &str = "xcalibre_server_llm_jobs_running";
+pub const LLM_JOBS_FAILED: &str = "xcalibre_server_llm_jobs_failed_total";
+pub const IMPORT_JOBS_ACTIVE: &str = "xcalibre_server_import_jobs_active";
+pub const SEARCH_INDEX_LAG: &str = "xcalibre_server_search_unindexed_books";
+pub const DB_POOL_SIZE: &str = "xcalibre_server_db_pool_connections";
+pub const STORAGE_BYTES: &str = "xcalibre_server_storage_bytes_total";
 
 #[derive(Clone)]
 pub struct MetricsBundle {
@@ -71,12 +98,10 @@ impl MetricsHandle {
     pub fn render(&self) -> String {
         match &self.inner {
             MetricsHandleInner::Real(handle) => handle.render(),
-            MetricsHandleInner::Noop => {
-                "# HELP axum_http_requests_total Total HTTP requests\n\
+            MetricsHandleInner::Noop => "# HELP axum_http_requests_total Total HTTP requests\n\
 # TYPE axum_http_requests_total counter\n\
 axum_http_requests_total 0\n"
-                    .to_string()
-            }
+                .to_string(),
         }
     }
 }
@@ -96,7 +121,7 @@ pub fn prometheus_handle() -> MetricsHandle {
 fn metrics_disabled() -> bool {
     cfg!(test)
         || matches!(
-            env::var("AUTOLIBRE_DISABLE_METRICS").as_deref(),
+            env::var("XCS_DISABLE_METRICS").as_deref(),
             Ok("1") | Ok("true") | Ok("yes")
         )
 }
@@ -159,6 +184,11 @@ pub fn set_storage_bytes(bytes: u64) {
     ::metrics::gauge!(STORAGE_BYTES).set(bytes as f64);
 }
 
+/// RAII guard that increments the active-imports gauge on construction and
+/// decrements it (and records duration) on drop.
+///
+/// Use by constructing at the start of an import handler; the gauge tracks
+/// concurrent imports in flight across all requests.
 pub struct ImportMetricsGuard {
     started_at: Instant,
 }
@@ -182,10 +212,15 @@ impl Drop for ImportMetricsGuard {
     fn drop(&mut self) {
         ::metrics::gauge!(IMPORT_JOBS_ACTIVE).decrement(1.0);
         let duration_secs = self.started_at.elapsed().as_secs_f64();
-        ::metrics::histogram!("autolibre_import_duration_seconds").record(duration_secs);
+        ::metrics::histogram!("xcalibre_server_import_duration_seconds").record(duration_secs);
     }
 }
 
+/// Refresh LLM job count and storage byte gauges from the database.
+///
+/// Queries `llm_jobs` for pending/running counts and `formats` for total storage.
+/// Called periodically by the scheduler.  Errors are propagated to the caller
+/// which logs them as warnings.
 pub async fn refresh_database_size_metrics(db: &SqlitePool) -> anyhow::Result<()> {
     let queued: i64 = sqlx::query_scalar(
         r#"

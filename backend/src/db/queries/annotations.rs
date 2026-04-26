@@ -1,3 +1,14 @@
+//! Per-user book annotation CRUD.
+//! Touches: `book_annotations`.
+//!
+//! All mutation queries include `AND user_id = ?` so users can only mutate
+//! their own annotations; there is no cross-user annotation sharing.
+//! `cfi_range` is an EPUB CFI string identifying the text range in the reader.
+//!
+//! `update_annotation` uses conditional SET expressions (`CASE WHEN ? = 1 THEN
+//! ? ELSE <column> END`) so callers can patch `note` and `color` independently
+//! without a full replace.
+
 use anyhow::Context;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

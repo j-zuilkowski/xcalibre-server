@@ -1,16 +1,36 @@
+//! LLM-powered book metadata quality validation.
+//!
+//! Asks the "architect" LLM role to evaluate title, authors, language code, and
+//! description quality, returning a severity rating and per-field issues list.
+//!
+//! # Fallback behaviour
+//! If the LLM call fails (timeout, network error, bad JSON), [`validate_book`] returns
+//! a benign `severity = "ok"` result with an empty issues list. Validation is advisory
+//! only — it must never block normal library operations.
+//!
+//! # Error never surfaces to users
+//! Callers receive a [`ValidationResult`] in all cases; the error is swallowed internally.
+
 use crate::llm::chat::ChatClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+/// A single per-field metadata quality issue.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ValidationIssue {
     pub field: String,
+    /// One of `"warning"` or `"error"`.
     pub severity: String,
     pub message: String,
+    /// Optional suggested correction text from the LLM.
     pub suggestion: Option<String>,
 }
 
+/// Aggregated result of a metadata validation call.
+///
+/// `severity` is the worst-case across all issues: `"ok"`, `"warning"`, or `"error"`.
+/// `model_id` records which model produced the result for audit/display.
 #[derive(Clone, Debug, Serialize)]
 pub struct ValidationResult {
     pub severity: String,
@@ -24,6 +44,11 @@ struct RawValidationResult {
     issues: Vec<ValidationIssue>,
 }
 
+/// Validate book metadata using the LLM and return a structured result.
+///
+/// Checks for missing/thin descriptions, missing authors, and dubious language codes.
+/// On LLM error or unparseable response, returns `severity = "ok"` with no issues
+/// (fail-open: bad metadata is not worse than blocking the ingest pipeline).
 pub async fn validate_book(
     client: &ChatClient,
     title: &str,
@@ -108,6 +133,9 @@ fn normalize_severity(value: &str) -> String {
     }
 }
 
+/// Extract the first complete JSON object from `raw` using brace counting.
+///
+/// Used as a fallback when the LLM wraps its JSON in markdown fences or leading prose.
 fn extract_json_block(raw: &str) -> Option<&str> {
     static JSON_START_REGEX: OnceLock<Regex> = OnceLock::new();
     let start_regex =

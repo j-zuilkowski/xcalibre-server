@@ -6,7 +6,7 @@ usage() {
 Usage:
   ./scripts/restore.sh <backup-db-file> [--files-dir <path>]
 
-Restores autolibre database and optionally book files.
+Restores xcalibre-server database and optionally book files.
 
 Arguments:
   <backup-db-file>  Backup file path (.db, .sql, or .sql.gz)
@@ -16,8 +16,8 @@ Options:
   -h, --help          Show this help message.
 
 Environment:
-  AUTOLIBRE_DB_PATH       SQLite DB file path override
-  AUTOLIBRE_STORAGE_PATH  Storage directory override
+  XCS_DB_PATH       SQLite DB file path override
+  XCS_STORAGE_PATH  Storage directory override
   DATABASE_URL            Database URL (mysql://... enables MariaDB mode)
   APP_DATABASE_URL        Alternate database URL env name
   CONFIG_PATH             Config file path (default: config.toml)
@@ -198,8 +198,8 @@ if [[ ! -f "$BACKUP_DB_FILE" ]]; then
 fi
 
 CONFIG_FILE="${CONFIG_PATH:-config.toml}"
-DB_PATH="${AUTOLIBRE_DB_PATH:-}"
-STORAGE_PATH="${AUTOLIBRE_STORAGE_PATH:-}"
+DB_PATH="${XCS_DB_PATH:-}"
+STORAGE_PATH="${XCS_STORAGE_PATH:-}"
 DATABASE_URL="${DATABASE_URL:-${APP_DATABASE_URL:-}}"
 
 if [[ -r "$CONFIG_FILE" ]]; then

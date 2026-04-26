@@ -1,4 +1,0 @@
-
-> @calibre/mobile@0.1.0 build /Users/jonzuilkowski/Documents/localProject/calibre-web-rs/apps/mobile
-> tsc -p tsconfig.build.json --noEmit
-

@@ -1,3 +1,14 @@
+//! Collections (curated book sets) CRUD and cross-collection chunk search for RAG synthesis.
+//!
+//! Routes under `/api/v1/collections/`. All routes require a valid JWT.
+//! A collection is owned by one user and may optionally be made public. Non-owners cannot
+//! see or search private collections — access checks use `ensure_visible_collection`.
+//!
+//! The `GET /collections/:id/search/chunks` endpoint provides the Phase 15 RAG surface:
+//! hybrid BM25+vector chunk search scoped to a collection's book set, with optional LLM
+//! reranking. The `collection_id` passed to `run_chunk_search` acts as an access-control
+//! fence — callers cannot escape to books outside the collection.
+
 use crate::{
     api::{
         books::{accessible_library_id, load_book_or_not_found},
@@ -17,6 +28,7 @@ use axum::{
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
+/// Hard cap on chunk search results per request to limit response sizes and LLM token consumption.
 const MAX_CHUNK_SEARCH_RESULTS: u32 = 100;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -225,9 +237,7 @@ pub(crate) async fn update_collection(
     let domain = payload.domain.map(|value| {
         let value = value.trim().to_ascii_lowercase();
         match value.as_str() {
-            "technical" | "electronics" | "culinary" | "legal" | "academic" | "narrative" => {
-                value
-            }
+            "technical" | "electronics" | "culinary" | "legal" | "academic" | "narrative" => value,
             _ => "technical".to_string(),
         }
     });
@@ -268,13 +278,10 @@ pub(crate) async fn delete_collection(
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(collection_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let deleted = collection_queries::delete_collection(
-        &state.db,
-        &collection_id,
-        &auth_user.user.id,
-    )
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let deleted =
+        collection_queries::delete_collection(&state.db, &collection_id, &auth_user.user.id)
+            .await
+            .map_err(|_| AppError::Internal)?;
     if !deleted {
         return Err(AppError::NotFound);
     }
@@ -440,6 +447,8 @@ pub(crate) async fn search_collection_chunks(
     Ok(Json(response))
 }
 
+/// Returns 404 (not 403) for private collections the caller does not own, to avoid leaking
+/// collection existence to unauthorized users.
 pub(crate) async fn ensure_visible_collection(
     state: &AppState,
     user_id: &str,
@@ -459,6 +468,7 @@ pub(crate) async fn ensure_visible_collection(
     Ok(())
 }
 
+/// Trims, deduplicates, and removes empty strings from an ID list.
 fn normalize_ids(mut ids: Vec<String>) -> Vec<String> {
     ids.retain(|id| !id.trim().is_empty());
     for id in &mut ids {

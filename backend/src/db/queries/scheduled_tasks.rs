@@ -1,3 +1,14 @@
+//! Scheduled cron task CRUD and due-task polling.
+//! Touches: `scheduled_tasks`.
+//!
+//! `list_due_scheduled_tasks` selects tasks where `enabled = 1` and
+//! `next_run_at <= ?` (caller passes the current UTC timestamp).  After
+//! execution the scheduler calls `mark_scheduled_task_ran` with the new
+//! `next_run_at` computed from the cron expression.
+//!
+//! `cron_expr` stores a standard 5-field cron expression; evaluation is done
+//! in the service layer, not the database.
+
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -139,6 +150,8 @@ pub async fn delete_scheduled_task(db: &SqlitePool, task_id: &str) -> anyhow::Re
     Ok(result.rows_affected() > 0)
 }
 
+/// Returns enabled tasks whose `next_run_at` is at or before `now`.  Ordered
+/// by `next_run_at ASC` so the most overdue tasks are processed first.
 pub async fn list_due_scheduled_tasks(
     db: &SqlitePool,
     now: &str,

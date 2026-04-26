@@ -1,3 +1,32 @@
+//! Plain-text extraction from EPUB, PDF, MOBI/AZW3, and TXT formats.
+//!
+//! This module is the RAG content API foundation — it has **no LLM dependency**.
+//! Extracted text is passed to the chunker ([`chunker`]) and optionally enriched
+//! by the vision LLM pass (gated on `has_image + llm.enabled`).
+//!
+//! # Supported formats
+//! | Format     | Strategy                                                              |
+//! |------------|-----------------------------------------------------------------------|
+//! | EPUB       | Unzip → parse `META-INF/container.xml` → find OPF → read spine items → strip HTML |
+//! | PDF        | Regex-scan for `BT...ET` text blocks; page boundaries via `/Type /Page` markers |
+//! | MOBI/AZW3  | [`mobi`] crate decode → split on `<mbp:pagebreak>` or heading tags    |
+//! | TXT        | Raw `fs::read_to_string`                                              |
+//!
+//! # Chapter model
+//! For PDFs, chapters are synthetic 5-page windows (PDF has no real chapter structure).
+//! For EPUB/MOBI, each spine item or pagebreak segment becomes one chapter.
+//!
+//! # Vision pass
+//! After chunking, any chunk with `is_image_heavy = true` (PDF page with < 80 words)
+//! triggers a vision LLM call via [`vision_llm::describe_image_page`]. The description
+//! is appended to the chunk text before storage. Vision calls are best-effort; failures
+//! log a warning and fall through without the description.
+//!
+//! # External systems
+//! - Reads from any [`StorageBackend`] (local FS or S3).
+//! - Writes chunks to `book_chunks` table via `chunk_queries`.
+//! - Optionally embeds chunks into `book_embeddings` via `SemanticSearch`.
+
 use super::mobi_util;
 use crate::{
     db::queries::{book_chunks as chunk_queries, books as book_queries},
@@ -21,6 +50,7 @@ use std::{
 };
 use zip::ZipArchive;
 
+/// Metadata for a single chapter/spine-item/page-window within a book file.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Chapter {
     pub index: u32,
@@ -28,6 +58,10 @@ pub struct Chapter {
     pub word_count: usize,
 }
 
+/// A local filesystem path that may be backed by a temporary file for remote backends.
+///
+/// The temporary file (if any) is deleted when this struct is dropped via
+/// [`tempfile::TempPath`]'s `Drop` impl.
 pub struct ExtractablePath {
     path: PathBuf,
     _temp_path: Option<tempfile::TempPath>,
@@ -39,6 +73,12 @@ impl ExtractablePath {
     }
 }
 
+/// Resolve a storage-relative path to a local filesystem path.
+///
+/// For local-FS backends, calls [`StorageBackend::resolve`] which returns a
+/// `PathBuf` without any I/O. For S3 backends (which don't support `resolve`),
+/// downloads the object to a [`tempfile::NamedTempFile`] and returns its path.
+/// The temp file is cleaned up when the returned [`ExtractablePath`] is dropped.
 pub async fn resolve_or_download_path(
     storage: &dyn StorageBackend,
     relative_path: &str,
@@ -68,6 +108,10 @@ pub async fn resolve_or_download_path(
     }
 }
 
+/// List the chapters (or synthetic page-windows for PDFs) in a book file.
+///
+/// `format` is case-insensitive. Returns an empty vec for unsupported formats rather
+/// than an error, so callers can skip extraction gracefully.
 pub fn list_chapters(path: &Path, format: &str) -> anyhow::Result<Vec<Chapter>> {
     let output = match normalize_format(format).as_str() {
         "EPUB" => list_epub_chapters(path).unwrap_or_default(),
@@ -87,6 +131,11 @@ pub fn list_chapters(path: &Path, format: &str) -> anyhow::Result<Vec<Chapter>> 
     Ok(output)
 }
 
+/// Extract plain text from a book file.
+///
+/// `chapter` selects a specific chapter index. Pass `None` to extract all chapters
+/// concatenated with `\n\n---\n\n` separators. Returns an empty string for
+/// unsupported formats rather than an error.
 pub fn extract_text(path: &Path, format: &str, chapter: Option<u32>) -> anyhow::Result<String> {
     let output = match normalize_format(format).as_str() {
         "EPUB" => extract_epub_text(path, chapter).unwrap_or_default(),
@@ -98,6 +147,22 @@ pub fn extract_text(path: &Path, format: &str, chapter: Option<u32>) -> anyhow::
     Ok(output)
 }
 
+/// Extract, chunk, optionally vision-enrich, optionally embed, and store all chunks
+/// for a single book.
+///
+/// Pipeline:
+/// 1. Pick the best extractable format (EPUB > PDF > MOBI > AZW3 > TXT).
+/// 2. Resolve or download the file via the storage backend.
+/// 3. Extract per-chapter text and collect [`ChapterText`] structs.
+/// 4. Run the domain-aware chunker to produce [`Chunk`]s.
+/// 5. For image-heavy chunks (PDF pages with < 80 words), optionally run the vision
+///    LLM pass to append a textual description — gated on `supports_vision()`.
+/// 6. If semantic search is configured, embed each chunk's text via the embedding
+///    endpoint and store as a little-endian `f32` blob.
+/// 7. Atomically replace all existing chunks for the book in the DB.
+///
+/// Returns the number of chunks stored. Returns 0 (not an error) when the book has
+/// no extractable content.
 pub async fn generate_and_store_book_chunks(
     state: &AppState,
     book: &crate::db::models::Book,
@@ -133,14 +198,22 @@ pub async fn generate_and_store_book_chunks(
     for chunk in chunks {
         let mut text = chunk.text.clone();
         if vision_supported && chunk.is_image_heavy {
-            match extract_page_image_bytes(extractable_path.path(), format, chunk.chapter_index).await
+            match extract_page_image_bytes(extractable_path.path(), format, chunk.chapter_index)
+                .await
             {
                 Ok(Some(image_bytes)) => {
                     if let Some(chat_client) = state.chat_client.as_ref() {
-                        match vision_llm::describe_image_page(chat_client, &image_bytes, &config.domain).await
+                        match vision_llm::describe_image_page(
+                            chat_client,
+                            &image_bytes,
+                            &config.domain,
+                        )
+                        .await
                         {
                             Ok(description) => {
-                                text = format!("{text}\n\n[Visual content description:]\n{description}");
+                                text = format!(
+                                    "{text}\n\n[Visual content description:]\n{description}"
+                                );
                             }
                             Err(err) => {
                                 tracing::warn!(
@@ -199,6 +272,11 @@ pub async fn generate_and_store_book_chunks(
     Ok(inserts.len())
 }
 
+/// Re-chunk all books in the library that have no existing chunks.
+///
+/// Queries for books with no entries in `book_chunks`, then processes them
+/// sequentially with a 5-second sleep between books to avoid overwhelming the
+/// embedding endpoint. Returns the count of successfully processed books.
 pub async fn rechunk_library(state: &AppState) -> anyhow::Result<usize> {
     let book_ids = sqlx::query_scalar::<_, String>(
         r#"
@@ -215,7 +293,8 @@ pub async fn rechunk_library(state: &AppState) -> anyhow::Result<usize> {
 
     let mut processed = 0usize;
     for book_id in book_ids {
-        let Some(book) = book_queries::get_book_by_id(&state.db, &book_id, None, None).await? else {
+        let Some(book) = book_queries::get_book_by_id(&state.db, &book_id, None, None).await?
+        else {
             continue;
         };
 
@@ -346,6 +425,8 @@ fn list_pdf_chapters(path: &Path) -> anyhow::Result<Vec<Chapter>> {
         return Ok(Vec::new());
     }
 
+    // PDFs have no built-in chapter structure, so we create synthetic 5-page windows.
+    // Each window becomes one "chapter" for the purposes of the reader and chunker.
     let mut chapters = Vec::new();
     let total_pages = pages.len();
     for (chunk_index, chunk) in pages.chunks(5).enumerate() {
@@ -687,7 +768,10 @@ async fn extract_page_image_bytes(
     }
 }
 
-async fn extract_epub_image_bytes(path: &Path, chapter_index: usize) -> anyhow::Result<Option<Vec<u8>>> {
+async fn extract_epub_image_bytes(
+    path: &Path,
+    chapter_index: usize,
+) -> anyhow::Result<Option<Vec<u8>>> {
     let (mut archive, opf_path) = open_epub_archive(path)?;
     let spine_items = read_epub_spine_paths(&mut archive, &opf_path)?;
     let Some(spine_path) = spine_items.get(chapter_index) else {
@@ -723,6 +807,7 @@ fn first_img_src(html: &str) -> Option<String> {
         .and_then(|captures| captures.get(1).map(|m| m.as_str().to_string()))
 }
 
+/// Serialize an embedding vector to a little-endian `f32` byte blob for sqlite-vec storage.
 fn embedding_to_blob(vector: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
     for value in vector {

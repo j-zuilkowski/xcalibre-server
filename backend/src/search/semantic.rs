@@ -1,3 +1,33 @@
+//! sqlite-vec semantic search over book embeddings.
+//!
+//! Embeds the query text using the configured embedding model, then performs cosine
+//! similarity search against the `book_embeddings` table using the `sqlite-vec`
+//! extension (`vec_distance_cosine`).
+//!
+//! # Gating
+//! This module is only usable when `llm.enabled = true` **and** the embedding
+//! endpoint is configured. The `SemanticSearch` struct is stored as
+//! `Option<SemanticSearch>` in `AppState`; callers return HTTP 503 when `None`.
+//!
+//! # Embedding storage format
+//! Vectors are stored as little-endian `f32` byte blobs via [`vec_to_blob`].  The
+//! `model_id` column filters results to embeddings from the currently-configured
+//! model, so changing models does not produce cross-model similarity scores.
+//!
+//! # Distance to score conversion
+//! `vec_distance_cosine` returns `[0.0, 2.0]` (0 = identical, 2 = opposite).
+//! We convert to a similarity score with `score = 1.0 - distance`, yielding `[−1.0, 1.0]`.
+//! In practice cosine distances for meaningful embeddings stay in `[0.0, 1.0]`.
+//!
+//! # `indexed_at` tracking
+//! After a successful `index_book` call, `llm_queries::mark_running_semantic_jobs_for_book_completed`
+//! updates the job table. The `books.indexed_at` column is updated separately by
+//! the API handler.
+//!
+//! # External systems
+//! - Reads/writes `book_embeddings` table (SQLite with sqlite-vec extension).
+//! - Calls the embedding endpoint via [`EmbeddingClient`].
+
 use crate::{
     db::queries::llm as llm_queries,
     llm::embeddings::EmbeddingClient,
@@ -36,6 +66,10 @@ impl SemanticSearch {
         self.embeddings.embed(text).await
     }
 
+    /// Embed and store a book's composite text (`"title by authors. description"`).
+    ///
+    /// On success, marks any running `semantic_index` jobs for this book as completed.
+    /// On error, marks them as failed and propagates the error to the caller.
     pub async fn index_book(
         &self,
         book_id: &str,
@@ -68,6 +102,10 @@ impl SemanticSearch {
         }
     }
 
+    /// Embed the query and return the nearest books by cosine similarity.
+    ///
+    /// Results are ordered by `vec_distance_cosine ASC` (smallest distance = most similar).
+    /// `score` in each [`SearchHit`] is `1.0 - distance`.
     pub async fn search_semantic(
         &self,
         query: &str,
@@ -189,6 +227,7 @@ pub async fn load_book_semantic_document(
     }))
 }
 
+/// Serialize an embedding vector to a little-endian `f32` byte blob for sqlite-vec.
 fn vec_to_blob(vector: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(vector));
     for value in vector {

@@ -1,3 +1,23 @@
+//! Local filesystem storage backend.
+//!
+//! Implements [`StorageBackend`] for files stored under a configurable root directory.
+//! The root directory is set from `app.storage_path` in config.
+//!
+//! # Path traversal prevention
+//! All paths are validated via [`sanitize_relative_path`] before joining with the
+//! root.  The sanitizer uses `Path::components()` to enumerate path segments and
+//! rejects any `ParentDir` (`..`), `RootDir`, or `Prefix` components.  Windows
+//! drive-letter prefixes (`C:\...`) are also detected and rejected.
+//!
+//! # Range request support
+//! [`LocalFsStorage::get_range`] supports byte-range reads using `AsyncSeekExt` to
+//! seek to the start offset and `read_exact` to read the requested slice.  A single
+//! `metadata()` call is made at the beginning of each range request to learn the
+//! total file size (or the caller may pass `total_length` to skip that syscall).
+//!
+//! # External systems
+//! Local filesystem only.  See `storage_s3.rs` for the S3/MinIO/R2/B2 backend.
+
 use anyhow::Context;
 use bytes::Bytes;
 use std::path::{Component, Path, PathBuf};
@@ -50,6 +70,10 @@ fn looks_like_windows_absolute_path(relative_path: &str) -> bool {
         && matches!(bytes[2], b'/' | b'\\')
 }
 
+/// Result of a ranged or full read from a storage backend.
+///
+/// `content_range` is `Some("bytes start-end/total")` for partial responses,
+/// `None` for full reads.  `partial = true` indicates a range was served.
 #[derive(Debug, Clone)]
 pub struct GetRangeResult {
     pub bytes: Bytes,
@@ -58,11 +82,21 @@ pub struct GetRangeResult {
     pub partial: bool,
 }
 
+/// Abstraction over local-filesystem and S3-compatible object storage.
+///
+/// Implementations must be `Send + Sync` for use behind an `Arc` in `AppState`.
+///
+/// # `resolve` vs `get_range`
+/// `resolve` returns a local `PathBuf` without I/O — only valid for local-FS storage.
+/// S3 backends must return `Err` from `resolve`; callers should use `get_range` or
+/// `get_bytes` for content access and `resolve_or_download_path` for extraction.
 #[async_trait::async_trait]
 pub trait StorageBackend: Send + Sync {
     async fn put(&self, relative_path: &str, bytes: Bytes) -> anyhow::Result<()>;
     async fn delete(&self, relative_path: &str) -> anyhow::Result<()>;
     async fn file_size(&self, relative_path: &str) -> anyhow::Result<u64>;
+    /// Read a byte range from the file. `range = None` reads the entire file.
+    /// `total_length` may be passed if already known to skip a metadata syscall.
     async fn get_range(
         &self,
         relative_path: &str,
@@ -72,9 +106,16 @@ pub trait StorageBackend: Send + Sync {
     async fn get_bytes(&self, relative_path: &str) -> anyhow::Result<Bytes> {
         Ok(self.get_range(relative_path, None, None).await?.bytes)
     }
+    /// Return the absolute local path for a storage-relative path.
+    ///
+    /// Only valid for local-FS backends. S3 backends must return `Err`.
     fn resolve(&self, relative_path: &str) -> anyhow::Result<PathBuf>;
 }
 
+/// Local filesystem storage backend.
+///
+/// All stored files live under `root`. Paths are sanitized through
+/// [`sanitize_relative_path`] before joining, preventing traversal outside `root`.
 #[derive(Clone, Debug)]
 pub struct LocalFsStorage {
     root: PathBuf,

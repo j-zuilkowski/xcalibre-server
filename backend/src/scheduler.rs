@@ -1,7 +1,35 @@
+//! In-process cron scheduler for recurring tasks and webhook delivery.
+//!
+//! Runs a single Tokio task that uses `tokio::select!` to multiplex two periodic
+//! sub-loops:
+//! - **Scheduled tasks** (every 60 seconds): queries `scheduled_tasks.next_run_at`
+//!   and dispatches any due tasks as LLM job queue entries.
+//! - **Webhook delivery** (every 30 seconds): drains `webhook_deliveries` pending
+//!   entries via [`webhook_engine::deliver_pending`].
+//!
+//! # Cron expression format
+//! Accepts standard 5-field POSIX cron (`MIN HOUR DOM MON DOW`) and converts to the
+//! 6/7-field format expected by the `cron` crate (which uses Quartz-style ordering
+//! `SEC MIN HOUR DOM MON DOW [YEAR]`).  The conversion inserts `0` for seconds and
+//! substitutes `?` for the unused DOM or DOW field when the other is constrained.
+//!
+//! Day-of-week numeric values are remapped: the `cron` crate uses 1=SUN through 7=SAT
+//! (Quartz), while POSIX uses 0=SUN through 6=SAT (with 7 also meaning SUN).
+//!
+//! # Supported task types
+//! | `task_type`          | Action                                            |
+//! |----------------------|---------------------------------------------------|
+//! | `classify_all`       | Enqueue an `organize` job to classify all books   |
+//! | `semantic_index_all` | Enqueue `semantic_index` jobs for all books       |
+//! | `backup`             | Enqueue a `backup` placeholder job                |
+//!
+//! # Operational metrics
+//! After each scheduler loop iteration, `refresh_operational_metrics` refreshes
+//! Prometheus gauges for LLM job counts, storage bytes, and search index lag.
+
 use crate::{
     db::queries::{llm as llm_queries, scheduled_tasks as scheduled_task_queries},
-    metrics, AppState,
-    webhooks as webhook_engine,
+    metrics, webhooks as webhook_engine, AppState,
 };
 use chrono::{DateTime, Utc};
 use cron::Schedule;
@@ -10,6 +38,7 @@ use std::{str::FromStr, time::Duration};
 const SCHEDULED_TASK_INTERVAL: Duration = Duration::from_secs(60);
 const WEBHOOK_DELIVERY_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Spawn the combined scheduled-task + webhook-delivery loop as a detached Tokio task.
 pub fn spawn_scheduler(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         run_scheduler(state).await;
@@ -52,6 +81,10 @@ pub async fn run_scheduler(state: AppState) {
     }
 }
 
+/// Query and dispatch all scheduled tasks whose `next_run_at` is ≤ now.
+///
+/// Returns the count of tasks successfully dispatched. Errors from individual
+/// tasks are logged as warnings; other tasks continue running.
 pub async fn process_due_scheduled_tasks_once(state: &AppState) -> anyhow::Result<usize> {
     let now = Utc::now();
     let due_tasks =
@@ -74,6 +107,14 @@ pub async fn process_due_scheduled_tasks_once(state: &AppState) -> anyhow::Resul
     Ok(completed)
 }
 
+/// Compute the next scheduled run time for a cron expression, formatted as RFC 3339.
+///
+/// Accepts 5-field POSIX cron or 6/7-field Quartz cron.  5-field expressions are
+/// normalized to 6-field by prepending `0` for seconds and converting the DOW field
+/// from POSIX numbering (0=SUN) to Quartz numbering (1=SUN).
+///
+/// # Errors
+/// Returns `Err` for invalid cron expressions or expressions with no future occurrences.
 pub fn next_run_at_for_cron(cron_expr: &str, from: DateTime<Utc>) -> anyhow::Result<String> {
     let normalized = normalize_cron_expr(cron_expr)?;
     let schedule = Schedule::from_str(&normalized)?;
@@ -84,6 +125,11 @@ pub fn next_run_at_for_cron(cron_expr: &str, from: DateTime<Utc>) -> anyhow::Res
     Ok(next_run.to_rfc3339())
 }
 
+/// Normalize a 5-field POSIX cron to the 6-field Quartz format the `cron` crate expects.
+///
+/// Quartz format: `SEC MIN HOUR DOM MON DOW`. POSIX format: `MIN HOUR DOM MON DOW`.
+/// When both DOM and DOW are `*`, DOM stays `*` and DOW becomes `?` (Quartz requires
+/// exactly one of them to be `?`).
 fn normalize_cron_expr(cron_expr: &str) -> anyhow::Result<String> {
     let parts = cron_expr.split_whitespace().collect::<Vec<_>>();
     match parts.len() {
@@ -93,6 +139,7 @@ fn normalize_cron_expr(cron_expr: &str) -> anyhow::Result<String> {
             let day_of_month = parts[2];
             let month = parts[3];
             let day_of_week = normalize_day_of_week_field(parts[4]);
+            // Quartz requires exactly one of DOM/DOW to be '?' when the other is specific.
             let (normalized_dom, normalized_dow) = match (day_of_month, day_of_week.as_str()) {
                 ("*", "*") => ("*", "?"),
                 ("*", dow) => ("?", dow),
@@ -134,6 +181,8 @@ fn normalize_day_of_week_item(item: &str) -> String {
         );
     }
 
+    // Remap POSIX DOW (0=SUN, 7=SUN) to Quartz DOW (1=SUN, 7=SAT).
+    // POSIX 0 and 7 both mean Sunday; Quartz Sunday is 1.
     match item {
         "0" | "7" => "1".to_string(),
         "1" => "2".to_string(),

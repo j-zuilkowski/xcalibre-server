@@ -1,4 +1,4 @@
-# Codex Desktop App — autolibre Phase 13: Reader Depth + Observability
+# Codex Desktop App — xcalibre-server Phase 13: Reader Depth + Observability
 
 ## What Phase 13 Builds
 
@@ -30,7 +30,7 @@ Four high-value features identified in the post-v1.1 evaluation:
 - `axum-prometheus` crate wraps the existing Axum router with minimal code change
 - Metrics endpoint at `GET /metrics` — unauthenticated but should be firewalled (not exposed publicly; document this in DEPLOY.md)
 - Custom metrics beyond HTTP defaults: LLM job queue depth, active imports, Meilisearch index lag, DB pool utilization
-- Grafana dashboard JSON included in `docker/grafana/autolibre-dashboard.json`
+- Grafana dashboard JSON included in `docker/grafana/xcalibre-server-dashboard.json`
 
 **Reading Statistics:**
 - All raw data already exists: `reading_progress` stores CFI + percentage + `last_read_at`; `book_user_state` tracks `is_read`
@@ -228,8 +228,8 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
-pnpm --filter @autolibre/mobile exec tsc --noEmit
+pnpm --filter @xs/web build
+pnpm --filter @xs/mobile exec tsc --noEmit
 git add backend/ apps/web/src/features/reader/ apps/mobile/
 git commit -m "Phase 13 Stage 1: reader annotations — highlights, notes, bookmarks (web + mobile read-only)"
 ```
@@ -306,7 +306,7 @@ backend/src/api/docs.rs — new file:
   #[derive(OpenApi)]
   #[openapi(
     info(
-      title = "autolibre API",
+      title = "xcalibre-server API",
       version = env!("CARGO_PKG_VERSION"),
       description = "Self-hosted ebook library manager — REST API",
       license(name = "MIT"),
@@ -441,13 +441,13 @@ DELIVERABLE 2 — Custom application metrics
 
 backend/src/metrics.rs — new file defining custom metric names:
 
-  pub const LLM_JOBS_QUEUED:   &str = "autolibre_llm_jobs_queued";
-  pub const LLM_JOBS_RUNNING:  &str = "autolibre_llm_jobs_running";
-  pub const LLM_JOBS_FAILED:   &str = "autolibre_llm_jobs_failed_total";
-  pub const IMPORT_JOBS_ACTIVE: &str = "autolibre_import_jobs_active";
-  pub const SEARCH_INDEX_LAG:  &str = "autolibre_search_unindexed_books";
-  pub const DB_POOL_SIZE:      &str = "autolibre_db_pool_connections";
-  pub const STORAGE_BYTES:     &str = "autolibre_storage_bytes_total";
+  pub const LLM_JOBS_QUEUED:   &str = "xcalibre-server_llm_jobs_queued";
+  pub const LLM_JOBS_RUNNING:  &str = "xcalibre-server_llm_jobs_running";
+  pub const LLM_JOBS_FAILED:   &str = "xcalibre-server_llm_jobs_failed_total";
+  pub const IMPORT_JOBS_ACTIVE: &str = "xcalibre-server_import_jobs_active";
+  pub const SEARCH_INDEX_LAG:  &str = "xcalibre-server_search_unindexed_books";
+  pub const DB_POOL_SIZE:      &str = "xcalibre-server_db_pool_connections";
+  pub const STORAGE_BYTES:     &str = "xcalibre-server_storage_bytes_total";
 
 Instrument these at the following call sites:
   - LLM job enqueue/complete/fail → increment/decrement LLM_JOBS_QUEUED, LLM_JOBS_RUNNING
@@ -458,7 +458,7 @@ Instrument these at the following call sites:
 Use the `metrics` crate macros:
   metrics::gauge!(LLM_JOBS_QUEUED, count as f64);
   metrics::counter!(LLM_JOBS_FAILED);
-  metrics::histogram!("autolibre_import_duration_seconds", duration_secs);
+  metrics::histogram!("xcalibre-server_import_duration_seconds", duration_secs);
 
 ─────────────────────────────────────────
 DELIVERABLE 3 — Security note for /metrics
@@ -483,7 +483,7 @@ Add to docs/DEPLOY.md (Caddy section):
 DELIVERABLE 4 — Grafana dashboard
 ─────────────────────────────────────────
 
-docker/grafana/autolibre-dashboard.json — Grafana dashboard JSON with panels:
+docker/grafana/xcalibre-server-dashboard.json — Grafana dashboard JSON with panels:
 
   Row 1: HTTP Overview
     - Request rate (req/s) — rate(axum_http_requests_total[1m])
@@ -511,9 +511,9 @@ docker/docker-compose.yml — add optional Prometheus + Grafana services (commen
 
 docker/prometheus.yml:
   scrape_configs:
-    - job_name: autolibre
+    - job_name: xcalibre-server
       static_configs:
-        - targets: ["autolibre:3000"]
+        - targets: ["xcalibre-server:3000"]
       metrics_path: /metrics
 
 ─────────────────────────────────────────
@@ -531,7 +531,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-# Manual: curl http://localhost:3000/metrics | grep autolibre
+# Manual: curl http://localhost:3000/metrics | grep xcalibre-server
 # Manual: docker compose up prometheus grafana; open Grafana; import dashboard JSON
 git add backend/ docker/
 git commit -m "Phase 13 Stage 3: Prometheus metrics endpoint + Grafana dashboard"
@@ -710,8 +710,8 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
-pnpm --filter @autolibre/mobile exec tsc --noEmit
+pnpm --filter @xs/web build
+pnpm --filter @xs/mobile exec tsc --noEmit
 git add backend/ apps/web/src/features/profile/ apps/mobile/src/app/
 git commit -m "Phase 13 Stage 4: reading statistics — streak, monthly books, top authors/tags"
 ```

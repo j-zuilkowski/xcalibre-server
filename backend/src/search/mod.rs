@@ -1,3 +1,21 @@
+//! Search dispatcher and backend abstraction.
+//!
+//! Implements a **graceful degradation chain**:
+//! 1. If `meilisearch.enabled = true` and the Meilisearch server is reachable at
+//!    startup, use [`meili::MeilisearchBackend`] wrapped in
+//!    [`MeiliWithFallbackBackend`].
+//! 2. If Meilisearch is unavailable (health check fails at startup), fall through to
+//!    [`fts5::Fts5Backend`] permanently for this process lifetime.
+//! 3. At runtime, if a Meilisearch request fails, [`MeiliWithFallbackBackend`]
+//!    automatically retries the same query against FTS5.
+//!
+//! [`build_search_backend`] is called once during app startup and returns an
+//! `Arc<dyn SearchBackend>` stored in `AppState`.
+//!
+//! # Feature flag
+//! Meilisearch support is compiled in only when the `meilisearch` Cargo feature is
+//! enabled (default in production builds). Without it, only FTS5 is available.
+
 use crate::{config::AppConfig, db::models::Book};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,6 +27,11 @@ pub mod fts5;
 pub mod meili;
 pub mod semantic;
 
+/// Parameters for a full-text search request.
+///
+/// Filters are additive (AND semantics). `book_ids` is an allowlist; pass an
+/// empty vec to guarantee zero results (used by scoped search in reading lists).
+/// `page` is 1-indexed; `page_size` is clamped to a backend-defined maximum.
 #[derive(Clone, Debug)]
 pub struct SearchQuery {
     pub q: String,
@@ -21,12 +44,17 @@ pub struct SearchQuery {
     pub page_size: u32,
 }
 
+/// A single search result with a normalized relevance score.
+///
+/// `score` is in `[0.0, 1.0]` where 1.0 is most relevant. Backend scoring
+/// differs: Meilisearch uses `_rankingScore`; FTS5 uses normalized BM25 rank.
 #[derive(Clone, Debug)]
 pub struct SearchHit {
     pub book_id: String,
     pub score: f32,
 }
 
+/// A paginated search result page.
 #[derive(Clone, Debug)]
 pub struct SearchPage {
     pub hits: Vec<SearchHit>,
@@ -35,6 +63,10 @@ pub struct SearchPage {
     pub page_size: u32,
 }
 
+/// Trait implemented by all search backends.
+///
+/// Default no-op implementations of `index_book` and `remove_book` allow FTS5
+/// (which is maintained by DB triggers) to satisfy the trait without overrides.
 #[async_trait]
 pub trait SearchBackend: Send + Sync {
     async fn search(&self, query: &SearchQuery) -> Result<SearchPage>;
@@ -49,6 +81,13 @@ pub trait SearchBackend: Send + Sync {
     fn backend_name(&self) -> &'static str;
 }
 
+/// Build and return the appropriate search backend based on config.
+///
+/// Always constructs an FTS5 backend as the baseline. If the `meilisearch` feature
+/// is compiled in and `meilisearch.enabled = true`, attempts to connect to Meilisearch.
+/// On success, returns a [`MeiliWithFallbackBackend`] that wraps both.
+/// On failure (health check timeout, refused connection), logs a warning and returns
+/// the plain FTS5 backend.
 pub async fn build_search_backend(config: &AppConfig, db: SqlitePool) -> Arc<dyn SearchBackend> {
     let fts = Arc::new(fts5::Fts5Backend::new(db.clone()));
 

@@ -6,7 +6,7 @@ usage() {
 Usage:
   ./scripts/backup.sh [--db-only] [--files-only]
 
-Backs up autolibre database and/or book files.
+Backs up xcalibre-server database and/or book files.
 
 Options:
   --db-only     Back up database only.
@@ -14,9 +14,9 @@ Options:
   -h, --help    Show this help message.
 
 Environment:
-  AUTOLIBRE_BACKUP_DIR   Backup root directory (default: ./backups)
-  AUTOLIBRE_DB_PATH      SQLite DB file path override
-  AUTOLIBRE_STORAGE_PATH Storage directory override
+  XCS_BACKUP_DIR   Backup root directory (default: ./backups)
+  XCS_DB_PATH      SQLite DB file path override
+  XCS_STORAGE_PATH Storage directory override
   DATABASE_URL           Database URL (mysql://... enables MariaDB mode)
   APP_DATABASE_URL       Alternate database URL env name
   CONFIG_PATH            Config file path (default: config.toml)
@@ -186,9 +186,9 @@ if [[ "$FILES_ONLY" == true ]]; then
 fi
 
 CONFIG_FILE="${CONFIG_PATH:-config.toml}"
-BACKUP_DIR="${AUTOLIBRE_BACKUP_DIR:-./backups}"
-DB_PATH="${AUTOLIBRE_DB_PATH:-}"
-STORAGE_PATH="${AUTOLIBRE_STORAGE_PATH:-}"
+BACKUP_DIR="${XCS_BACKUP_DIR:-./backups}"
+DB_PATH="${XCS_DB_PATH:-}"
+STORAGE_PATH="${XCS_STORAGE_PATH:-}"
 DATABASE_URL="${DATABASE_URL:-${APP_DATABASE_URL:-}}"
 
 if [[ -r "$CONFIG_FILE" ]]; then

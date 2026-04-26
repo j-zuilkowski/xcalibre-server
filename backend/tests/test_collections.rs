@@ -126,7 +126,9 @@ async fn test_add_book_to_private_collection_requires_visibility() {
 async fn test_concurrent_remove_book_from_collection_is_atomic() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
-    let book = ctx.create_book("Concurrent Remove Book", "Author One").await;
+    let book = ctx
+        .create_book("Concurrent Remove Book", "Author One")
+        .await;
     let collection_id = create_collection(&ctx, &token, "Concurrent Reading", false).await;
 
     add_books(&ctx, &token, &collection_id, &[book.id.clone()]).await;
@@ -148,7 +150,10 @@ async fn test_concurrent_remove_book_from_collection_is_atomic() {
 
     let response_one = request_one.await;
     let response_two = request_two.await;
-    let statuses = [response_one.status_code().as_u16(), response_two.status_code().as_u16()];
+    let statuses = [
+        response_one.status_code().as_u16(),
+        response_two.status_code().as_u16(),
+    ];
     assert!(statuses.contains(&204));
     assert!(statuses.contains(&404));
 }

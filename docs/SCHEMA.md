@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Database Schema
 
 _Status: Current_
-_Last updated: 2026-04-23_
+_Last updated: 2026-04-24_
 
 ---
 
@@ -20,7 +20,7 @@ _Last updated: 2026-04-23_
 
 ```
 libraries
-  └── books ──── book_authors ── authors
+  └── books ──── book_authors ── authors ── author_profiles
   │      │
   │      ├── book_tags ─── tags
   │      ├── book_user_state ─ users
@@ -30,17 +30,24 @@ libraries
   │      ├── formats
   │      ├── identifiers
   │      ├── series
-  │      └── custom_column_values ── custom_columns
+  │      ├── custom_column_values ── custom_columns
+  │      └── book_chunks (+ book_chunks_fts virtual)
   │
 users ──────────── roles
   │
   ├── refresh_tokens
+  ├── sessions
   ├── api_tokens
   ├── oauth_accounts
   ├── kobo_devices ── kobo_reading_state ── books
   ├── reading_progress ── books
-  └── shelves
-        └── shelf_books ── books
+  ├── shelves
+  │     └── shelf_books ── books
+  ├── collections
+  │     └── collection_books ── books
+  ├── webhooks
+  │     └── webhook_deliveries
+  └── goodreads_import_log
 
 llm_jobs ──────────────────── books (nullable)
 llm_eval_results
@@ -133,6 +140,23 @@ CREATE TABLE authors (
 );
 
 CREATE INDEX idx_authors_sort ON authors(sort_name);
+```
+
+---
+
+### `author_profiles`
+
+```sql
+CREATE TABLE author_profiles (
+    author_id      TEXT PRIMARY KEY REFERENCES authors(id) ON DELETE CASCADE,
+    bio            TEXT,
+    photo_path     TEXT,
+    born           TEXT,
+    died           TEXT,
+    website_url    TEXT,
+    openlibrary_id TEXT,
+    updated_at     TEXT NOT NULL
+);
 ```
 
 ---
@@ -568,7 +592,7 @@ CREATE INDEX idx_eval_hash    ON llm_eval_results(prompt_hash);
 
 ### `migration_log`
 
-One row per `autolibre-migrate` run.
+One row per `xs-migrate` run.
 
 ```sql
 CREATE TABLE migration_log (
@@ -753,6 +777,170 @@ CREATE INDEX idx_totp_backup_user ON totp_backup_codes(user_id);
 
 ---
 
+### `goodreads_import_log` (migration 0016)
+
+Tracks Goodreads / StoryGraph CSV import runs per user.
+
+```sql
+CREATE TABLE goodreads_import_log (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename     TEXT NOT NULL,
+    source       TEXT NOT NULL DEFAULT 'goodreads'
+                 CHECK(source IN ('goodreads', 'storygraph')),
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK(status IN ('pending', 'running', 'complete', 'failed')),
+    total_rows   INTEGER,
+    matched      INTEGER NOT NULL DEFAULT 0,
+    unmatched    INTEGER NOT NULL DEFAULT 0,
+    errors       TEXT,
+    created_at   TEXT NOT NULL,
+    completed_at TEXT
+);
+```
+
+---
+
+### `webhooks` + `webhook_deliveries` (migration 0018)
+
+Outbound webhooks with HMAC-signed payloads and retry tracking.
+
+```sql
+CREATE TABLE webhooks (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    url              TEXT NOT NULL,
+    secret           TEXT NOT NULL,         -- HMAC-SHA256 key; derived via HKDF
+    events           TEXT NOT NULL,         -- JSON array of event names
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    last_delivery_at TEXT,
+    last_error       TEXT,
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX idx_webhooks_user ON webhooks(user_id);
+
+CREATE TABLE webhook_deliveries (
+    id              TEXT PRIMARY KEY,
+    webhook_id      TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    event           TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'delivered', 'failed')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT,
+    response_status INTEGER,
+    created_at      TEXT NOT NULL,
+    delivered_at    TEXT
+);
+
+CREATE INDEX idx_webhook_deliveries_pending ON webhook_deliveries(status, next_attempt_at)
+    WHERE status = 'pending';
+```
+
+> **Note:** `url` is validated against SSRF blocklist at webhook creation time. Payload size capped at 1 MB at enqueue.
+
+---
+
+### `book_chunks` (migration 0019)
+
+Sub-chapter chunks produced by the Phase 15.1 chunker. Each chunk carries a heading path for citation and an optional embedding for vector search.
+
+```sql
+CREATE TABLE book_chunks (
+    id            TEXT PRIMARY KEY,
+    book_id       TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    chunk_index   INTEGER NOT NULL,
+    chapter_index INTEGER NOT NULL,
+    heading_path  TEXT,                    -- e.g. "Admin Guide > Part III > §12.3"
+    chunk_type    TEXT NOT NULL DEFAULT 'text'
+                    CHECK(chunk_type IN ('text', 'procedure', 'reference',
+                                         'concept', 'example', 'image')),
+    text          TEXT NOT NULL,
+    word_count    INTEGER NOT NULL,
+    has_image     INTEGER NOT NULL DEFAULT 0,
+    embedding     BLOB,                    -- float32 vector (sqlite-vec)
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX idx_book_chunks_book ON book_chunks(book_id, chunk_index);
+CREATE INDEX idx_book_chunks_type ON book_chunks(book_id, chunk_type);
+CREATE INDEX idx_book_chunks_created_at ON book_chunks(created_at);
+```
+
+A companion FTS5 virtual table `book_chunks_fts` (migration 0021) indexes `text` and `heading_path` with sync triggers for BM25 search.
+
+---
+
+### `collections` + `collection_books` (migration 0020)
+
+Groups related books for cross-document synthesis queries (Phase 15.3).
+
+```sql
+CREATE TABLE collections (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT,
+    domain      TEXT NOT NULL DEFAULT 'technical'
+                  CHECK(domain IN ('technical','electronics','culinary',
+                                   'legal','academic','narrative')),
+    owner_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_public   INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE collection_books (
+    collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    book_id       TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    added_at      TEXT NOT NULL,
+    PRIMARY KEY (collection_id, book_id)
+);
+
+CREATE INDEX idx_collections_owner_id    ON collections(owner_id);
+CREATE INDEX idx_collection_books_collection ON collection_books(collection_id);
+CREATE INDEX idx_collection_books_book       ON collection_books(book_id);
+```
+
+`domain` is a hint to the chunker's boundary detection strategy — see ARCHITECTURE.md for per-domain chunking rules.
+
+---
+
+### `sessions` (migration 0024)
+
+Explicit session records used by the Phase 17 `AuthKind` refactor for typed session tracking alongside refresh tokens.
+
+```sql
+CREATE TABLE sessions (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_type TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    expires_at   TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
+
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE INDEX idx_sessions_type ON sessions(session_type);
+CREATE INDEX idx_sessions_hash ON sessions(token_hash);
+```
+
+---
+
+### `api_tokens` — extended columns (migrations 0025–0026)
+
+Two columns added to `api_tokens` post-Phase 17:
+
+```sql
+ALTER TABLE api_tokens ADD COLUMN expires_at INTEGER;   -- NULL = no expiry
+ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'write';
+-- scope values: 'read' | 'write' | 'admin'
+```
+
+Scope is enforced at the middleware layer — `read` tokens may not call mutating routes; `admin` tokens required for admin-only routes.
+
+---
+
 ## SQLite vs MariaDB Notes
 
 | Concern | SQLite | MariaDB |
@@ -829,7 +1017,7 @@ covers/
 
 ## Table Count
 
-The schema has **34 tables** across 15 migration files:
+The schema has **41 tables** across 26 migration files:
 
 | # | Table | Migration |
 |---|---|---|
@@ -866,7 +1054,14 @@ The schema has **34 tables** across 15 migration files:
 | 31 | `scheduled_tasks` | 0013 |
 | 32 | `totp_backup_codes` | 0014 |
 | 33 | `book_annotations` | 0015 |
-| 34 | `users.totp_secret / totp_enabled` (columns) | 0014 |
+| 34 | `goodreads_import_log` | 0016 |
+| 35 | `author_profiles` | 0017 |
+| 36 | `webhooks` | 0018 |
+| 37 | `webhook_deliveries` | 0018 |
+| 38 | `book_chunks` | 0019 |
+| 39 | `collections` | 0020 |
+| 40 | `collection_books` | 0020 |
+| 41 | `sessions` | 0024 |
 
 ## Open Schema Questions
 

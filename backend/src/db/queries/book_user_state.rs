@@ -1,3 +1,17 @@
+//! Per-user read/archived state for individual books.
+//! Touches: `book_user_state`.
+//!
+//! The table has a `(user_id, book_id)` unique constraint; all writes use
+//! `INSERT … ON CONFLICT DO UPDATE` (upsert) so the initial row creation and
+//! subsequent updates share the same code path.
+//!
+//! `set_read` and `set_archived` each read the current state first to
+//! preserve the other flag; the underlying `upsert_state_at` always writes
+//! both `is_read` and `is_archived` together.
+//!
+//! `set_read_at` accepts an explicit `read_at` timestamp so import pipelines
+//! (Goodreads/StoryGraph) can backfill historical read dates.
+
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 use utoipa::ToSchema;

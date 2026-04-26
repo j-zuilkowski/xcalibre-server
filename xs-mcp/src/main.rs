@@ -1,5 +1,5 @@
 use anyhow::Context;
-use autolibre_mcp::{
+use xs_mcp::{
     tools::CalibreMcpServer,
     transport::{sse::run_sse_server, stdio::run_stdio_server},
 };
@@ -90,7 +90,7 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<CliArgs> {
 
 fn print_help() {
     eprintln!(
-        "Usage: autolibre-mcp [--transport stdio|sse] [--port <u16>]\n\
+        "Usage: xs-mcp [--transport stdio|sse] [--port <u16>]\n\
          Defaults: --transport stdio, --port 8084"
     );
 }

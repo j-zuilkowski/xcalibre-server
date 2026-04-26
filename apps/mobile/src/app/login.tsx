@@ -1,3 +1,28 @@
+/**
+ * Login screen — handles local credential authentication and TOTP challenges.
+ *
+ * Route: `/login` (the unauthenticated root; protected routes redirect here when
+ * no access token is found in Expo SecureStore).
+ *
+ * Authentication flow:
+ * 1. User enters server URL, username, and password → `POST /api/v1/auth/login`.
+ * 2. If the response is a full {@link AuthSession}, tokens are saved to Expo SecureStore
+ *    via `saveTokens()` and the app navigates to `/(tabs)/library`.
+ * 3. If the response is a {@link LoginTotpRequiredResponse}, the screen transitions
+ *    to the TOTP step where the user enters their 6-digit code (or a backup code).
+ * 4. TOTP is verified via `POST /api/v1/auth/totp/verify` or `/totp/verify-backup`.
+ *
+ * SecureStore keys written by `saveTokens()`:
+ * - `"access_token"` — short-lived JWT
+ * - `"refresh_token"` — long-lived rotation token
+ *
+ * The server URL is also persisted to SecureStore via `setApiBaseUrl()` and read
+ * on mount via `getApiBaseUrl()` so that the field is pre-filled on subsequent
+ * launches.
+ *
+ * Note: OAuth provider buttons (Google/GitHub) are not implemented in the mobile
+ * app — OAuth flows require a web browser redirect and are handled in the web app.
+ */
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -9,7 +34,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
-import type { ApiError } from "@autolibre/shared";
+import type { ApiError } from "@xs/shared";
 import { useApi, getApiBaseUrl, setApiBaseUrl } from "../lib/api";
 import { saveTokens } from "../lib/auth";
 
@@ -22,6 +47,16 @@ function toErrorMessage(error: unknown, t: (key: string) => string): string {
   return t("auth.unable_to_sign_in");
 }
 
+/**
+ * Login screen (Expo Router default export for `/login`).
+ *
+ * State machine:
+ * - `step === "credentials"` — username/password + server URL form
+ * - `step === "totp"` — 6-digit TOTP code input (or backup code toggle)
+ *
+ * The TOTP input is auto-focused when the step transitions to "totp" via a
+ * `useEffect` + `totpInputRef`.
+ */
 export default function LoginScreen() {
   const client = useApi();
   const router = useRouter();

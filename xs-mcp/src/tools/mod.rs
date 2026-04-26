@@ -159,7 +159,7 @@ impl CalibreMcpServer {
     pub fn new(db: SqlitePool, config: AppConfig) -> anyhow::Result<Self> {
         let api_client = reqwest::Client::builder().build()?;
         let api_base_url = config.app.base_url.trim_end_matches('/').to_string();
-        let api_token = std::env::var("AUTOLIBRE_API_TOKEN")
+        let api_token = std::env::var("XCS_API_TOKEN")
             .or_else(|_| std::env::var("APP_API_TOKEN"))
             .ok()
             .map(|value| value.trim().to_string())
@@ -324,7 +324,7 @@ impl CalibreMcpServer {
     pub async fn list_collections(&self) -> Result<CallToolResult, ErrorData> {
         let Some(token) = self.api_token.as_deref() else {
             return Ok(CallToolResult::error(vec![Content::text(
-                "collections_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
+                "collections_unavailable: configure XCS_API_TOKEN or APP_API_TOKEN.",
             )]));
         };
 
@@ -364,15 +364,11 @@ impl CalibreMcpServer {
 
         let Some(token) = self.api_token.as_deref() else {
             return Ok(CallToolResult::error(vec![Content::text(
-                "collections_unavailable: configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN.",
+                "collections_unavailable: configure XCS_API_TOKEN or APP_API_TOKEN.",
             )]));
         };
 
-        let url = format!(
-            "{}/api/v1/collections/{}",
-            self.api_base_url,
-            collection_id
-        );
+        let url = format!("{}/api/v1/collections/{}", self.api_base_url, collection_id);
         let response = self
             .api_client
             .get(url)
@@ -385,8 +381,8 @@ impl CalibreMcpServer {
 
         let collection: collection_queries::CollectionDetail =
             response.json().await.map_err(internal_error)?;
-        let value = serde_json::to_value(GetCollectionResponse { collection })
-            .map_err(internal_error)?;
+        let value =
+            serde_json::to_value(GetCollectionResponse { collection }).map_err(internal_error)?;
         Ok(CallToolResult::structured(value))
     }
 
@@ -426,15 +422,16 @@ impl CalibreMcpServer {
         &self,
         Parameters(params): Parameters<SynthesizeRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let chunks = self.retrieve_chunks(&SearchChunksRequest {
-            query: params.query.clone(),
-            book_ids: params.book_ids.clone(),
-            collection_id: params.collection_id.clone(),
-            chunk_type: params.chunk_type.clone(),
-            limit: params.limit,
-            rerank: params.rerank,
-        })
-        .await?;
+        let chunks = self
+            .retrieve_chunks(&SearchChunksRequest {
+                query: params.query.clone(),
+                book_ids: params.book_ids.clone(),
+                collection_id: params.collection_id.clone(),
+                chunk_type: params.chunk_type.clone(),
+                limit: params.limit,
+                rerank: params.rerank,
+            })
+            .await?;
 
         let synthesis_chunks = chunks
             .chunks
@@ -542,7 +539,9 @@ impl CalibreMcpServer {
         let Some(token) = self.api_token.as_deref() else {
             return Err(ErrorData::internal_error(
                 "search_chunks_unavailable",
-                Some(serde_json::json!({ "details": "configure AUTOLIBRE_API_TOKEN or APP_API_TOKEN" })),
+                Some(
+                    serde_json::json!({ "details": "configure XCS_API_TOKEN or APP_API_TOKEN" }),
+                ),
             ));
         };
 
@@ -582,8 +581,7 @@ impl CalibreMcpServer {
         {
             format!(
                 "{}/api/v1/collections/{}/search/chunks",
-                self.api_base_url,
-                collection_id
+                self.api_base_url, collection_id
             )
         } else {
             format!("{}/api/v1/search/chunks", self.api_base_url)

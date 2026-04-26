@@ -1,4 +1,4 @@
-# Deploying autolibre
+# Deploying xcalibre-server
 
 ## Prerequisites
 - Docker 24+ and Docker Compose v2
@@ -34,8 +34,8 @@ This is the standard self-hosted deployment. One container, SQLite DB, local fil
 1. Clone the repository and enter it:
 
 ```bash
-git clone https://github.com/<your-org>/autolibre.git
-cd autolibre
+git clone https://github.com/<your-org>/xcalibre-server.git
+cd xcalibre-server
 ```
 
 2. Copy the example config:
@@ -89,7 +89,7 @@ library.example.com {
 
     @covers path /covers/*
     handle @covers {
-        root * /srv/autolibre/storage
+        root * /srv/xcalibre-server/storage
         file_server
         header Cache-Control "public, max-age=86400"
     }
@@ -108,7 +108,7 @@ caddy:
   ports: ["80:80", "443:443"]
   volumes:
     - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    - library_data:/srv/autolibre/storage:ro
+    - library_data:/srv/xcalibre-server/storage:ro
     - caddy_data:/data
 ```
 
@@ -140,7 +140,7 @@ server {
     gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
 
     location /covers/ {
-        alias /srv/autolibre/storage/covers/;
+        alias /srv/xcalibre-server/storage/covers/;
         try_files $uri =404;
         expires 1d;
         add_header Cache-Control "public, max-age=86400";
@@ -157,7 +157,7 @@ server {
 
 ### Enabling Meilisearch (optional)
 
-autolibre works without Meilisearch and falls back to SQLite FTS5.
+xcalibre-server works without Meilisearch and falls back to SQLite FTS5.
 
 1. Uncomment (or keep enabled) the `meilisearch` service in `docker/docker-compose.yml`.
 2. Set Meilisearch in `config.toml`:
@@ -192,12 +192,12 @@ Use this exact `config.toml` structure:
 backend = "s3"
 
 [storage.s3]
-bucket = "my-autolibre-library"
+bucket = "my-xcalibre-server-library"
 region = "us-east-1"
 endpoint_url = ""
 access_key = "YOUR_ACCESS_KEY"
 secret_key = "YOUR_SECRET_KEY"
-key_prefix = "autolibre/"
+key_prefix = "xcalibre-server/"
 ```
 
 `endpoint_url` examples:
@@ -226,8 +226,8 @@ services:
     image: mariadb:11
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: autolibre
-      MARIADB_USER: autolibre
+      MARIADB_DATABASE: xcalibre-server
+      MARIADB_USER: xcalibre-server
       MARIADB_PASSWORD: change-this
       MARIADB_ROOT_PASSWORD: change-root-password
     command: ["--max-connections=200"]
@@ -236,7 +236,7 @@ services:
 
   app:
     environment:
-      APP_DATABASE_URL: mysql://autolibre:change-this@mariadb:3306/autolibre
+      APP_DATABASE_URL: mysql://xcalibre-server:change-this@mariadb:3306/xcalibre-server
     depends_on:
       - mariadb
 
@@ -247,15 +247,15 @@ volumes:
 Database initialization SQL:
 
 ```sql
-CREATE DATABASE autolibre;
-GRANT ALL ON autolibre.* TO 'autolibre'@'%';
+CREATE DATABASE xcalibre-server;
+GRANT ALL ON xcalibre-server.* TO 'xcalibre-server'@'%';
 ```
 
 Config change:
 
 ```toml
 [database]
-url = "mysql://autolibre:password@mariadb:3306/autolibre"
+url = "mysql://xcalibre-server:password@mariadb:3306/xcalibre-server"
 ```
 
 Recommended MariaDB server setting: `max_connections=200` (increase if you run multiple replicas and heavy background jobs).
@@ -312,19 +312,19 @@ sqlite3 library.db ".backup backup-$(date +%Y%m%d-%H%M%S).db"
 Automate with cron (daily at 03:15):
 
 ```cron
-15 3 * * * cd /opt/autolibre && sqlite3 library.db ".backup backup-$(date +\%Y\%m\%d-\%H\%M\%S).db"
+15 3 * * * cd /opt/xcalibre-server && sqlite3 library.db ".backup backup-$(date +\%Y\%m\%d-\%H\%M\%S).db"
 ```
 
 Also back up book files (`storage_path`):
 
 ```bash
-rsync -a --delete /opt/autolibre/storage/ /opt/autolibre/backups/files/
+rsync -a --delete /opt/xcalibre-server/storage/ /opt/xcalibre-server/backups/files/
 ```
 
 ### MariaDB backup
 
 ```bash
-mysqldump --single-transaction -h mariadb -u autolibre -p autolibre | gzip > autolibre-$(date +%Y%m%d).sql.gz
+mysqldump --single-transaction -h mariadb -u xcalibre-server -p xcalibre-server | gzip > xcalibre-server-$(date +%Y%m%d).sql.gz
 ```
 
 ### Restore procedure
@@ -338,7 +338,7 @@ SQLite restore:
 
 MariaDB restore:
 1. Stop server: `docker compose -f docker/docker-compose.production.yml down`
-2. Restore DB: `gunzip -c /path/to/autolibre-YYYYMMDD.sql.gz | mysql -h mariadb -u autolibre -p autolibre`
+2. Restore DB: `gunzip -c /path/to/xcalibre-server-YYYYMMDD.sql.gz | mysql -h mariadb -u xcalibre-server -p xcalibre-server`
 3. Restore files: `rsync -a /path/to/files/ /path/to/storage/`
 4. Start server: `docker compose -f docker/docker-compose.production.yml up -d`
 5. Verify login, search, and one book download.
@@ -349,7 +349,7 @@ If using S3, book files are durable by design. Enable bucket versioning:
 
 ```bash
 aws s3api put-bucket-versioning \
-  --bucket my-autolibre-library \
+  --bucket my-xcalibre-server-library \
   --versioning-configuration Status=Enabled
 ```
 

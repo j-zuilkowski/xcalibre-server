@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/${GITHUB_REPOSITORY:-calibre-web-rs}:latest
+    image: ghcr.io/${GITHUB_REPOSITORY:-xcalibre-server}:latest
     restart: unless-stopped
     ports: ["127.0.0.1:8083:8083"]
     volumes:

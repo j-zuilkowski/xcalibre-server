@@ -1,8 +1,23 @@
+//! LLM-powered per-book derivation: summary, related titles, discussion questions.
+//!
+//! Given a book's title, authors, and description, asks the LLM to generate:
+//! - A one-paragraph summary
+//! - 3–5 related title suggestions
+//! - 3–5 discussion questions
+//!
+//! # Fallback behaviour
+//! On LLM error or unparseable JSON, returns a [`DeriveResult`] with all fields empty.
+//! Results are purely additive metadata and must never affect core library operations.
+
 use crate::llm::chat::ChatClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+/// Derived metadata produced from a single book's title, authors, and description.
+///
+/// Fields are empty strings / empty vecs when the LLM call fails or the feature is
+/// disabled. `model_id` records which model produced the result.
 #[derive(Clone, Debug, Serialize)]
 pub struct DeriveResult {
     pub summary: String,
@@ -18,6 +33,9 @@ struct RawDeriveResult {
     discussion_questions: Vec<String>,
 }
 
+/// Ask the LLM to derive a summary, related titles, and discussion questions for a book.
+///
+/// Returns a [`DeriveResult`] with empty fields on any error.
 pub async fn derive_book(
     client: &ChatClient,
     title: &str,

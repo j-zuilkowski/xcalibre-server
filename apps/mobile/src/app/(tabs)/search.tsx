@@ -1,3 +1,19 @@
+/**
+ * Search tab — full-text and AI semantic search screen.
+ *
+ * Provides two search modes toggled via a tab strip:
+ * - "Library" (fts): Keyword full-text search via `GET /api/v1/search`.
+ *   Supports filtering by language, format, sort field, and order.
+ *   Results are paginated with explicit Prev/Next controls.
+ * - "AI Semantic": Vector similarity search via `GET /api/v1/search/semantic`.
+ *   Disabled and shows an alert if `ENABLE_LLM_FEATURES=false` on the server.
+ *   Results are not paginated (always page 1).
+ *
+ * LLM availability is probed once on mount via `GET /api/v1/llm/health`.
+ * The query is debounced (300 ms) before being submitted.
+ *
+ * Note: Search is purely online. No offline fallback is implemented.
+ */
 import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -15,7 +31,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
-import type { BookSummary, SearchResultItem } from "@autolibre/shared";
+import type { BookSummary, SearchResultItem } from "@xs/shared";
 import { useApi } from "../../lib/api";
 import { useDebounce } from "../../hooks/useDebounce";
 import { CoverPlaceholder } from "../../components/CoverPlaceholder";
@@ -41,6 +57,7 @@ const DEFAULT_FILTERS: SearchFilters = {
   order: "asc",
 };
 
+/** Returns a comma-joined author display string, or "Unknown author" when empty. */
 function authorLabel(book: BookSummary): string {
   if (book.authors.length === 0) {
     return "Unknown author";
@@ -49,6 +66,10 @@ function authorLabel(book: BookSummary): string {
   return book.authors.map((author) => author.name).join(", ");
 }
 
+/**
+ * Converts a 0.0–1.0 semantic similarity score to a display string like "score: 87%".
+ * Returns null for non-semantic (FTS) results where score is absent.
+ */
 function scoreLabel(score?: number): string | null {
   if (typeof score !== "number") {
     return null;
@@ -58,6 +79,12 @@ function scoreLabel(score?: number): string | null {
   return `score: ${percentage}%`;
 }
 
+/**
+ * Individual search result card in the two-column grid.
+ * Shows cover image (with placeholder fallback), title, author, and optional
+ * semantic relevance score badge.
+ * Navigates to `/book/[id]` on press.
+ */
 function SearchCard({
   book,
   score,
@@ -138,6 +165,11 @@ function SearchEmpty() {
   );
 }
 
+/**
+ * Bottom sheet modal containing search filter controls.
+ * Changes are applied to a local `draft` copy; only committed to the parent
+ * state on "Apply" to avoid triggering a re-query on every keystroke.
+ */
 function SearchFiltersSheet({
   open,
   draft,
@@ -270,6 +302,21 @@ function SearchFiltersSheet({
   );
 }
 
+/**
+ * Search tab screen (Expo Router default export for `/(tabs)/search`).
+ *
+ * State management:
+ * - `query` / `debouncedQuery` — raw and debounced search input
+ * - `activeTab` — "fts" or "semantic"; switching resets pagination
+ * - `page` — current FTS page number; always 1 for semantic results
+ * - `searchRefreshToken` — incremented to force a re-query after filter apply/reset
+ * - `semanticEnabled` — read from `GET /api/v1/llm/health` on mount
+ * - `filters` / `draftFilters` — committed and in-progress filter state
+ *
+ * API calls:
+ * - `GET /api/v1/llm/health` — once on mount to gate semantic search tab
+ * - `GET /api/v1/search` or `GET /api/v1/search/semantic` — on every debounced query change
+ */
 export default function SearchTabScreen() {
   const client = useApi();
   const [query, setQuery] = useState("");
@@ -285,6 +332,8 @@ export default function SearchTabScreen() {
   const trimmedQuery = debouncedQuery.trim();
   const hasQuery = trimmedQuery.length > 0;
   const isSemantic = activeTab === "semantic";
+  // Semantic search always uses page 1 — vector similarity results are not ordered
+  // consistently across pages, so server-side pagination is not meaningful.
   const searchPage = isSemantic ? 1 : page;
 
   useEffect(() => {

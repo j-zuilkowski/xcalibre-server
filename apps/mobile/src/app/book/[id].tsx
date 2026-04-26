@@ -1,3 +1,28 @@
+/**
+ * Book detail screen — shows cover, metadata, format download buttons, and AI insights.
+ *
+ * Route: `/book/[id]` (Expo Router dynamic segment)
+ *
+ * Sections:
+ * 1. Hero — cover image + title/author/series badge
+ * 2. Metadata — language, star rating (0–10 / 2 = 0–5 stars), document type, tags
+ * 3. Formats — per-format download button (or "Downloaded" badge + Delete when cached);
+ *    "Read" button navigates to `/reader/[id]` when at least one format is downloaded
+ * 4. AI panel — shown only when `GET /api/v1/llm/health` returns `enabled: true`;
+ *    provides Classify / Validate / Derive tabs each backed by a useMutation
+ *
+ * Download behavior:
+ * - `downloadBook()` writes the file to Expo FileSystem and records the path in
+ *   `local_downloads` SQLite table.
+ * - On mount the screen checks `getLocalPath()` for each format to determine which
+ *   formats are already downloaded.
+ * - Reading progress is read from `local_sync_state` (key `progress_<bookId>`) to
+ *   display "Progress: N%" without a network call.
+ *
+ * Navigation to reader:
+ * - Prefers EPUB over PDF when both are downloaded.
+ * - Passes `id` and `format` params to `/reader/[id]`.
+ */
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,7 +36,7 @@ import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { Book } from "@autolibre/shared";
+import type { Book } from "@xs/shared";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
 import {
@@ -41,6 +66,10 @@ function formatBytes(sizeBytes: number): string {
   return `${size.toFixed(decimals)} ${units[index]}`;
 }
 
+/**
+ * Converts a calibre 0–10 rating to a 5-star Unicode string.
+ * e.g. 8 → "████☆" (4 filled, 1 empty).
+ */
 function starRating(ratingOutOfTen: number | null): string {
   const clamped = Math.max(0, Math.min(10, ratingOutOfTen ?? 0));
   const outOfFive = Math.round(clamped) / 2;
@@ -48,6 +77,10 @@ function starRating(ratingOutOfTen: number | null): string {
   return `${"★".repeat(filled)}${"☆".repeat(5 - filled)}`;
 }
 
+/**
+ * Clamps a progress value to [0, 1].
+ * Values > 1 are assumed to be a 0–100 percentage and divided by 100.
+ */
 function normalizeProgress(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -60,6 +93,10 @@ function normalizeProgress(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+/**
+ * Parses the JSON blob stored in `local_sync_state` under key `progress_<bookId>`.
+ * Returns the normalized percentage (0.0–1.0) or null when absent or malformed.
+ */
 function parseStoredProgress(value: string | null): number | null {
   if (!value) {
     return null;
@@ -76,6 +113,20 @@ function parseStoredProgress(value: string | null): number | null {
   }
 }
 
+/**
+ * Book detail screen (Expo Router default export for `/book/[id]`).
+ *
+ * API calls on mount:
+ * - `GET /api/v1/books/:id` — full book record
+ * - `GET /api/v1/llm/health` — cached 60 s; controls AI panel visibility
+ * - Local SQLite: `getLocalPath()` per format to find already-downloaded files
+ * - Local SQLite: reads `local_sync_state` key `progress_<bookId>` for cached progress
+ *
+ * AI tab mutations (on demand):
+ * - `GET /api/v1/books/:id/classify`
+ * - `GET /api/v1/books/:id/validate`
+ * - `GET /api/v1/books/:id/derive`
+ */
 export default function BookDetailScreen() {
   const router = useRouter();
   const client = useApi();
@@ -236,6 +287,8 @@ export default function BookDetailScreen() {
     return (withDocumentType?.document_type ?? t("common.unknown")).toUpperCase();
   }, [book, t]);
 
+  // Prefer EPUB for in-app reading (foliojs); fall back to PDF (expo-pdf) when EPUB is absent.
+  // Other formats (MOBI, AZW3) are downloadable but not yet natively readable in-app.
   const preferredReadFormat = downloadedFormats.EPUB ? "EPUB" : downloadedFormats.PDF ? "PDF" : null;
   const hasReadableDownload = Boolean(preferredReadFormat);
   const readProgressPercent =

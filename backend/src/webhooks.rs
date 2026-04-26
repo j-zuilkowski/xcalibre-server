@@ -1,3 +1,41 @@
+//! Webhook delivery engine.
+//!
+//! Delivers signed HTTP POST callbacks to subscriber URLs when library events occur.
+//!
+//! # Delivery flow
+//! 1. [`enqueue_event`] is called by event-generating code (book import, LLM job
+//!    completion, etc.).  It serializes the payload, checks the size cap (1 MB),
+//!    and inserts a `webhook_delivery` row for each active subscriber.
+//! 2. The scheduler calls [`deliver_pending`] every 30 seconds.  It fetches up to
+//!    50 pending deliveries (with `next_attempt_at <= now`), sends each via HTTP POST,
+//!    and marks the delivery as delivered, failed, or scheduled for retry.
+//!
+//! # HMAC signing
+//! Each delivery is signed with `HMAC-SHA256` over the raw JSON payload.  The
+//! signature is sent as `X-Xcalibre-server-Signature: sha256=<hex>`.  The webhook secret
+//! is stored encrypted (AES-256-GCM, key derived from `jwt_secret` via HKDF in
+//! `auth::totp`); it is decrypted at delivery time.
+//!
+//! # Retry schedule with exponential backoff
+//! | Attempt | Retry delay |
+//! |---------|-------------|
+//! | 1       | 30 seconds  |
+//! | 2       | 5 minutes   |
+//! | 3+      | Permanent failure (no more retries) |
+//!
+//! # SSRF protection
+//! [`validate_webhook_target`] blocks private/loopback addresses.  Private endpoints
+//! can be allowed per-webhook via a flag (for self-hosted integrations), but the
+//! default is deny.
+//!
+//! # Payload size cap
+//! Payloads larger than 1 MB are rejected at enqueue time.  The same check is
+//! repeated at delivery time as a safety net.
+//!
+//! # `user.registered` events
+//! These are delivered only to admin-owned webhooks (`admin_only = true`) to prevent
+//! leaking PII to non-admin subscribers.
+
 use crate::{
     auth::totp as totp_auth, config::is_private_or_loopback,
     db::queries::webhooks as webhook_queries, AppError,
@@ -18,10 +56,14 @@ use utoipa::ToSchema;
 
 const WEBHOOK_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const WEBHOOK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
-const WEBHOOK_TEST_MESSAGE: &str = "Webhook test from autolibre";
+const WEBHOOK_TEST_MESSAGE: &str = "Webhook test from xcalibre-server";
 const MAX_WEBHOOK_PAYLOAD_BYTES: usize = 1_000_000;
 static WEBHOOK_JWT_SECRET: OnceLock<Mutex<String>> = OnceLock::new();
 
+/// The result of a single delivery attempt.
+///
+/// `should_retry = true` means a transient failure; the caller will schedule
+/// another attempt according to the backoff table.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct DeliveryAttemptResult {
     pub delivered: bool,
@@ -30,6 +72,7 @@ pub struct DeliveryAttemptResult {
     pub error: Option<String>,
 }
 
+/// Parameters for a single webhook delivery HTTP request.
 pub struct DeliveryRequest<'a> {
     http_client: &'a Client,
     jwt_secret: &'a str,
@@ -37,6 +80,10 @@ pub struct DeliveryRequest<'a> {
     require_https: bool,
 }
 
+/// Errors that can occur when validating a webhook target URL.
+///
+/// Mapped to [`AppError`] via the `From` impl: `PrivateOrLoopbackAddress` becomes
+/// `AppError::SsrfBlocked`; all others become `AppError::Unprocessable`.
 #[derive(Debug, Error)]
 pub enum WebhookTargetError {
     #[error("invalid URL")]
@@ -74,6 +121,11 @@ impl<'a> DeliveryRequest<'a> {
     }
 }
 
+/// Enqueue a webhook event for all enabled subscribers of this event type.
+///
+/// The payload is serialized to JSON and its size is checked against the 1 MB cap.
+/// Oversized payloads are dropped with a warning — no error is returned to the caller.
+/// Returns the number of webhook delivery rows inserted (one per subscriber).
 pub async fn enqueue_event(
     db: &sqlx::SqlitePool,
     event: &str,
@@ -103,6 +155,14 @@ pub async fn enqueue_event(
     Ok(webhooks.len())
 }
 
+/// Fetch and deliver up to 50 pending webhook deliveries whose retry time has passed.
+///
+/// For each delivery, calls [`deliver_single_delivery`] and updates the DB row:
+/// - Success (2xx) → `delivered`
+/// - Transient failure + attempts < 3 → retry with backoff
+/// - Permanent failure or attempts ≥ 3 → `failed`
+///
+/// Returns the count of deliveries processed (attempted, regardless of outcome).
 pub async fn deliver_pending(db: &sqlx::SqlitePool, http_client: &Client) -> anyhow::Result<usize> {
     let now = Utc::now().to_rfc3339();
     let pending = webhook_queries::list_pending_deliveries(db, &now, 50).await?;
@@ -236,8 +296,8 @@ pub async fn deliver_single_delivery(
         .post(url)
         .timeout(request.timeout)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header("X-Autolibre-Signature", format!("sha256={signature}"))
-        .header("X-Autolibre-Event", event)
+        .header("X-Xcalibre-server-Signature", format!("sha256={signature}"))
+        .header("X-Xcalibre-server-Event", event)
         .body(payload_json.to_string())
         .send()
         .await;
@@ -277,6 +337,10 @@ pub async fn deliver_single_delivery(
     }
 }
 
+/// Validate a webhook target URL for scheme, host presence, and SSRF safety.
+///
+/// Blocks private/loopback IP addresses and `localhost` by default.
+/// Set `allow_private_endpoints = true` only for explicitly trusted self-hosted targets.
 pub async fn validate_webhook_target(
     url: &str,
     allow_private_endpoints: bool,
@@ -305,6 +369,11 @@ pub async fn validate_webhook_target(
     Ok(())
 }
 
+/// Compute the next retry timestamp using exponential backoff.
+///
+/// Attempt 1 → 30s, attempt 2 → 5 min, attempt 3+ → 30 min.
+/// After 3 total attempts the delivery is marked permanently failed; this function
+/// is therefore only called when `attempts < 3`.
 fn retry_deadline_for_attempt(attempts_after_increment: i64) -> String {
     let delay = match attempts_after_increment {
         1 => Duration::from_secs(30),
@@ -314,6 +383,10 @@ fn retry_deadline_for_attempt(attempts_after_increment: i64) -> String {
     (Utc::now() + chrono::Duration::from_std(delay).expect("valid delay")).to_rfc3339()
 }
 
+/// Initialize the module-level JWT secret used for HMAC-signing webhook payloads.
+///
+/// Called once at app startup with the value from `AppConfig.auth.jwt_secret`.
+/// Subsequent calls update the secret (for key rotation), protected by a `Mutex`.
 pub fn set_webhook_jwt_secret(secret: String) {
     let lock = WEBHOOK_JWT_SECRET.get_or_init(|| Mutex::new(String::new()));
     if let Ok(mut current) = lock.lock() {

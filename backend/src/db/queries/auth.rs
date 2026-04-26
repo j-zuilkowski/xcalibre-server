@@ -1,3 +1,14 @@
+//! Authentication and user-management queries.
+//! Touches: `users`, `roles`, `refresh_tokens`, `audit_log`.
+//!
+//! `UserAuthRecord` carries the full auth state (password hash, lockout
+//! counters, TOTP secret) and is only used internally; API handlers receive
+//! the stripped `User` struct from `models.rs`.
+//!
+//! Refresh tokens are stored as SHA-256 hashes (base64url-encoded); the
+//! plaintext value is never persisted.  `hash_refresh_token` is shared with
+//! the TOTP-pending session lookup in `middleware/auth.rs`.
+
 use crate::db::models::{RoleRef, User};
 use anyhow::Context;
 use base64::Engine;
@@ -27,6 +38,8 @@ pub struct RefreshTokenRecord {
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
+/// Returns the total number of users; used at startup to determine whether
+/// first-run admin creation is needed.
 pub async fn count_users(db: &SqlitePool) -> anyhow::Result<i64> {
     let row = sqlx::query("SELECT COUNT(1) AS count FROM users")
         .fetch_one(db)
@@ -43,6 +56,8 @@ pub async fn create_first_admin_user(
     create_user(db, username, email, "admin", password_hash).await
 }
 
+/// Deletes `user_id` and their associated `api_tokens` in a transaction.
+/// Returns `true` if the row was found and deleted.
 pub async fn delete_user(db: &SqlitePool, user_id: &str) -> anyhow::Result<bool> {
     let mut tx = db.begin().await?;
 
@@ -119,6 +134,9 @@ pub async fn find_user_by_username(
     Ok(auth.map(|record| record.user))
 }
 
+/// Loads the full auth record (including password hash and lockout state) by
+/// primary key.  Use the plain `find_user_by_id` wrapper when only the `User`
+/// struct is needed.
 pub async fn find_user_auth_by_id(
     db: &SqlitePool,
     user_id: &str,
@@ -221,6 +239,10 @@ pub async fn find_user_auth_by_email(
     row_to_user_auth(row).context("parse user auth by email")
 }
 
+/// Increments `login_attempts` and sets `locked_until` when the new attempt
+/// count reaches `max_login_attempts`.  The lockout timestamp is extended by
+/// `lockout_duration_mins` from the current UTC time.  Does not reset the
+/// counter on success — call `clear_login_lockout` for that.
 pub async fn mark_failed_login(
     db: &SqlitePool,
     user: &UserAuthRecord,
@@ -253,6 +275,8 @@ pub async fn mark_failed_login(
     Ok(())
 }
 
+/// Resets `login_attempts` to 0 and clears `locked_until` after a successful
+/// authentication.
 pub async fn clear_login_lockout(db: &SqlitePool, user_id: &str) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(
@@ -269,6 +293,8 @@ pub async fn clear_login_lockout(db: &SqlitePool, user_id: &str) -> anyhow::Resu
     Ok(())
 }
 
+/// Stores the new Argon2 `password_hash` and clears `force_pw_reset`.  Called
+/// after a successful password change or admin-initiated reset.
 pub async fn update_password_hash(
     db: &SqlitePool,
     user_id: &str,
@@ -312,11 +338,16 @@ pub async fn set_user_default_library(
     find_user_by_id(db, user_id).await
 }
 
+/// Generates a cryptographically random refresh token string (two UUIDs
+/// joined by `.`, then base64url-encoded).
 pub fn generate_refresh_token() -> String {
     let token = format!("{}.{}", Uuid::new_v4(), Uuid::new_v4());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(token)
 }
 
+/// Returns the SHA-256 hash of `token` encoded as base64url (no padding).
+/// This hash is what is stored in the database; the plaintext is kept only
+/// in the HTTP response cookie.
 pub fn hash_refresh_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
@@ -357,6 +388,9 @@ pub async fn insert_refresh_token(
     })
 }
 
+/// Looks up a refresh token record by the SHA-256 hash of the plaintext
+/// `refresh_token` string.  The caller must still verify `expires_at` and
+/// `revoked_at` before trusting the record.
 pub async fn find_refresh_token(
     db: &SqlitePool,
     refresh_token: &str,
@@ -376,6 +410,8 @@ pub async fn find_refresh_token(
     row_to_refresh_token(row).context("parse refresh token")
 }
 
+/// Sets `revoked_at` to now on the token row, but only if not already revoked
+/// (`COALESCE(revoked_at, ?)` is a no-op when the column already has a value).
 pub async fn revoke_refresh_token_by_id(db: &SqlitePool, token_id: &str) -> anyhow::Result<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(

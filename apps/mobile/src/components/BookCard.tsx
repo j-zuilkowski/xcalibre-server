@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
-import type { BookSummary } from "@autolibre/shared";
+import type { BookSummary } from "@xs/shared";
 import { useApi } from "../lib/api";
 
 type BookCardProps = {

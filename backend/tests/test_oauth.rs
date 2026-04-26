@@ -37,7 +37,7 @@ fn app_with_connect_info(state: AppState, remote_ip: IpAddr) -> Router {
 async fn oauth_context(remote_ip: IpAddr, mock_server: &MockServer) -> TestContext {
     let storage = TempDir::new().expect("tempdir");
     let db = test_db().await;
-    std::env::set_var("AUTOLIBRE_DISABLE_METRICS", "1");
+    std::env::set_var("XCS_DISABLE_METRICS", "1");
 
     let mut config = AppConfig::default();
     config.app.storage_path = storage.path().to_string_lossy().to_string();

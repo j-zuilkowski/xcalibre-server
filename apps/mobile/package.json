@@ -1,5 +1,5 @@
 {
-  "name": "@autolibre/mobile",
+  "name": "@xs/mobile",
   "private": true,
   "version": "0.1.0",
   "main": "expo-router/entry",
@@ -10,7 +10,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@autolibre/shared": "workspace:*",
+    "@xs/shared": "workspace:*",
     "@gorhom/bottom-sheet": "^5.0.0",
     "@react-native-community/netinfo": "^11.4.1",
     "@expo/vector-icons": "^14.0.2",

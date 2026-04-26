@@ -1,10 +1,10 @@
-# calibre-web-rs — Skills Reference
+# xcalibre-server — Skills Reference
 
 Skills are Claude Code slash commands that invoke specialized agents.
 This file documents which skills to use at each stage of development and why.
 
 For skills to be automatically available in a session, the workflow below is
-summarized in `CLAUDE.md` of the `calibre-web-rs` repo. Refer to this file
+summarized in `CLAUDE.md` of the `xcalibre-server` repo. Refer to this file
 for full detail on each skill's purpose and inputs.
 
 ---
@@ -39,7 +39,7 @@ Paste the failing test output + stack trace. Faster diagnosis than re-running Co
 ```
 /init
 ```
-Generate or update `CLAUDE.md` for `calibre-web-rs` to reflect the actual implemented state.
+Generate or update `CLAUDE.md` for `xcalibre-server` to reflect the actual implemented state.
 
 ```
 /anthropic-skills:consolidate-memory
@@ -130,7 +130,7 @@ Consolidate all session memories into clean, non-redundant entries.
 
 **What it does**: Reads the codebase and generates or updates `CLAUDE.md` with accurate project instructions.
 
-**When**: After Phase 1 is complete and the `calibre-web-rs` repo has real implemented code. The scaffolded `CLAUDE.md` will be a template — `/init` makes it reflect reality.
+**When**: After Phase 1 is complete and the `xcalibre-server` repo has real implemented code. The scaffolded `CLAUDE.md` will be a template — `/init` makes it reflect reality.
 
 ---
 

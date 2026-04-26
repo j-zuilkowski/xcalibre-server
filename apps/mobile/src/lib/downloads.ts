@@ -1,15 +1,55 @@
+/**
+ * Download queue and local file management for the xcalibre-server mobile app.
+ *
+ * Architecture:
+ * - A module-level singleton (`downloadEntries` Map, `downloadHandles` Map,
+ *   `cancelledDownloads` Set) holds all in-flight and failed downloads.
+ * - React components subscribe via `useDownloadQueue()` which uses
+ *   `useSyncExternalStore` against the module-level `listeners` set.
+ * - Completed downloads are persisted in the `local_downloads` SQLite table
+ *   (schema managed by `runMigrations`).
+ *
+ * Download state machine per (bookId, format) key:
+ *   `queued` → downloading → `complete` (entry removed from map)
+ *                          → `failed`   (entry remains in map for retry)
+ *                          → `cancelled` (entry removed; DownloadCancelledError thrown)
+ *
+ * File storage:
+ * - All book files are stored under `{FileSystem.documentDirectory}/books/`.
+ * - File names follow the pattern `{bookId}.{format.toLowerCase()}`,
+ *   e.g. `abc123.epub`.
+ * - The absolute local path is stored in `local_downloads.local_path` so
+ *   the reader can open the file without probing the filesystem.
+ *
+ * Authorization:
+ * - `downloadBook` reads the current access token from Expo SecureStore via
+ *   `getAccessToken()` and passes it as an `Authorization: Bearer` header to
+ *   `FileSystem.createDownloadResumable`.
+ *
+ * Format preference (for "Download all" flows):
+ * - Preferred format is persisted in Expo SecureStore under key
+ *   `"preferred_download_format"` (iOS Keychain / Android Keystore).
+ * - Fallback order when no preference is set: EPUB → MOBI → PDF → first available.
+ */
 import * as FileSystem from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import { Alert } from "react-native";
 import { useSyncExternalStore } from "react";
-import type { ApiClient as CalibreClient } from "@autolibre/shared";
+import type { ApiClient as CalibreClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { getAccessToken } from "./auth";
 import { runMigrations } from "./db";
 
+/** Sub-directory of `FileSystem.documentDirectory` where book files are stored. */
 const DOWNLOADS_DIR = "books";
+
+/** Minimum free space (200 MB) below which the user is warned before downloading. */
 const LOW_STORAGE_THRESHOLD_BYTES = 200 * 1024 * 1024;
+
+/** Expo SecureStore key that persists the user's preferred download format. */
 const PREFERRED_DOWNLOAD_FORMAT_KEY = "preferred_download_format";
+
+/** Fallback priority order when no explicit preference is stored. */
 const PREFERRED_FORMAT_ORDER = ["EPUB", "MOBI", "PDF"] as const;
 
 type DownloadRow = {
@@ -71,11 +111,20 @@ type DownloadHandle = {
   resumable: ReturnType<typeof FileSystem.createDownloadResumable>;
 };
 
-const downloadEntries = new Map<string, DownloadQueueItem>();
-const downloadHandles = new Map<string, DownloadHandle>();
-const cancelledDownloads = new Set<string>();
-const listeners = new Set<() => void>();
+// Module-level download queue — these Maps and Sets are shared across all
+// React component instances and survive re-renders. React components subscribe
+// via `useSyncExternalStore` (see `useDownloadQueue`).
+const downloadEntries = new Map<string, DownloadQueueItem>();   // key → queue item
+const downloadHandles = new Map<string, DownloadHandle>();       // key → resumable handle
+const cancelledDownloads = new Set<string>();                    // keys of cancelled downloads
+const listeners = new Set<() => void>();                        // `useSyncExternalStore` subscribers
 
+/**
+ * Thrown by `downloadBook` when a download is intentionally cancelled by the user
+ * (via `cancelDownload`) or when `FileSystem.downloadAsync` returns undefined
+ * (which indicates a cancellation at the OS level).
+ * Callers should catch this and NOT show an error message to the user.
+ */
 export class DownloadCancelledError extends Error {
   constructor(message = "Download cancelled.") {
     super(message);
@@ -256,10 +305,18 @@ export async function setPreferredDownloadFormatPreference(format: string | null
   await SecureStore.setItemAsync(PREFERRED_DOWNLOAD_FORMAT_KEY, normalizeFormat(format));
 }
 
+/**
+ * React hook that returns the current in-flight and failed download queue.
+ * Subscribes to the module-level queue via `useSyncExternalStore` so
+ * components re-render whenever any download state changes.
+ * The server snapshot (third argument) is the same as the client snapshot
+ * because downloads only happen on device.
+ */
 export function useDownloadQueue(): DownloadQueueItem[] {
   return useSyncExternalStore(subscribe, getQueueSnapshot, getQueueSnapshot);
 }
 
+/** Converts a byte count to a human-readable string, e.g. "3.3 MB" or "1.5 KB". */
 export function formatBytes(sizeBytes: number): string {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "0 B";
@@ -278,6 +335,15 @@ export function formatBytes(sizeBytes: number): string {
   return `${size.toFixed(decimals)} ${units[index]}`;
 }
 
+/**
+ * Selects the best format to download from a list of available formats.
+ *
+ * Selection priority:
+ * 1. `preferredFormat` if provided and present in the list.
+ * 2. First match in the fallback order: EPUB → MOBI → PDF.
+ * 3. The first element of the list when no preferred or fallback match is found.
+ * 4. Null when the list is empty.
+ */
 export function resolvePreferredDownloadFormat(
   formats: DownloadFormatCandidate[],
   preferredFormat?: string | null,
@@ -307,6 +373,11 @@ export function resolvePreferredDownloadFormat(
   return formats[0] ?? null;
 }
 
+/**
+ * Returns the total file count and total bytes used by all locally downloaded books.
+ * Reads from the `local_downloads` SQLite table.
+ * Used by the Profile tab to show the storage summary row.
+ */
 export async function getDownloadSummary(database: SQLiteDatabase): Promise<DownloadSummary> {
   await runMigrations(database);
 
@@ -326,6 +397,11 @@ export async function getDownloadSummary(database: SQLiteDatabase): Promise<Down
   };
 }
 
+/**
+ * Returns all locally downloaded book files, joined with `local_books` for display metadata.
+ * Results are ordered by `downloaded_at DESC` then by title.
+ * Used by the Downloads screen to populate the completed downloads list.
+ */
 export async function listDownloadedBooks(
   database: SQLiteDatabase,
 ): Promise<DownloadedBookRow[]> {
@@ -367,6 +443,11 @@ export async function listDownloadedBooks(
   }));
 }
 
+/**
+ * Returns the local file path for a downloaded book format, or null if not downloaded.
+ * Queries the `local_downloads` table (format is normalized to upper-case).
+ * Used by the book detail screen and shelf "Download all" to skip already-downloaded formats.
+ */
 export async function getLocalPath(
   database: SQLiteDatabase,
   bookId: string,
@@ -382,6 +463,26 @@ export async function getLocalPath(
   return row?.local_path ?? null;
 }
 
+/**
+ * Downloads a book format file and records it in local SQLite.
+ *
+ * Steps:
+ * 1. Reads the access token from Expo SecureStore (throws if not signed in).
+ * 2. Optionally warns the user if free disk space is below the threshold.
+ * 3. Creates `{documentDirectory}/books/` if it does not exist.
+ * 4. Adds a `"downloading"` entry to the module-level queue (triggers re-render).
+ * 5. Calls `FileSystem.createDownloadResumable` with the backend download URL
+ *    and an `Authorization: Bearer` header.
+ * 6. On success, `INSERT OR REPLACE`s the local path and size into `local_downloads`.
+ * 7. Removes the queue entry on completion.
+ *
+ * Throws {@link DownloadCancelledError} when cancelled (via `cancelDownload` or
+ * when `downloadAsync` returns undefined). Callers should NOT show an error.
+ * Throws a generic `Error` on network or filesystem failures.
+ *
+ * @param context.skipStorageWarning - When true, skips the low-storage alert.
+ *   Used by the batch "Download all" shelf flow to avoid one alert per book.
+ */
 export async function downloadBook(
   client: CalibreClient,
   database: SQLiteDatabase,
@@ -495,6 +596,13 @@ export async function downloadBook(
   }
 }
 
+/**
+ * Cancels an in-progress download.
+ * Marks the key in `cancelledDownloads` so `downloadBook` can detect the
+ * cancellation and throw `DownloadCancelledError`.
+ * Calls `cancelAsync()` on the `FileSystem.DownloadResumable` handle if available.
+ * Deletes the partial file and removes the queue entry.
+ */
 export async function cancelDownload(bookId: string, format: string): Promise<void> {
   const key = downloadKey(bookId, format);
   const handle = downloadHandles.get(key);
@@ -514,6 +622,10 @@ export async function cancelDownload(bookId: string, format: string): Promise<vo
   removeQueueItem(key);
 }
 
+/**
+ * Deletes a completed download: removes the local file and the `local_downloads` row.
+ * Safe to call even if the file no longer exists on disk (`idempotent: true`).
+ */
 export async function deleteDownload(
   database: SQLiteDatabase,
   bookId: string,
@@ -537,6 +649,11 @@ export async function deleteDownload(
   ]);
 }
 
+/**
+ * Returns the user's saved preferred download format from Expo SecureStore,
+ * or null if no preference has been set.
+ * Public wrapper around the private helper to avoid exposing the key constant.
+ */
 export async function getPreferredDownloadFormat(): Promise<string | null> {
   return await getPreferredDownloadFormatPreference();
 }

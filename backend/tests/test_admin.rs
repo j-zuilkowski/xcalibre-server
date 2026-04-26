@@ -80,5 +80,8 @@ async fn test_admin_authors_allows_admin_users() {
 
     assert_status!(response, 200);
     let body: serde_json::Value = response.json();
-    assert!(body["items"].is_array(), "expected a paginated response body");
+    assert!(
+        body["items"].is_array(),
+        "expected a paginated response body"
+    );
 }

@@ -1,3 +1,15 @@
+//! Tag lifecycle queries: rename, merge, delete, and lookup.
+//! Touches: `tags`, `book_tags`.
+//!
+//! `merge_tags` reassigns `book_tags` rows from `source_id` to `target_id`
+//! using a NOT EXISTS guard to prevent duplicate `(book_id, tag_id)` pairs.
+//! When both source and target already exist on a book, a second UPDATE
+//! preserves `confirmed = 1` if either side had it confirmed.  The source
+//! `tags` row is hard-deleted after its `book_tags` links are cleaned up.
+//!
+//! `rename_tag` checks for case-insensitive name conflicts before updating.
+//! `delete_tag` cascades by first removing `book_tags` entries.
+
 use crate::AppError;
 use anyhow::Context;
 use serde::Serialize;
@@ -134,6 +146,9 @@ pub async fn find_tag_record_by_id(
     }))
 }
 
+/// Renames `tag_id` to `new_name`.  Returns `AppError::Conflict` if another
+/// tag with the same name (case-insensitive) already exists, `AppError::NotFound`
+/// if `tag_id` is unknown.
 pub async fn rename_tag(
     db: &SqlitePool,
     tag_id: &str,
@@ -198,6 +213,10 @@ pub async fn delete_tag(db: &SqlitePool, tag_id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Merges `source_id` into `target_id`.  Returns the number of unique books
+/// whose tag was reassigned.  Books that already have `target_id` are skipped
+/// (NOT EXISTS guard); `confirmed = 1` is propagated when the source was
+/// confirmed on overlapping books.  The source `tags` row is deleted.
 pub async fn merge_tags(
     db: &SqlitePool,
     source_id: &str,

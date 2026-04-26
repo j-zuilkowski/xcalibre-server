@@ -1,3 +1,32 @@
+//! Application configuration: TOML deserialization, env var overrides, and startup validation.
+//!
+//! # Config file
+//! Loaded from `config.toml` by default, or the path in the `CONFIG_PATH` env var.
+//! If the file does not exist, defaults are used.  File permissions are checked at
+//! startup on Unix; world-readable configs log a warning.
+//!
+//! # Env var overrides
+//! Every config field has a corresponding env var (see [`apply_env_overrides`]).
+//! Two sets of names are supported: `APP_*` (canonical) and legacy bare names
+//! (e.g. `BASE_URL`, `DATABASE_URL`, `JWT_SECRET`, `ENABLE_LLM_FEATURES`).
+//!
+//! # JWT secret auto-generation
+//! If `auth.jwt_secret` is blank at startup, a fresh 32-byte random secret is
+//! generated, base64-encoded, written back to `config.toml`, and logged as a warning.
+//! The generated secret is stable across restarts (it is persisted to disk).
+//!
+//! # LLM endpoint SSRF protection
+//! LLM endpoints are validated against private/loopback ranges **at startup** via
+//! [`validate_llm_endpoints`]. If validation passes once, subsequent calls are safe
+//! because the endpoint is immutable.  If endpoints become runtime-configurable in a
+//! future version, they must be re-validated on each use.
+//!
+//! # Security invariants enforced at startup
+//! - `jwt_secret` must decode to ≥ 32 bytes.
+//! - `argon2_memory_kib` ≥ 65,536; `argon2_iterations` ≥ 3; `argon2_parallelism` ≥ 4.
+//! - `ldap.uid_attr` and `ldap.email_attr` required when LDAP is enabled.
+//! - HTTP `base_url` + `https_only = false` logs a security warning.
+
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,6 +40,11 @@ const MIN_ARGON2_MEMORY_KIB: u32 = 65_536;
 const MIN_ARGON2_ITERATIONS: u32 = 3;
 const MIN_ARGON2_PARALLELISM: u32 = 4;
 
+/// Top-level application configuration deserialized from `config.toml`.
+///
+/// All sections implement `Default`; the default config is valid for local development
+/// but production deployments must set at minimum `database.url`, `app.storage_path`,
+/// and `auth.jwt_secret` (or allow auto-generation on first run).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -265,6 +299,11 @@ impl std::fmt::Debug for AuthSection {
     }
 }
 
+/// LLM feature configuration.
+///
+/// `enabled` defaults to `false`; opt-in via `ENABLE_LLM_FEATURES=true`.
+/// `allow_private_endpoints` must be `true` to use LM Studio / Ollama on localhost.
+/// Default is `false` to block SSRF via RFC 1918 / loopback addresses.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmSection {
@@ -339,6 +378,19 @@ impl Default for AppConfig {
     }
 }
 
+/// Load and validate the application configuration.
+///
+/// 1. Reads `config.toml` (or `CONFIG_PATH` env var) if it exists; falls back to defaults.
+/// 2. Checks Unix file permissions (world-readable = warning).
+/// 3. Applies env var overrides via [`apply_env_overrides`].
+/// 4. Validates required fields and security minimums.
+/// 5. Auto-generates and persists `jwt_secret` if blank.
+/// 6. Validates LLM endpoints for SSRF (private/loopback host check).
+///
+/// # Errors
+/// Returns an error for missing required fields, sub-minimum argon2 parameters,
+/// invalid base64 or too-short JWT secret, unsupported storage backend, or
+/// LLM endpoint pointing at a private address without `allow_private_endpoints`.
 pub async fn load_config() -> anyhow::Result<AppConfig> {
     let path = config_path();
     if path.exists() {
@@ -677,6 +729,11 @@ fn llm_endpoints(config: &AppConfig) -> [&str; 2] {
     ]
 }
 
+/// Validate a single LLM endpoint URL for use in runtime API handlers.
+///
+/// Called when an admin updates the LLM config via the API (as opposed to startup
+/// validation which uses [`validate_llm_endpoints`] over all configured endpoints).
+/// Returns [`crate::AppError::BadRequest`] for invalid URLs or blocked addresses.
 pub fn validate_llm_endpoint(
     url: &str,
     allow_private_endpoints: bool,
@@ -707,6 +764,9 @@ fn is_private_or_loopback_host(host: &str) -> bool {
     is_private_or_loopback(ip)
 }
 
+/// Returns `true` for RFC 1918 private, loopback, link-local, and documentation ranges.
+///
+/// Used to block SSRF via LLM endpoints and webhook target URLs.
 pub(crate) fn is_private_or_loopback(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {

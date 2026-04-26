@@ -40,8 +40,14 @@ async fn test_upload_photo_generates_jpeg_and_webp_variants() {
     let thumb_webp_image = image::load_from_memory(&thumb_webp).expect("decode thumb webp");
     assert_eq!((full_jpeg.width(), full_jpeg.height()), (400, 400));
     assert_eq!((thumb_jpeg.width(), thumb_jpeg.height()), (100, 100));
-    assert_eq!((full_webp_image.width(), full_webp_image.height()), (400, 400));
-    assert_eq!((thumb_webp_image.width(), thumb_webp_image.height()), (100, 100));
+    assert_eq!(
+        (full_webp_image.width(), full_webp_image.height()),
+        (400, 400)
+    );
+    assert_eq!(
+        (thumb_webp_image.width(), thumb_webp_image.height()),
+        (100, 100)
+    );
 }
 
 #[tokio::test]
@@ -74,10 +80,7 @@ async fn test_upload_photo_updates_photo_path_in_profile() {
         .expect("load author photo path");
     let photo_path: Option<String> = row.get("photo_path");
     let expected_photo_path = format!("authors/{}/{author_id}.jpg", author_bucket(&author_id));
-    assert_eq!(
-        photo_path.as_deref(),
-        Some(expected_photo_path.as_str())
-    );
+    assert_eq!(photo_path.as_deref(), Some(expected_photo_path.as_str()));
 }
 
 #[tokio::test]
@@ -99,7 +102,10 @@ async fn test_serve_photo_returns_webp_when_accepted() {
         .server
         .get(&format!("/api/v1/authors/{author_id}/photo"))
         .add_header(axum::http::header::AUTHORIZATION, auth_header(&token))
-        .add_header(axum::http::header::ACCEPT, HeaderValue::from_static("image/webp"))
+        .add_header(
+            axum::http::header::ACCEPT,
+            HeaderValue::from_static("image/webp"),
+        )
         .await;
 
     assert_status!(response, 200);
@@ -209,9 +215,7 @@ async fn upload_author_photo(
 ) -> axum_test::TestResponse {
     let form = MultipartForm::new().add_part(
         "photo",
-        Part::bytes(bytes)
-            .file_name(file_name)
-            .mime_type(mime_type),
+        Part::bytes(bytes).file_name(file_name).mime_type(mime_type),
     );
 
     ctx.server
@@ -252,14 +256,12 @@ async fn author_without_profile(ctx: &TestContext, name: &str) -> (String, Strin
     .await
     .expect("insert book");
 
-    sqlx::query(
-        "INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, 0)",
-    )
-    .bind(&book_id)
-    .bind(&id)
-    .execute(&ctx.db)
-    .await
-    .expect("insert book author");
+    sqlx::query("INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, 0)")
+        .bind(&book_id)
+        .bind(&id)
+        .execute(&ctx.db)
+        .await
+        .expect("insert book author");
 
     (id, book_id)
 }

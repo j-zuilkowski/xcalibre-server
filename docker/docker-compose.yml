@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: autolibre:dev
+    image: xcalibre-server:dev
     ports: ["8083:8083"]
     volumes:
       - ../config.toml:/app/config.toml:ro

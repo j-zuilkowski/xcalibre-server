@@ -15,7 +15,15 @@ async fn test_get_chunks_returns_stored_chunks() {
     let token = ctx.admin_token().await;
     let book = ctx.create_book("Stored Chunks", "Ada").await;
     insert_chunk(&ctx.db, &book.id, 0, ChunkType::Text, "stored text", false).await;
-    insert_chunk(&ctx.db, &book.id, 1, ChunkType::Procedure, "stored steps", false).await;
+    insert_chunk(
+        &ctx.db,
+        &book.id,
+        1,
+        ChunkType::Procedure,
+        "stored steps",
+        false,
+    )
+    .await;
 
     let response = ctx
         .server
@@ -181,8 +189,5 @@ fn long_text(word_count: usize) -> String {
 }
 
 fn fake_pdf_page(text: &str) -> Vec<u8> {
-    format!(
-        "%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\nBT\n({text}) Tj\nET\n"
-    )
-    .into_bytes()
+    format!("%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\nBT\n({text}) Tj\nET\n").into_bytes()
 }

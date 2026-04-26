@@ -1,3 +1,22 @@
+//! Security headers, rate limiting, CORS, and upload-size enforcement.
+//!
+//! `apply_security_headers` injects five headers on every response:
+//! - `X-Content-Type-Options: nosniff` — prevents MIME-type sniffing.
+//! - `X-Frame-Options: DENY` — blocks framing by all origins.
+//! - `Referrer-Policy: strict-origin-when-cross-origin` — limits referrer leakage.
+//! - `Content-Security-Policy` — restricts resource loading to `'self'` plus
+//!   `'unsafe-inline'` for style-src (required by shadcn/ui CSS variables)
+//!   and `data:/blob:` for cover images and epub.js web workers.
+//! - `Permissions-Policy` — disables camera, microphone, and geolocation.
+//!
+//! Rate limiting uses `tower-governor` with a `ClientIpKeyExtractor` that
+//! reads `X-Forwarded-For` (first address), then `X-Real-IP`, then the
+//! direct socket address.  Separate layers are applied to auth endpoints
+//! (`AUTH_RATE_LIMIT_PER_MINUTE = 10`) and the global API.
+//!
+//! `enforce_upload_size` checks `Content-Length` against `max_upload_bytes`
+//! before the request body is read, avoiding unnecessary memory allocation.
+
 use crate::AppError;
 use axum::{
     extract::{Request as AxumRequest, State},
@@ -70,6 +89,9 @@ pub(crate) fn global_rate_limit_headers_config(requests_per_minute: u32) -> Rate
     RateLimitHeaderConfig::new(requests_per_minute, RATE_LIMIT_WINDOW_SECONDS)
 }
 
+/// Builds a `CorsLayer` that allows the origin derived from `base_url`
+/// (scheme + host + optional port).  Logs a warning and returns a
+/// deny-all CORS layer when `base_url` cannot be parsed.
 pub(crate) fn cors_layer(base_url: &str) -> CorsLayer {
     let base = CorsLayer::new()
         .allow_methods([
@@ -95,6 +117,9 @@ pub(crate) fn cors_layer(base_url: &str) -> CorsLayer {
     }
 }
 
+/// Appends all five mandatory security headers to every response.  This
+/// middleware must be registered at the outermost router layer so it fires
+/// for all routes, including error responses from inner middleware.
 pub(crate) async fn apply_security_headers(request: AxumRequest, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -116,6 +141,9 @@ pub(crate) async fn apply_security_headers(request: AxumRequest, next: Next) -> 
     response
 }
 
+/// Rejects book upload requests whose `Content-Length` exceeds
+/// `max_upload_bytes` before the body is streamed.  Non-upload routes and
+/// requests without a `Content-Length` header pass through unconditionally.
 pub(crate) async fn enforce_upload_size(
     State(max_upload_bytes): State<u64>,
     request: AxumRequest,
@@ -138,6 +166,10 @@ pub(crate) async fn enforce_upload_size(
     Ok(next.run(request).await)
 }
 
+/// Adds standard rate-limit response headers (`X-RateLimit-Limit`,
+/// `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After` on 429).
+/// Values are derived from `tower-governor` headers when present; defaults
+/// fall back to the configured `limit` and `window_seconds`.
 pub(crate) async fn apply_rate_limit_headers(
     State(config): State<RateLimitHeaderConfig>,
     request: AxumRequest,

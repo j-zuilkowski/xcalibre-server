@@ -1,10 +1,27 @@
+/**
+ * Shelf detail screen — displays all books on a user-curated shelf.
+ *
+ * Route: `/shelf/[id]` (Expo Router dynamic segment)
+ *
+ * Features:
+ * - Infinite-scroll two-column book grid (30 books per page).
+ * - "Download all" button in the navigation header when the shelf has at least one book.
+ *   Fetches all books (100 per page), picks the preferred format per book, skips
+ *   already-downloaded files, shows a size estimate alert, then downloads sequentially.
+ * - Toast notification shown after batch download starts.
+ *
+ * API calls:
+ * - `GET /api/v1/shelves` — to resolve the shelf name for the header title
+ * - `GET /api/v1/shelves/:id/books` — paginated book list (infinite scroll)
+ * - `GET /api/v1/books/:id` — fetched for each book during "Download all" to get format details
+ */
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { Book, BookSummary, Shelf } from "@autolibre/shared";
+import type { Book, BookSummary, Shelf } from "@xs/shared";
 import { useApi } from "../../lib/api";
 import { db } from "../../lib/db";
 import {
@@ -26,6 +43,11 @@ function ShelfHeaderIcon() {
   );
 }
 
+/**
+ * Fetches all books on a shelf by exhausting the paginated endpoint (100 per page).
+ * Used by the "Download all" flow to enumerate every book regardless of the
+ * currently visible infinite-scroll page.
+ */
 async function loadAllShelfBooks(client: ReturnType<typeof useApi>, shelfId: string): Promise<BookSummary[]> {
   const books: BookSummary[] = [];
   let page = 1;
@@ -48,6 +70,19 @@ async function loadAllShelfBooks(client: ReturnType<typeof useApi>, shelfId: str
   return books;
 }
 
+/**
+ * Shelf detail screen (Expo Router default export for `/shelf/[id]`).
+ *
+ * The shelf name is resolved from the `shelves` query rather than a dedicated
+ * endpoint so we avoid an extra round-trip (the tab list already fetches all shelves).
+ *
+ * "Download all" workflow:
+ * 1. `loadAllShelfBooks` paginates the shelf's books 100 at a time.
+ * 2. For each book, `getBook()` fetches full format details.
+ * 3. `resolvePreferredDownloadFormat` picks the best format (EPUB > MOBI > PDF).
+ * 4. `getLocalPath` skips books already in the local `local_downloads` table.
+ * 5. After user confirmation, `downloadBook` is called sequentially.
+ */
 export default function ShelfDetailScreen() {
   const { t } = useTranslation();
   const client = useApi();

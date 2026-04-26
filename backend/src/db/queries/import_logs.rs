@@ -1,3 +1,11 @@
+//! Goodreads/StoryGraph import job log queries.
+//! Touches: `goodreads_import_log`.
+//!
+//! Each import run creates one log row at the start (`status = 'pending'`)
+//! and calls `update_import_log` when the run completes.  `errors` is stored
+//! as a JSON array of `ImportErrorEntry` objects; `None` when empty.  The
+//! `user_id` filter on `get_import_log` prevents cross-user access.
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};

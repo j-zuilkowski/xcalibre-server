@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server for calibre-web-rs development tooling
+// MCP server for xcalibre-server development tooling
 // Exposes cargo, db, and codex controls as Claude Code tools
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, "..");
 const BACKEND = path.join(ROOT, "backend");
 
 const server = new McpServer({
-  name: "calibre-dev",
+  name: "xcalibre-server-dev",
   version: "1.0.0",
 });
 
@@ -151,4 +151,3 @@ server.tool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-

@@ -1,3 +1,14 @@
+//! Shelf CRUD, book add/remove, and ordered book listing.
+//! Touches: `shelves`, `shelf_books`.
+//!
+//! Books within a shelf are ordered by `display_order ASC` (integer assigned
+//! at insert time: `MAX(display_order) + 1`), then by `added_at` for stability
+//! when display_order values are equal.  Reordering is not exposed as a query
+//! here; callers that need reorder should update `display_order` directly.
+//!
+//! `list_shelves` returns shelves owned by the requesting user OR any public
+//! shelf, which supports shared read lists.
+
 use crate::db::models::Shelf;
 use anyhow::Context;
 use chrono::Utc;
@@ -105,6 +116,9 @@ pub async fn find_shelf_id_by_name(
     Ok(row)
 }
 
+/// Returns the shelf ID for `name` (case/whitespace insensitive) owned by
+/// `user_id`, creating a private shelf if none exists.  Used by import to
+/// ensure import-specific shelves exist without conflicts.
 pub async fn get_or_create_shelf_id(
     db: &SqlitePool,
     user_id: &str,
@@ -133,6 +147,9 @@ pub async fn delete_shelf(db: &SqlitePool, shelf_id: &str, user_id: &str) -> any
     Ok(result.rows_affected() > 0)
 }
 
+/// Appends `book_id` to the shelf at the next `display_order` position.
+/// Uses `INSERT OR IGNORE` so adding a book twice is a no-op.  Returns
+/// `true` if the row was inserted (false means the book was already present).
 pub async fn add_book_to_shelf(
     db: &SqlitePool,
     shelf_id: &str,

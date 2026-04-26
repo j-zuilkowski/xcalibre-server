@@ -1,3 +1,15 @@
+//! User webhook management for xcalibre-server event delivery.
+//!
+//! Routes under `/api/v1/users/me/webhooks/`. All routes require a valid JWT.
+//!
+//! Webhooks are per-user and scoped to a fixed set of supported events (see `SUPPORTED_EVENTS`).
+//! The webhook URL is validated against the SSRF blocklist in `webhook_engine::validate_webhook_target`
+//! at both creation and update time — private/loopback addresses are rejected.
+//! The webhook secret is AES-GCM encrypted at rest using the `jwt_secret`-derived key.
+//!
+//! The `test_webhook` endpoint sends a live delivery attempt and returns the result,
+//! letting users verify reachability before relying on automated delivery.
+
 use crate::{
     auth::totp as totp_auth, db::queries::webhooks as webhook_queries,
     middleware::auth::AuthenticatedUser, webhooks as webhook_engine, AppError, AppState,
@@ -31,6 +43,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route_layer(auth_layer)
 }
 
+/// Complete set of event names that webhooks may subscribe to; unknown events are rejected at creation.
 const SUPPORTED_EVENTS: &[&str] = &[
     "book.added",
     "book.deleted",
@@ -116,11 +129,9 @@ pub(crate) async fn create_webhook(
         return Err(AppError::BadRequest);
     }
 
-    if let Err(err) = webhook_engine::validate_webhook_target(
-        &url,
-        state.config.llm.allow_private_endpoints,
-    )
-    .await
+    if let Err(err) =
+        webhook_engine::validate_webhook_target(&url, state.config.llm.allow_private_endpoints)
+            .await
     {
         let body = Json(json!({
             "error": format!("webhook URL is not allowed: {err}")
@@ -284,6 +295,7 @@ pub(crate) async fn test_webhook(
     Ok(Json(result))
 }
 
+/// Validates and deduplicates webhook event names, rejecting empty lists or unknown event types.
 fn validate_events(events: &[String]) -> Result<Vec<String>, AppError> {
     if events.is_empty() {
         return Err(AppError::BadRequest);

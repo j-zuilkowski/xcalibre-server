@@ -1,3 +1,21 @@
+//! Book-chunk storage and hybrid search queries (Phase 15).
+//! Touches: `book_chunks`, `book_chunks_fts` (FTS5 virtual table).
+//!
+//! Each chunk row stores the extracted text alongside an optional `embedding`
+//! BLOB: 32-bit floats packed in little-endian order by `vec_to_blob`.  The
+//! BLOB is consumed by the `sqlite-vec` extension's `vec_distance_cosine`
+//! function for semantic search.
+//!
+//! Two search paths are exposed:
+//! - `search_chunks_bm25`: joins `book_chunks_fts` with an FTS5 MATCH
+//!   expression; `bm25()` returns a negative score (lower is better).
+//! - `search_chunks_semantic`: scans `book_chunks` with
+//!   `vec_distance_cosine(embedding, ?)` for nearest-neighbour lookup;
+//!   cosine distance is converted to cosine similarity in the row mapper.
+//!
+//! `replace_book_chunks` is the atomic re-index operation: deletes existing
+//! chunks for a book and inserts the new batch in one transaction.
+
 use crate::ingest::chunker::ChunkType;
 use chrono::Utc;
 use serde::Serialize;
@@ -83,6 +101,8 @@ pub async fn list_book_chunks(
     Ok(rows.into_iter().map(row_to_record).collect())
 }
 
+/// Atomically replaces all chunks for `book_id`: deletes existing rows then
+/// batch-inserts the new set inside a single transaction.
 pub async fn replace_book_chunks(
     db: &SqlitePool,
     book_id: &str,
@@ -139,8 +159,7 @@ pub async fn count_searchable_book_chunks(
     db: &SqlitePool,
     filters: &ChunkSearchFilters<'_>,
 ) -> anyhow::Result<i64> {
-    let mut query =
-        QueryBuilder::<Sqlite>::new("SELECT COUNT(1) AS count FROM book_chunks bc");
+    let mut query = QueryBuilder::<Sqlite>::new("SELECT COUNT(1) AS count FROM book_chunks bc");
     if let Some(collection_id) = filters.collection_id {
         query.push(" INNER JOIN shelf_books sb ON sb.book_id = bc.book_id AND sb.shelf_id = ");
         query.push_bind(collection_id);
@@ -152,6 +171,10 @@ pub async fn count_searchable_book_chunks(
     Ok(count)
 }
 
+/// Full-text search over `book_chunks_fts` using FTS5 MATCH.  Results are
+/// ordered by ascending `bm25()` score (most relevant first — BM25 returns
+/// negative values).  `bm25_score` on each record holds the raw BM25 value;
+/// `cosine_score` is `None` for BM25 results.
 pub async fn search_chunks_bm25(
     db: &SqlitePool,
     query_text: &str,
@@ -188,6 +211,10 @@ pub async fn search_chunks_bm25(
     Ok(rows.into_iter().map(row_to_search_record).collect())
 }
 
+/// Nearest-neighbour semantic search using `vec_distance_cosine`.  The query
+/// vector is serialised as a little-endian f32 BLOB via `vec_to_blob`.
+/// Only chunks with a non-null `embedding` are considered.
+/// `cosine_score` is filled as `1.0 - cosine_distance`; `bm25_score` is `None`.
 pub async fn search_chunks_semantic(
     db: &SqlitePool,
     vector: &[f32],
@@ -217,7 +244,9 @@ pub async fn search_chunks_semantic(
     }
     query.push(" WHERE bc.embedding IS NOT NULL");
     apply_chunk_filters(&mut query, "bc", filters);
-    query.push(" ORDER BY cosine_distance ASC, bc.book_id ASC, bc.chunk_index ASC, bc.id ASC LIMIT ");
+    query.push(
+        " ORDER BY cosine_distance ASC, bc.book_id ASC, bc.chunk_index ASC, bc.id ASC LIMIT ",
+    );
     query.push_bind(limit.max(1));
 
     let rows = query.build().fetch_all(db).await?;
@@ -264,7 +293,9 @@ fn row_to_search_record(row: sqlx::sqlite::SqliteRow) -> ChunkSearchRecord {
         chunk_type,
         text: row.get("text"),
         word_count: row.get("word_count"),
-        bm25_score: row.get::<Option<f64>, _>("bm25_score").map(|score| score as f32),
+        bm25_score: row
+            .get::<Option<f64>, _>("bm25_score")
+            .map(|score| score as f32),
         cosine_score: row
             .get::<Option<f64>, _>("cosine_distance")
             .map(|distance| (1.0_f64 - distance) as f32),

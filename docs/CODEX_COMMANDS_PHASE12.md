@@ -1,4 +1,4 @@
-# Codex Desktop App — autolibre Phase 12: Post-v1.0 Polish
+# Codex Desktop App — xcalibre-server Phase 12: Post-v1.0 Polish
 
 ## What Phase 12 Builds
 
@@ -79,7 +79,7 @@ apps/web/src/features/reader/,
 apps/web/src/features/search/SearchPage.tsx,
 apps/web/src/features/admin/,
 and apps/web/package.json.
-Now add a Playwright E2E test suite for the autolibre web app.
+Now add a Playwright E2E test suite for the xcalibre-server web app.
 
 ─────────────────────────────────────────
 SETUP
@@ -336,17 +336,17 @@ CI WORKFLOW
         - uses: actions/setup-node@v4
           with: { node-version: "20" }
         - run: pnpm install
-        - run: pnpm --filter @autolibre/backend build   # or cargo build --release
+        - run: pnpm --filter @xs/backend build   # or cargo build --release
         - run: npx playwright install --with-deps chromium
         - name: Start backend (test mode)
           run: |
-            AUTOLIBRE_ENV=test ./target/release/autolibre &
+            XCS_ENV=test ./target/release/xcalibre-server &
             echo "BACKEND_PID=$!" >> $GITHUB_ENV
           env:
             DATABASE_URL: sqlite::memory:
             JWT_SECRET: ci-test-secret-do-not-use
         - name: Run E2E tests
-          run: pnpm --filter @autolibre/web test:e2e
+          run: pnpm --filter @xs/web test:e2e
           env:
             PLAYWRIGHT_BASE_URL: http://localhost:5173
             PLAYWRIGHT_API_URL: http://localhost:3000
@@ -360,7 +360,7 @@ CI WORKFLOW
 VERIFICATION
 ─────────────────────────────────────────
 cd apps/web && npx playwright install chromium
-pnpm --filter @autolibre/web test:e2e
+pnpm --filter @xs/web test:e2e
 git add apps/web/e2e/ apps/web/playwright.config.ts apps/web/package.json .github/workflows/e2e.yml
 git commit -m "Phase 12 Stage 1: Playwright E2E suite (auth, library, reader, search, admin)"
 ```
@@ -379,7 +379,7 @@ git commit -m "Phase 12 Stage 1: Playwright E2E suite (auth, library, reader, se
 Read docker/docker-compose.yml, docker/docker-compose.production.yml, docker/Caddyfile,
 docs/ARCHITECTURE.md (the storage backend and security sections),
 backend/src/config.rs, and config.example.toml.
-Now write comprehensive deployment runbooks for autolibre.
+Now write comprehensive deployment runbooks for xcalibre-server.
 
 ─────────────────────────────────────────
 DELIVERABLE 1 — docs/DEPLOY.md
@@ -390,7 +390,7 @@ copy-pasteable. Do not pad with marketing language or motivational headings.
 
 Contents:
 
-  # Deploying autolibre
+  # Deploying xcalibre-server
 
   ## Prerequisites
   - Docker 24+ and Docker Compose v2
@@ -417,7 +417,7 @@ Contents:
 
     Provide a complete working Caddyfile for a single domain with automatic
     HTTPS via Let's Encrypt. Include:
-      - Reverse proxy to the autolibre container
+      - Reverse proxy to the xcalibre-server container
       - Static file serving bypass for /covers/ (performance optimization)
       - Compression enabled
 
@@ -450,8 +450,8 @@ Contents:
   ### MariaDB setup
 
     Provide Docker Compose snippet adding a MariaDB service.
-    Database init SQL: CREATE DATABASE autolibre; GRANT ALL ON autolibre.* TO 'autolibre'@'%';
-    Config change: database_url = "mysql://autolibre:password@mariadb:3306/autolibre"
+    Database init SQL: CREATE DATABASE xcalibre-server; GRANT ALL ON xcalibre-server.* TO 'xcalibre-server'@'%';
+    Config change: database_url = "mysql://xcalibre-server:password@mariadb:3306/xcalibre-server"
 
     Connection pool tuning: provide recommended max_connections value.
 
@@ -480,7 +480,7 @@ Contents:
 
   ### MariaDB backup
     mysqldump command with --single-transaction flag.
-    Include compression: | gzip > autolibre-$(date +%Y%m%d).sql.gz
+    Include compression: | gzip > xcalibre-server-$(date +%Y%m%d).sql.gz
 
   ### Restore procedure
     Step-by-step restore for both SQLite and MariaDB.
@@ -526,7 +526,7 @@ Create scripts/backup.sh — a production-ready backup script:
 
   Default (no flags): back up both DB and book files.
 
-  Script reads AUTOLIBRE_BACKUP_DIR, AUTOLIBRE_DB_PATH, AUTOLIBRE_STORAGE_PATH
+  Script reads XCS_BACKUP_DIR, XCS_DB_PATH, XCS_STORAGE_PATH
   from environment (or defaults from config.toml if readable).
 
   SQLite mode:
@@ -554,7 +554,7 @@ Create scripts/restore.sh:
   Steps:
     1. Confirm the target DB file does not exist (or prompt to overwrite)
     2. SQLite: cp <backup.db> <target.db>
-       MariaDB: gunzip < <backup.sql.gz> | mysql autolibre
+       MariaDB: gunzip < <backup.sql.gz> | mysql xcalibre-server
     3. If --files-dir provided: rsync -a <path>/ <STORAGE_PATH>/
     4. Print: "Restore complete. Start the server with: docker compose up -d"
 
@@ -706,7 +706,7 @@ docs/CONTRIBUTING.md — add (or create if absent) a "Translations" section:
 VERIFICATION
 ─────────────────────────────────────────
 pnpm check:i18n   # must print ✓ 100% coverage for fr, de, es
-pnpm --filter @autolibre/web build   # no TS errors
+pnpm --filter @xs/web build   # no TS errors
 git add apps/web/src/locales/ scripts/check-translations.ts .github/workflows/i18n-check.yml docs/CONTRIBUTING.md
 git commit -m "Phase 12 Stage 3: complete FR/DE/ES translations, add i18n CI coverage check"
 ```
@@ -1453,7 +1453,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ apps/web/src/features/admin/TagsPage.tsx
 git commit -m "Phase 12 Stage 8: global tag rename, merge, delete — admin tag management"
 ```

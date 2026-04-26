@@ -1,7 +1,29 @@
+/**
+ * PDF reader screen component.
+ *
+ * Renders a PDF file using `react-native-pdf` (resolved lazily via
+ * `resolvePdfRenderer()` so the rest of the app does not hard-depend on the
+ * native module). Shows a graceful fallback when the module is unavailable.
+ *
+ * Reading progress:
+ * - On mount, the last saved page number is loaded via `loadProgress()`.
+ * - On each page change, `queueProgressSave()` debounces the save (2 s) and calls
+ *   `saveProgress()` which PATCHes `PATCH /api/v1/books/:id/progress` with the page
+ *   number and a percentage (page / totalPages).
+ *
+ * CFI vs page note:
+ * - PDF progress is tracked by physical page number (integer, 1-based).
+ * - EPUB/MOBI positions use CFI strings — handled by EpubReaderScreen.
+ *
+ * UI:
+ * - Horizontal paging mode (`enablePaging + horizontal`).
+ * - Overlay header (title + Back) and bottom page indicator are hidden/shown
+ *   by tapping the center tap zone.
+ */
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import type { ApiClient as CalibreClient } from "@autolibre/shared";
+import type { ApiClient as CalibreClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { loadProgress, saveProgress } from "../../lib/progress";
 
@@ -24,6 +46,10 @@ type PdfRendererProps = {
   onPageChanged?: (page: number, pageCount: number) => void;
 };
 
+/**
+ * Dynamically resolves the `react-native-pdf` default export at module load time.
+ * Returns null when the native module is not available (e.g. in Expo Go).
+ */
 function resolvePdfRenderer(): ((props: PdfRendererProps) => JSX.Element) | null {
   try {
     const module = require("react-native-pdf") as { default?: (props: PdfRendererProps) => JSX.Element };
@@ -42,6 +68,16 @@ function clampPercentage(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+/**
+ * PDF reader screen component.
+ *
+ * @param client - API client used for reading progress sync.
+ * @param database - Expo SQLite database handle for local progress caching.
+ * @param bookId - UUID of the book being read.
+ * @param title - Book title shown in the overlay header.
+ * @param filePath - Absolute local file path to the downloaded PDF file.
+ * @param onBack - Called when the user taps the Back button in the overlay header.
+ */
 export function PdfReaderScreen({
   client,
   database,
@@ -90,6 +126,10 @@ export function PdfReaderScreen({
     };
   }, []);
 
+  /**
+   * Debounces progress saves (2 s) to avoid saving on every swipe.
+   * Calculates the percentage as `page / total` clamped to [0, 1].
+   */
   const queueProgressSave = (page: number, total: number) => {
     pendingRef.current = {
       page,

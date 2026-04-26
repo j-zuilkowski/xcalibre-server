@@ -1,3 +1,18 @@
+//! OPDS 1.2 catalogue feed queries.
+//! Touches: `books`, `authors`, `book_authors`, `series`, `tags`.
+//!
+//! Publisher data is stored as `json_extract(books.flags, '$.publisher')` — a
+//! JSON text column used as a schemaless extension bag.  The publisher list
+//! query groups by `lower(TRIM(json_extract(...)))` to deduplicate case/space
+//! variants and returns `MIN(TRIM(...))` as the display name.
+//!
+//! Rating buckets map the internal 0–10 scale to 1–5 stars using
+//! `(rating + 1) / 2` integer division.  OPDS readers expect star-rated
+//! navigation feeds in this 1–5 range.
+//!
+//! These queries are read-only and do not require an authenticated user, as
+//! OPDS feeds are typically consumed by e-reader apps via Basic Auth.
+
 use anyhow::Context;
 use sqlx::{Row, SqlitePool};
 

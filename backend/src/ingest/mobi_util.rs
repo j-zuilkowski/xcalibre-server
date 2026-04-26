@@ -1,3 +1,20 @@
+//! MOBI/AZW3 HTML utility functions.
+//!
+//! The [`mobi`] crate decodes a MOBI file into a single HTML string.  These utilities
+//! split that blob into per-chapter fragments for the text extraction pipeline, and
+//! strip HTML tags to produce plain text suitable for display and indexing.
+//!
+//! # Chapter splitting strategy
+//! 1. Try splitting on `<mbp:pagebreak>` — Kindle's proprietary pagebreak element.
+//! 2. If fewer than 2 fragments result, fall back to splitting on `<h1>`–`<h6>` tags.
+//! 3. If still empty, treat the entire content as one fragment.
+//!
+//! This two-pass strategy handles both modern AZW3 (uses `<mbp:pagebreak>`) and older
+//! MOBI files (uses heading tags for chapter demarcation).
+
+/// Split a MOBI/AZW3 HTML blob on `<mbp:pagebreak>` tags.
+///
+/// Each non-empty segment between pagebreaks becomes one element in the output vec.
 pub fn split_on_mobi_pagebreak(raw_html: &str) -> Vec<String> {
     let lower = raw_html.to_ascii_lowercase();
     let marker = "<mbp:pagebreak";
@@ -31,6 +48,10 @@ pub fn split_on_mobi_pagebreak(raw_html: &str) -> Vec<String> {
     chunks
 }
 
+/// Split a MOBI/AZW3 HTML blob on `<h1>`–`<h6>` opening tags.
+///
+/// Each heading tag and the content following it (up to the next heading) becomes one
+/// fragment.  Any content before the first heading is prepended as a separate fragment.
 pub fn split_on_heading_tags(raw_html: &str) -> Vec<String> {
     let lower = raw_html.to_ascii_lowercase();
     let mut indices = Vec::new();
@@ -71,6 +92,11 @@ pub fn find_next_heading_index(lower: &str, cursor: usize) -> Option<usize> {
         .min()
 }
 
+/// Extract content from a MOBI file, catching any panic from the `mobi` crate.
+///
+/// Some malformed MOBI files cause the `mobi` crate to panic. We use
+/// `catch_unwind` to prevent a single bad file from crashing the server.
+/// Falls back to the book's description field if the main content is empty.
 pub fn safe_mobi_content(book: &mobi::Mobi) -> String {
     let content = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         book.content_as_string_lossy()
@@ -82,6 +108,10 @@ pub fn safe_mobi_content(book: &mobi::Mobi) -> String {
     book.description().unwrap_or_default()
 }
 
+/// Extract the title text from the first heading tag in an HTML segment.
+///
+/// Finds the first `<h1>`–`<h6>` tag, extracts its inner HTML, then strips
+/// tags to produce plain text.  Returns `None` if no heading is found.
 pub fn extract_heading_title(segment: &str) -> Option<String> {
     let lower = segment.to_ascii_lowercase();
     let heading_index = find_next_heading_index(&lower, 0)?;
@@ -97,6 +127,11 @@ pub fn extract_heading_title(segment: &str) -> Option<String> {
     }
 }
 
+/// Strip HTML tags from a fragment and return normalized plain text.
+///
+/// Block-level closing tags (`</p>`, `</div>`, `</h1>`–`</h6>`) and `<br>` are
+/// replaced with double newlines to preserve paragraph structure. All other tags
+/// are replaced with a single space. Basic HTML entities are decoded.
 pub fn strip_html_to_text(fragment: &str) -> String {
     let mut in_tag = false;
     let mut output = String::with_capacity(fragment.len());
@@ -148,6 +183,7 @@ pub fn decode_basic_html_entities(value: &str) -> String {
         .replace("&#39;", "'")
 }
 
+/// Escape a string for safe embedding in XML/HTML attribute values or content.
 pub fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")

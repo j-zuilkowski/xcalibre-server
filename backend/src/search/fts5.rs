@@ -1,3 +1,24 @@
+//! SQLite FTS5 full-text search backend.
+//!
+//! Uses the `books_fts` virtual table, which is maintained by DB triggers on the
+//! `books`, `book_authors`, and `book_tags` tables.  When a book is inserted or
+//! updated, the triggers automatically update `books_fts` — the backend requires no
+//! manual indexing calls.
+//!
+//! # Query normalization
+//! User input is sanitized to alphanumeric + whitespace + `*`, then each term is
+//! converted to a prefix query (`term*`) and joined with spaces (implicit AND in FTS5
+//! default tokenizer). This provides simple prefix/completion matching without
+//! exposing FTS5 operator syntax to untrusted input.
+//!
+//! # Score normalization
+//! FTS5 `rank` values are negative (more negative = more relevant). We normalize
+//! to `[0.0, 1.0]` by dividing by the minimum rank in the result set.
+//!
+//! # Fallback role
+//! This backend is always available and is used as the fallback when Meilisearch
+//! is disabled or unreachable. `is_available()` always returns `true`.
+
 use crate::search::{SearchBackend, SearchHit, SearchPage, SearchQuery};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -218,6 +239,10 @@ fn normalize_fts_query(raw: &str) -> Option<String> {
     }
 }
 
+/// Normalize a FTS5 BM25 rank to a [0.0, 1.0] relevance score.
+///
+/// FTS5 rank is negative (more negative = higher relevance). We divide by the
+/// minimum (most-negative) rank in the result set so that the best result scores 1.0.
 fn score_from_rank(rank: f64, min_rank: f64) -> f32 {
     if !rank.is_finite() || !min_rank.is_finite() {
         return 0.0;

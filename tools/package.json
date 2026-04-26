@@ -1,5 +1,5 @@
 {
-  "name": "calibre-dev-mcp",
+  "name": "xs-dev-mcp",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
@@ -7,4 +7,3 @@
     "zod": "^3.22.0"
   }
 }
-

@@ -1,4 +1,0 @@
-
-> @calibre/shared@0.1.0 build /Users/jonzuilkowski/Documents/localProject/calibre-web-rs/packages/shared
-> tsc -p tsconfig.json
-

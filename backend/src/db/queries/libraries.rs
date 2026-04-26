@@ -1,3 +1,14 @@
+//! Library CRUD and default library seeding.
+//! Touches: `libraries`, `books`.
+//!
+//! The `default` library has a well-known hard-coded id `'default'` and
+//! cannot be deleted.  `sync_default_library_path` is called at startup to
+//! keep the `calibre_db_path` in sync with the config without dropping the
+//! row on each restart.
+//!
+//! `delete_library` refuses if the library still has books assigned; the
+//! caller must reassign or delete books first.
+
 use anyhow::Context;
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
@@ -105,6 +116,9 @@ pub async fn count_books_in_library(db: &SqlitePool, library_id: &str) -> anyhow
     Ok(count)
 }
 
+/// Upserts the default library row (`id = 'default'`) with the configured
+/// `calibre_db_path`.  Safe to call on every startup; uses
+/// `ON CONFLICT DO UPDATE` so a pre-existing row is updated in place.
 pub async fn sync_default_library_path(
     db: &SqlitePool,
     calibre_db_path: &str,

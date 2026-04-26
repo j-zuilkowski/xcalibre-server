@@ -1,8 +1,46 @@
+//! Sub-chapter chunking for RAG indexing.
+//!
+//! Splits extracted chapter text into overlapping chunks suitable for embedding and
+//! retrieval.  The algorithm is **domain-aware**: it detects document structure and
+//! applies different splitting strategies depending on the content type.
+//!
+//! # Chunk strategies
+//!
+//! ## Narrative domain
+//! Pure sliding-window over paragraphs with an overlap tail (no structural detection).
+//!
+//! ## Technical / Electronics domains
+//! 1. Markdown and numbered headings (`## 2.1 Title`, `1.2.3 Section`) are detected
+//!    and emitted as single-line heading chunks, maintaining a heading stack for
+//!    hierarchical `heading_path` (`Chapter > Section > Subsection`).
+//! 2. **Procedure blocks**: consecutive lines matching `Step N.` or `N)` patterns
+//!    (≥ 3 lines) are kept together as a single `ChunkType::Procedure` chunk and are
+//!    **never split across chunk boundaries**.  This preserves the semantic coherence
+//!    of numbered instruction sequences.
+//! 3. Remaining paragraphs are collected and split with target size + overlap window.
+//!
+//! ## Culinary domain
+//! Title-case recipe titles followed by `Ingredients` or `Serves N` trigger a recipe
+//! block collector that emits the entire recipe as `ChunkType::Example`.
+//!
+//! # Overlap window
+//! After emitting a chunk, the last `overlap` words of that chunk are prepended to the
+//! next chunk as context continuity.  Overlap is clamped to `target_size - 1`.
+//!
+//! # Image-heavy pages
+//! If `ChapterText.is_image_heavy_page = true` (PDF page with < 80 words), chunks
+//! are tagged `ChunkType::Image` and `is_image_heavy = true`, signalling the ingest
+//! pipeline to attempt a vision LLM pass.
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr, sync::OnceLock};
 use utoipa::ToSchema;
 
+/// Pre-processed chapter text ready for chunking.
+///
+/// `is_image_heavy_page` is `true` when the source is a PDF page with fewer than
+/// 80 words — a heuristic indicating the page is primarily a diagram or schematic.
 #[derive(Clone, Debug)]
 pub struct ChapterText {
     pub chapter_index: usize,
@@ -11,6 +49,11 @@ pub struct ChapterText {
     pub is_image_heavy_page: bool,
 }
 
+/// Configuration for the chunking algorithm.
+///
+/// - `target_size`: desired chunk size in words (default 600).
+/// - `overlap`: number of words from the previous chunk to prepend for context (default 100).
+/// - `domain`: controls which structural detection rules are applied.
 #[derive(Clone, Debug)]
 pub struct ChunkConfig {
     pub target_size: usize,
@@ -28,6 +71,11 @@ impl Default for ChunkConfig {
     }
 }
 
+/// Content domain hint that selects the structural detection rules during chunking.
+///
+/// `Technical` is the default. `Electronics` adds the same procedure detection
+/// as `Technical` but with electronics-specific vision prompting. `Narrative`
+/// disables all structural detection and uses pure sliding-window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChunkDomain {
@@ -73,6 +121,10 @@ impl fmt::Display for ChunkDomain {
     }
 }
 
+/// Semantic type of a chunk, used by the search layer for filtering and display.
+///
+/// `Procedure` chunks are never split across boundaries (see module doc).
+/// `Image` chunks signal that a vision LLM pass should be attempted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChunkType {
@@ -113,6 +165,10 @@ impl FromStr for ChunkType {
     }
 }
 
+/// A single text chunk ready for storage and embedding.
+///
+/// `heading_path` is a `>` -separated breadcrumb built from the heading stack
+/// (e.g. `"Chapter 1 > Installation > Prerequisites"`).
 #[derive(Clone, Debug)]
 pub struct Chunk {
     pub chunk_index: usize,
@@ -124,6 +180,10 @@ pub struct Chunk {
     pub is_image_heavy: bool,
 }
 
+/// Chunk all chapters according to the provided config.
+///
+/// Dispatches to [`chunk_narrative`] or [`chunk_structured`] based on `config.domain`.
+/// Chunk indices are assigned globally across all chapters.
 pub fn chunk_chapters(chapters: &[ChapterText], config: &ChunkConfig) -> Vec<Chunk> {
     let target_size = config.target_size.max(1);
     let overlap = config.overlap.min(target_size.saturating_sub(1));
@@ -164,7 +224,11 @@ fn chunk_structured(
     target_size: usize,
     overlap: usize,
 ) -> Vec<Chunk> {
-    let lines = chapter.text.lines().map(|line| line.to_string()).collect::<Vec<_>>();
+    let lines = chapter
+        .text
+        .lines()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
     let mut chunks = Vec::new();
     let mut cursor = 0usize;
     let mut heading_stack: Vec<String> = Vec::new();
@@ -325,7 +389,11 @@ fn push_chunk(
         chunk_index: chunks.len(),
         chapter_index,
         heading_path,
-        chunk_type: if is_image_heavy { ChunkType::Image } else { chunk_type },
+        chunk_type: if is_image_heavy {
+            ChunkType::Image
+        } else {
+            chunk_type
+        },
         text,
         word_count,
         is_image_heavy,
@@ -360,7 +428,10 @@ fn split_text_into_chunks(text: &str, target_size: usize, overlap: usize) -> Vec
 
         if !current.is_empty() && current_words + paragraph_words > target_size {
             emit_current_chunk(&mut result, &mut current, &mut current_words);
-            let overlap_text = tail_words(result.last().map(String::as_str).unwrap_or_default(), overlap);
+            let overlap_text = tail_words(
+                result.last().map(String::as_str).unwrap_or_default(),
+                overlap,
+            );
             if !overlap_text.is_empty() {
                 current.push(overlap_text);
             }
@@ -377,7 +448,11 @@ fn split_text_into_chunks(text: &str, target_size: usize, overlap: usize) -> Vec
     result
 }
 
-fn emit_current_chunk(result: &mut Vec<String>, current: &mut Vec<String>, current_words: &mut usize) {
+fn emit_current_chunk(
+    result: &mut Vec<String>,
+    current: &mut Vec<String>,
+    current_words: &mut usize,
+) {
     let text = join_clean_paragraphs(current);
     if !text.is_empty() {
         result.push(text);
@@ -386,6 +461,10 @@ fn emit_current_chunk(result: &mut Vec<String>, current: &mut Vec<String>, curre
     *current_words = 0;
 }
 
+/// Split a single paragraph that exceeds `target_size` using a sliding word window.
+///
+/// `step = target_size - overlap` advances the window on each iteration so consecutive
+/// chunks share `overlap` words of context at their boundaries.
 fn split_long_paragraph(
     paragraph: &str,
     target_size: usize,
@@ -454,6 +533,11 @@ fn parse_heading_line(line: &str) -> Option<(String, usize)> {
     Some((trimmed.to_string(), depth))
 }
 
+/// Collect a contiguous numbered-list block from the start of `lines`.
+///
+/// Requires at least 3 consecutive procedure lines to be recognized as a block.
+/// Fewer than 3 lines are treated as regular paragraph text, avoiding false positives
+/// on lone numbered items embedded in prose.
 fn parse_procedure_block(lines: &[String]) -> Option<(String, usize)> {
     let mut collected = Vec::new();
     let mut consumed = 0usize;
@@ -501,8 +585,7 @@ fn is_title_case_word(word: &str) -> bool {
 
 fn is_recipe_intro_line(line: &str) -> bool {
     let trimmed = line.trim();
-    trimmed.eq_ignore_ascii_case("ingredients")
-        || recipe_serves_regex().is_match(trimmed)
+    trimmed.eq_ignore_ascii_case("ingredients") || recipe_serves_regex().is_match(trimmed)
 }
 
 fn join_clean_lines(lines: &[String]) -> String {

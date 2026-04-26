@@ -1,8 +1,8 @@
-# Codex Desktop App — autolibre Phase 15: Cross-Document Synthesis Engine
+# Codex Desktop App — xcalibre-server Phase 15: Cross-Document Synthesis Engine
 
 ## What Phase 15 Builds
 
-The retrieval and synthesis infrastructure that makes autolibre a grounded knowledge base for any agent — engineering documentation sets, electronics datasheets, culinary libraries, legal corpora, academic collections, or any domain:
+The retrieval and synthesis infrastructure that makes xcalibre-server a grounded knowledge base for any agent — engineering documentation sets, electronics datasheets, culinary libraries, legal corpora, academic collections, or any domain:
 
 - **Stage 1** — Sub-chapter chunking + vision LLM pass (image-heavy pages: schematics, diagrams, charts read natively)
 - **Stage 2** — Hybrid BM25 + semantic retrieval + cross-encoder reranking
@@ -79,7 +79,7 @@ Read before starting each stage:
 - `backend/src/api/search.rs` — existing search handlers to extend (Stage 2)
 - `backend/src/db/queries/books.rs` — query patterns (Stage 2)
 - `backend/src/api/books.rs` — MCP tool surface (Stage 3)
-- `autolibre-mcp/src/tools/mod.rs` — existing MCP tool definitions (Stage 3)
+- `xs-mcp/src/tools/mod.rs` — existing MCP tool definitions (Stage 3)
 - `backend/migrations/sqlite/0019_chunks.sql` — (Stage 1, created by this phase)
 
 ---
@@ -455,7 +455,7 @@ backend/src/api/search.rs — add:
 DELIVERABLE 3 — Update MCP tool
 ─────────────────────────────────────────
 
-autolibre-mcp/src/tools/mod.rs — update semantic_search tool:
+xs-mcp/src/tools/mod.rs — update semantic_search tool:
 
   Replace the existing chapter-level semantic search with chunk-level hybrid search:
 
@@ -497,7 +497,7 @@ cargo clippy --workspace -- -D warnings
 # Manual: ingest a technical PDF; search for an exact error code or parameter name;
 #         verify BM25 finds it; verify semantic finds related concepts
 # Manual: search with rerank=true (LLM enabled); verify ordering improves
-git add backend/ autolibre-mcp/
+git add backend/ xs-mcp/
 git commit -m "Phase 15 Stage 2: hybrid BM25+semantic chunk retrieval, RRF fusion, cross-encoder reranking"
 ```
 
@@ -512,7 +512,7 @@ git commit -m "Phase 15 Stage 2: hybrid BM25+semantic chunk retrieval, RRF fusio
 **Paste this into Codex:**
 
 ```
-Read autolibre-mcp/src/tools/mod.rs, backend/src/api/search.rs,
+Read xs-mcp/src/tools/mod.rs, backend/src/api/search.rs,
 backend/src/api/admin.rs, backend/Cargo.toml,
 docs/ARCHITECTURE.md (the Cross-Document Synthesis section),
 and backend/migrations/sqlite/0019_chunks.sql.
@@ -583,7 +583,7 @@ backend/src/api/collections.rs — new file:
 DELIVERABLE 2 — `synthesize` MCP tool
 ─────────────────────────────────────────
 
-autolibre-mcp/src/tools/mod.rs — add synthesize tool:
+xs-mcp/src/tools/mod.rs — add synthesize tool:
 
   Tool name: "synthesize"
   Description: "Retrieve relevant passages from the library and synthesize
@@ -713,7 +713,7 @@ apps/web/src/features/search/SearchPage.tsx — extend:
 DELIVERABLE 4 — Update MCP tool list
 ─────────────────────────────────────────
 
-autolibre-mcp/src/tools/mod.rs — final MCP tool set:
+xs-mcp/src/tools/mod.rs — final MCP tool set:
 
   search_books       — existing: metadata search (unchanged)
   get_book_metadata  — existing: single book detail (unchanged)
@@ -751,12 +751,12 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 # Manual: create a collection; add 3 books; call synthesize MCP tool with
 #         format="runsheet"; verify output cites specific heading_paths
 # Manual: call synthesize with format="spice-netlist" against an electronics
 #         collection; verify output is valid SPICE syntax
-git add backend/ autolibre-mcp/ apps/web/src/features/
+git add backend/ xs-mcp/ apps/web/src/features/
 git commit -m "Phase 15 Stage 3: collections, synthesize MCP tool (14 formats), collection search UI"
 ```
 

@@ -1,3 +1,18 @@
+//! OPDS-PS 1.2 catalog feeds (Atom/XML) for read-only library discovery by e-readers.
+//!
+//! Mounted at `/opds/`. Unlike API routes, these endpoints have no authentication layer —
+//! they are intended for read-only catalog browsing and are typically behind network-level
+//! access controls. Download links point to `/api/v1/books/:id/formats/:format/download`
+//! which does enforce JWT auth, so unauthenticated catalog browsing is safe.
+//!
+//! Navigation feeds: root, authors, series, publishers, languages, ratings.
+//! Acquisition feeds: all books, recently added, author/series/publisher/language/rating books.
+//! Search: returns an OpenSearch description document when called without `?q=`, or
+//! a filtered acquisition feed when `?q=` is supplied.
+//!
+//! All XML output is character-escaped via `xml_escape`; book entry acquisition links
+//! include the correct MIME type for each format.
+
 use crate::{
     db::queries::{books as book_queries, opds as opds_queries},
     AppError, AppState,
@@ -42,7 +57,7 @@ struct FeedQuery {
 
 async fn root_catalog() -> Result<Response, AppError> {
     let mut xml = String::new();
-    push_feed_header(&mut xml, "Autolibre Catalog", "/opds", "navigation");
+    push_feed_header(&mut xml, "Xcalibre-server Catalog", "/opds", "navigation");
     push_opensearch_stats(&mut xml, 8, 50);
     push_navigation_entry(
         &mut xml,
@@ -534,6 +549,7 @@ async fn build_book_feed(
     Ok(xml)
 }
 
+/// Wraps an XML string in an Axum response with the correct OPDS/Atom content-type header.
 fn xml_response(xml: String) -> Response {
     let mut response = Response::new(Body::from(xml));
     response.headers_mut().insert(
@@ -700,6 +716,7 @@ fn push_book_entry(xml: &mut String, book: &crate::db::models::Book) {
     xml.push_str("  </entry>\n");
 }
 
+/// Maps a file format string to its OPDS acquisition MIME type for the `<link>` element.
 fn acquisition_type_for_format(format: &str) -> &'static str {
     match format.trim().to_ascii_uppercase().as_str() {
         "EPUB" => "application/epub+zip",
@@ -711,6 +728,8 @@ fn acquisition_type_for_format(format: &str) -> &'static str {
     }
 }
 
+/// Escapes the five XML special characters (`&`, `<`, `>`, `"`, `'`) to prevent
+/// malformed Atom output when book titles or descriptions contain them.
 fn xml_escape(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -729,8 +748,8 @@ fn xml_escape(value: &str) -> String {
 fn open_search_description() -> String {
     r#"<?xml version="1.0" encoding="utf-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
-  <ShortName>Autolibre</ShortName>
-  <Description>Search the Autolibre library</Description>
+  <ShortName>Xcalibre-server</ShortName>
+  <Description>Search the Xcalibre-server library</Description>
   <InputEncoding>UTF-8</InputEncoding>
   <Image width="16" height="16" type="image/png">/assets/favicon.png</Image>
   <Url type="application/atom+xml" template="/opds/search?q={searchTerms}" />

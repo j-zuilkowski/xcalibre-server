@@ -1,3 +1,21 @@
+/**
+ * Profile tab — user account information, reading stats summary, and settings.
+ *
+ * Displays:
+ * - Current user name and email (from `GET /api/v1/auth/me`)
+ * - Reading stats summary row (total read, streak, in-progress) from `GET /api/v1/users/me/stats`
+ * - Downloads storage row (file count + used bytes from local SQLite)
+ * - Server URL field — persisted to Expo SecureStore via `setApiBaseUrl()`
+ * - App version from `expo-constants`
+ * - Sign-out button
+ *
+ * The server URL is read from SecureStore on mount so the field reflects
+ * any previously saved value. Changes take effect on the next API call.
+ *
+ * Tapping the stats card navigates to `/stats`.
+ * Tapping the downloads row navigates to `/downloads`.
+ * Sign-out clears both tokens from SecureStore and navigates to `/login`.
+ */
 import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import Constants from "expo-constants";
@@ -5,12 +23,20 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { Ionicons } from "@expo/vector-icons";
-import type { UserStats } from "@autolibre/shared";
+import type { UserStats } from "@xs/shared";
 import { clearTokens } from "../../lib/auth";
 import { getApiBaseUrl, useApi, setApiBaseUrl } from "../../lib/api";
 import { db } from "../../lib/db";
 import { formatBytes, getDownloadSummary } from "../../lib/downloads";
 
+/**
+ * Profile tab screen (Expo Router default export for `/(tabs)/profile`).
+ *
+ * API calls:
+ * - `GET /api/v1/auth/me` — fetches current user on mount
+ * - `GET /api/v1/users/me/stats` — fetches reading stats on mount
+ * - `getDownloadSummary(db)` — queries the local SQLite `local_downloads` table
+ */
 export default function ProfileTabScreen() {
   const router = useRouter();
   const client = useApi();

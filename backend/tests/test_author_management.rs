@@ -11,8 +11,10 @@ use uuid::Uuid;
 async fn test_get_author_detail_includes_books() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let (author_id, first_book_id) = insert_author_with_book(&ctx, "Terry Pratchett", "Guards! Guards!", None).await;
-    let (_, second_book_id) = insert_author_with_book(&ctx, "Terry Pratchett", "Mort", Some(&author_id)).await;
+    let (author_id, first_book_id) =
+        insert_author_with_book(&ctx, "Terry Pratchett", "Guards! Guards!", None).await;
+    let (_, second_book_id) =
+        insert_author_with_book(&ctx, "Terry Pratchett", "Mort", Some(&author_id)).await;
 
     let old_pubdate = "1988-10-01T00:00:00Z";
     let new_pubdate = "1994-11-01T00:00:00Z";
@@ -49,7 +51,8 @@ async fn test_get_author_detail_includes_books() {
 async fn test_get_author_detail_includes_profile_when_present() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let (author_id, _) = insert_author_with_book(&ctx, "N.K. Jemisin", "The Fifth Season", None).await;
+    let (author_id, _) =
+        insert_author_with_book(&ctx, "N.K. Jemisin", "The Fifth Season", None).await;
     insert_author_profile(
         &ctx,
         &author_id,
@@ -79,7 +82,8 @@ async fn test_get_author_detail_includes_profile_when_present() {
 async fn test_get_author_detail_profile_null_when_absent() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let (author_id, _) = insert_author_with_book(&ctx, "Ursula K. Le Guin", "A Wizard of Earthsea", None).await;
+    let (author_id, _) =
+        insert_author_with_book(&ctx, "Ursula K. Le Guin", "A Wizard of Earthsea", None).await;
 
     let response = ctx
         .server
@@ -139,7 +143,8 @@ async fn test_patch_author_creates_profile() {
 async fn test_patch_author_updates_existing_profile() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
-    let (author_id, _) = insert_author_with_book(&ctx, "China Miéville", "Perdido Street Station", None).await;
+    let (author_id, _) =
+        insert_author_with_book(&ctx, "China Miéville", "Perdido Street Station", None).await;
     insert_author_profile(
         &ctx,
         &author_id,
@@ -176,7 +181,13 @@ async fn test_merge_author_moves_books_to_target() {
     let token = ctx.admin_token().await;
     let source_id = insert_author(&ctx, "Source Author").await;
     let target_id = insert_author(&ctx, "Target Author").await;
-    let book_id = insert_book_with_authors(&ctx, "Merge Me", &[&source_id], Some("2020-01-01T00:00:00Z")).await;
+    let book_id = insert_book_with_authors(
+        &ctx,
+        "Merge Me",
+        &[&source_id],
+        Some("2020-01-01T00:00:00Z"),
+    )
+    .await;
 
     let response = ctx
         .server
@@ -224,11 +235,12 @@ async fn test_merge_author_skips_duplicate_attributions() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["books_updated"], 0);
 
-    let rows = sqlx::query("SELECT author_id FROM book_authors WHERE book_id = ? ORDER BY author_id ASC")
-        .bind(&book_id)
-        .fetch_all(&ctx.db)
-        .await
-        .expect("load book authors");
+    let rows =
+        sqlx::query("SELECT author_id FROM book_authors WHERE book_id = ? ORDER BY author_id ASC")
+            .bind(&book_id)
+            .fetch_all(&ctx.db)
+            .await
+            .expect("load book authors");
     let author_ids: Vec<String> = rows.into_iter().map(|row| row.get("author_id")).collect();
     assert_eq!(author_ids, vec![target_id]);
 }
@@ -249,7 +261,13 @@ async fn test_merge_author_deletes_source() {
         None,
     )
     .await;
-    let _ = insert_book_with_authors(&ctx, "Remove Source", &[&source_id], Some("2019-01-01T00:00:00Z")).await;
+    let _ = insert_book_with_authors(
+        &ctx,
+        "Remove Source",
+        &[&source_id],
+        Some("2019-01-01T00:00:00Z"),
+    )
+    .await;
 
     let response = ctx
         .server
@@ -280,7 +298,13 @@ async fn test_merge_author_is_atomic() {
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
     let source_id = insert_author(&ctx, "Atomic Source").await;
-    let book_id = insert_book_with_authors(&ctx, "Atomic Book", &[&source_id], Some("2018-01-01T00:00:00Z")).await;
+    let book_id = insert_book_with_authors(
+        &ctx,
+        "Atomic Book",
+        &[&source_id],
+        Some("2018-01-01T00:00:00Z"),
+    )
+    .await;
     let missing_target_id = Uuid::new_v4().to_string();
 
     let response = ctx

@@ -1,8 +1,22 @@
+//! OAuth account link queries.
+//! Touches: `oauth_accounts`.
+//!
+//! Lookup is keyed on `(provider, provider_user_id)` — the stable identity
+//! issued by the OAuth provider — never on email address.  Auto-linking by
+//! email is intentionally absent to prevent account takeover when a user's
+//! email is spoofed by a different provider.
+//!
+//! `create_oauth_account` is idempotent: if a record already exists for
+//! `(provider, provider_user_id)` it updates `user_id` and `email` (handles
+//! email changes and re-linking) rather than inserting a duplicate.
+
 use crate::db::models::OauthAccount;
 use chrono::Utc;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
+/// Looks up an OAuth account by `(provider, provider_user_id)`.
+/// Returns `None` if no account has been linked for this provider identity.
 pub async fn find_by_provider(
     db: &SqlitePool,
     provider: &str,

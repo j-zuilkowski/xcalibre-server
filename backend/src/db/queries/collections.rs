@@ -1,3 +1,16 @@
+//! Collection (curated book set) CRUD and membership queries.
+//! Touches: `collections`, `collection_books`, `book_chunks`.
+//!
+//! Access control is embedded in the SQL: mutating queries filter by
+//! `owner_id = ? OR is_public = 1` so a single query handles both ownership
+//! and public-write semantics.  `get_collection_detail` builds the response
+//! by first loading the `CollectionSummary`, then fetching `BookSummary` rows
+//! via `list_book_summaries_by_ids` which preserves insertion order.
+//!
+//! `total_chunks` in `CollectionSummary` is derived by counting `book_chunks`
+//! rows joined through `collection_books`; it reflects how much of the
+//! collection has been semantically indexed.
+
 use crate::db::queries::books::BookSummary;
 use anyhow::Context;
 use chrono::Utc;
@@ -230,13 +243,12 @@ pub async fn delete_collection(
     collection_id: &str,
     user_id: &str,
 ) -> anyhow::Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM collections WHERE id = ? AND (owner_id = ? OR is_public = 1)",
-    )
-        .bind(collection_id)
-        .bind(user_id)
-        .execute(db)
-        .await?;
+    let result =
+        sqlx::query("DELETE FROM collections WHERE id = ? AND (owner_id = ? OR is_public = 1)")
+            .bind(collection_id)
+            .bind(user_id)
+            .execute(db)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -279,6 +291,9 @@ async fn add_book_to_collection(
     Ok(CollectionInsertOutcome { inserted, allowed })
 }
 
+/// Adds each book in `book_ids` to the collection.  Returns the total number
+/// of newly-inserted rows and whether the caller has access at all.  Skips
+/// books already in the collection (`INSERT OR IGNORE`).
 pub async fn add_books_to_collection(
     db: &SqlitePool,
     collection_id: &str,

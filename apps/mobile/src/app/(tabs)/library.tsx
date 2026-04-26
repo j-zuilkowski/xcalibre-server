@@ -1,3 +1,20 @@
+/**
+ * Library tab — the home screen of the app.
+ *
+ * Displays all books the current user can access in a two-column grid.
+ * Supports infinite scroll (30 books per page) when online, and falls back
+ * to a local SQLite cache when the device is offline.
+ *
+ * Offline behavior:
+ * - Network state is monitored via `@react-native-community/netinfo`.
+ * - When offline, the `localBooksQuery` reads from the `local_books` table in
+ *   Expo SQLite (populated by the background sync on the previous online session).
+ * - When online, a sync is kicked off on mount via `syncLibrary()` (delta sync
+ *   using `last_modified` as the cursor). A spinner in the header indicates sync progress.
+ *
+ * Pull-to-refresh invalidates the TanStack Query cache (online) or re-runs the
+ * local SQLite query (offline).
+ */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,7 +28,7 @@ import {
 } from "react-native";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { BookSummary, PaginatedResponse } from "@autolibre/shared";
+import type { BookSummary, PaginatedResponse } from "@xs/shared";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack } from "expo-router";
 import { useNetInfo } from "@react-native-community/netinfo";
@@ -21,10 +38,20 @@ import { listLocalBooks } from "../../lib/db";
 import { syncLibrary } from "../../lib/sync";
 import { db } from "../../lib/db";
 
+/** Number of books fetched per page in the infinite scroll query. */
 const PAGE_SIZE = 30;
 
+/**
+ * Stable TanStack Query key for the library infinite query.
+ * Exported so other screens (e.g. book detail) can invalidate the cache
+ * after mutations.
+ */
 export const LIBRARY_QUERY_KEY = ["books", "library"] as const;
 
+/**
+ * Animated placeholder grid shown while the first page of books is loading.
+ * Uses a looping Animated.sequence to fade cards in and out.
+ */
 function LoadingSkeleton() {
   const opacity = useRef(new Animated.Value(0.35)).current;
 
@@ -59,6 +86,7 @@ function LoadingSkeleton() {
   );
 }
 
+/** Displayed when the library is empty (no books found for the current user/library). */
 function EmptyState() {
   const { t } = useTranslation();
   return (
@@ -69,6 +97,18 @@ function EmptyState() {
   );
 }
 
+/**
+ * Main library screen component (Expo Router default export for `/(tabs)/library`).
+ *
+ * Rendering strategy:
+ * - Online: `useInfiniteQuery` calls `GET /api/v1/books` with pagination.
+ * - Offline: `useQuery` reads `local_books` from Expo SQLite via `listLocalBooks`.
+ *
+ * Side effects:
+ * - On mount (online only): runs `syncLibrary()` which fetches books modified
+ *   since the last sync timestamp and upserts them into the local SQLite table.
+ * - The sync spinner is shown in the Stack.Screen `headerRight` during sync.
+ */
 export default function LibraryScreen() {
   const { t } = useTranslation();
   const client = useApi();
@@ -76,6 +116,9 @@ export default function LibraryScreen() {
   const netInfo = useNetInfo();
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Treat the device as offline if either isConnected or isInternetReachable is false.
+  // Both flags must be explicitly false (not null/undefined) to avoid false negatives
+  // during the initial connectivity detection period.
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
   const isOnline = !isOffline;
 

@@ -1,3 +1,19 @@
+//! Webhook registration and delivery queue queries.
+//! Touches: `webhooks`, `webhook_deliveries`, `users`, `roles`.
+//!
+//! `list_enabled_webhooks_for_event` uses `json_each(webhooks.events)` to
+//! filter by a single event string stored in a JSON array column — this is
+//! the only place the schema stores a JSON array in a text column.
+//!
+//! Delivery retry logic: `mark_delivery_retry` updates `next_attempt_at` to
+//! the caller-computed future timestamp and records the error on the parent
+//! `webhooks` row.  `list_pending_deliveries` polls using
+//! `next_attempt_at <= ?` so a NULL `next_attempt_at` is treated as
+//! immediately due (first attempt).
+//!
+//! `list_enabled_admin_webhooks_for_event` is a separate query that only
+//! returns webhooks owned by admin-role users, used for system events.
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -147,6 +163,9 @@ pub async fn delete_webhook(
     Ok(result.rows_affected() > 0)
 }
 
+/// Returns all enabled webhooks whose `events` JSON array contains `event`.
+// json_each() expands the JSON array column so each element can be compared
+// to the bind value; EXISTS stops at the first match.
 pub async fn list_enabled_webhooks_for_event(
     db: &SqlitePool,
     event: &str,
@@ -225,6 +244,9 @@ pub async fn insert_delivery(
     Ok(())
 }
 
+/// Polls for deliveries that are due: `status = 'pending'` and
+/// `next_attempt_at IS NULL OR next_attempt_at <= now`.  Returns up to
+/// `limit` rows ordered by `created_at ASC` (oldest first).
 pub async fn list_pending_deliveries(
     db: &SqlitePool,
     now: &str,

@@ -1,3 +1,20 @@
+//! Kobo device and sync queries.
+//! Touches: `kobo_devices`, `kobo_reading_state`, `books`, `book_authors`,
+//! `authors`, `book_tags`, `tags`, `formats`, `identifiers`, `series`.
+//!
+//! `list_kobo_books_since` implements the delta-sync cursor: it accepts an
+//! optional ISO-8601 `since` string and returns only books modified after that
+//! timestamp, ordered by `last_modified ASC` so clients can page forward and
+//! resume from the last received `last_modified` value.
+//!
+//! The query uses a CTE (`paged_books`) to apply pagination before joining the
+//! one-to-many author/tag/format/identifier rows, avoiding row explosion on
+//! large libraries.  Results are aggregated in Rust using `BTreeMap` keyed by
+//! entity ID.
+//!
+//! `upsert_device` resets `sync_token` and `last_sync_at` to NULL when the
+//! device is claimed by a different user, forcing a full resync.
+
 use crate::db::models::{
     AuthorRef, Book, FormatRef, Identifier, KoboDevice, KoboReadingState, SeriesRef, TagRef,
 };
@@ -90,6 +107,10 @@ pub async fn list_devices(db: &SqlitePool) -> anyhow::Result<Vec<KoboDeviceListI
         .collect())
 }
 
+/// Registers or updates a Kobo device.  On conflict with an existing
+/// `device_id` the `user_id` and `device_name` are updated; the `sync_token`
+/// is cleared if the owning user changes (ownership transfer forces a full
+/// resync on next connect).
 pub async fn upsert_device(
     db: &SqlitePool,
     user_id: &str,
@@ -162,6 +183,10 @@ pub async fn update_device_sync_token(
     Ok(())
 }
 
+/// Upserts the Kobo device-specific reading position for a book.  On conflict
+/// (`device_id`, `book_id`), all position fields are replaced with the new
+/// values; `last_modified` is always taken from the device's reported
+/// timestamp.
 pub async fn upsert_reading_state(
     db: &SqlitePool,
     device_row_id: &str,
@@ -213,6 +238,14 @@ pub async fn upsert_reading_state(
     })
 }
 
+/// Delta-sync query: returns books modified after `since` (exclusive),
+/// ordered by `last_modified ASC` so the client can page forward.
+///
+/// Returns `(books, total)` where `total` is the unfiltered count for
+/// pagination headers.  The query uses a CTE to paginate `books` first, then
+/// joins one-to-many associations (authors, tags, formats, identifiers) on
+/// the paginated set to avoid row explosion.  Aggregation is done in Rust
+/// rather than SQL to keep the query compatible with both SQLite and MariaDB.
 pub async fn list_kobo_books_since(
     db: &SqlitePool,
     since: Option<&str>,

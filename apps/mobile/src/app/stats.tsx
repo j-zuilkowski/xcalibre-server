@@ -1,16 +1,37 @@
+/**
+ * Reading statistics screen.
+ *
+ * Route: `/stats` (navigated to from the Profile tab stats card)
+ *
+ * Displays:
+ * - 2×2 stat card grid: total books read, books read this year, current streak,
+ *   books in progress
+ * - Summary row: total sessions and average progress per session
+ * - Top 3 authors and top 3 tags by book count
+ * - Format breakdown: all formats read with their book counts
+ *
+ * API calls:
+ * - `GET /api/v1/users/me/stats` — loaded on mount; all data comes from a single call
+ *
+ * No offline fallback — shows an error card if the request fails.
+ */
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Stack } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { UserStats } from "@autolibre/shared";
+import type { UserStats } from "@xs/shared";
 import { useApi } from "../lib/api";
 
 function formatPercent(value: number, t: (key: string) => string): string {
   return `${value.toFixed(1)} ${t("stats.pp")}`;
 }
 
+/**
+ * Stats screen (Expo Router default export for `/stats`).
+ * Formats are sorted by count descending, then alphabetically, before rendering.
+ */
 export default function StatsScreen() {
   const { t } = useTranslation();
   const client = useApi();

@@ -1,5 +1,5 @@
 {
-  "app_name": "Autolibre",
+  "app_name": "Xcalibre-server",
   "common": {
     "actions": "Aktionen",
     "active": "Aktiv",
@@ -56,6 +56,8 @@
     "admin_panel": "Admin",
     "downloads": "Downloads",
     "library": "Bibliothek",
+    "import_history": "Import-Verlauf",
+    "reading_stats": "Lese-Statistiken",
     "profile": "Profil",
     "search": "Suche",
     "shelves": "Regale"
@@ -104,6 +106,25 @@
     "page_title": "Profil",
     "server_url": "Server-URL"
   },
+  "stats": {
+    "average_progress": "Durchschnittlicher Fortschritt",
+    "books_read": "Gelesene Bücher",
+    "days": "{{value}} Tage",
+    "formats_breakdown": "Formatverteilung",
+    "formats_breakdown_subtitle": "Anteil der Bücher nach Format",
+    "in_progress": "In Bearbeitung",
+    "last_12_months": "Letzte 12 Monate",
+    "monthly_books": "Bücher pro Monat",
+    "page_title": "Lese-Statistiken",
+    "pp": "pp",
+    "streak": "Lesestreak",
+    "this_month": "Dieser Monat",
+    "this_year": "Dieses Jahr",
+    "top_authors": "Top-Autoren",
+    "top_tags": "Top-Tags",
+    "total_sessions": "Lesesitzungen",
+    "unable_to_load": "Lese-Statistiken konnten nicht geladen werden."
+  },
   "library": {
     "author": "Autor",
     "books": "Bücher",
@@ -118,7 +139,11 @@
     "show_archived": "Archivierte anzeigen",
     "sort": "Sortieren",
     "title": "Titel",
-    "unable_to_load": "Bibliothek konnte nicht geladen werden."
+    "unable_to_load": "Bibliothek konnte nicht geladen werden.",
+    "format": "Format",
+    "series": "Series",
+    "tag": "Fiction",
+    "language": "English"
   },
   "downloads": {
     "activity": "Download-Aktivität",
@@ -292,6 +317,7 @@
   "admin": {
     "add_custom_column": "Add custom column",
     "add_library": "Add library",
+    "authors": "Autoren",
     "all_job_types": "All job types",
     "all_llm_surfaces_disabled": "All LLM surfaces disabled.",
     "all_statuses": "All statuses",
@@ -321,6 +347,7 @@
     "job": "Job",
     "job_id": "Job ID",
     "jobs": "Jobs",
+    "scheduled_tasks": "Geplante Aufgaben",
     "kobo": "Kobo",
     "kobo_description": "Manage Kobo device sync and restrictions.",
     "kobo_devices": "Kobo devices",

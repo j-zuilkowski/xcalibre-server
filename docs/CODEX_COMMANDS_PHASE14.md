@@ -1,4 +1,4 @@
-# Codex Desktop App — autolibre Phase 14: Ecosystem + Accessibility
+# Codex Desktop App — xcalibre-server Phase 14: Ecosystem + Accessibility
 
 ## What Phase 14 Builds
 
@@ -221,7 +221,7 @@ backend/src/api/users.rs — add route:
             - If exclusive_shelf == "read": SET book_user_state.is_read = 1,
               read_at = date_read (or now())
             - If my_rating > 0: SET books.rating = my_rating * 2
-              (Goodreads uses 1–5 stars; autolibre uses 0–10)
+              (Goodreads uses 1–5 stars; xcalibre-server uses 0–10)
             - For each shelf in bookshelves: find or create shelf by name,
               add book to shelf
             - Increment matched counter
@@ -277,7 +277,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ apps/web/src/features/profile/ImportPage.tsx
 git commit -m "Phase 14 Stage 1: Goodreads and StoryGraph CSV import (reading history + shelves)"
 ```
@@ -425,7 +425,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ apps/web/src/features/
 git commit -m "Phase 14 Stage 2: author management — profiles, detail page, admin merge"
 ```
@@ -527,7 +527,7 @@ backend/src/api/webhooks.rs — new file:
     Encrypt the secret before storing (AES-256-GCM, same pattern as totp_secret).
 
   POST /users/me/webhooks/:id/test:
-    Fire a delivery with event "ping" and payload { "message": "Webhook test from autolibre" }.
+    Fire a delivery with event "ping" and payload { "message": "Webhook test from xcalibre-server" }.
     Return the delivery result synchronously (attempt the HTTP call immediately, max 5s timeout).
 
 ─────────────────────────────────────────
@@ -549,8 +549,8 @@ backend/src/webhooks.rs — new file:
       2. Build HMAC-SHA256 signature: HMAC-SHA256(secret, payload_json_string)
       3. POST to webhook.url with:
            Content-Type: application/json
-           X-Autolibre-Signature: sha256={hex_signature}
-           X-Autolibre-Event: {event}
+           X-Xcalibre-server-Signature: sha256={hex_signature}
+           X-Xcalibre-server-Event: {event}
          Body: payload JSON
          Timeout: 10 seconds
       4. On 2xx: UPDATE status='delivered', delivered_at=now(), response_status=N
@@ -613,7 +613,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ apps/web/src/features/profile/WebhooksPage.tsx
 git commit -m "Phase 14 Stage 3: webhook delivery — CRUD, HMAC signing, retry, SSRF guard"
 ```
@@ -711,7 +711,7 @@ apps/mobile/src/app/(tabs)/profile.tsx — add "Downloads" row to the settings l
 ─────────────────────────────────────────
 VERIFICATION
 ─────────────────────────────────────────
-pnpm --filter @autolibre/mobile exec tsc --noEmit
+pnpm --filter @xs/mobile exec tsc --noEmit
 # Manual: download a book; open Downloads screen; verify it appears with correct size
 # Manual: swipe to delete; verify file is removed from device storage
 git add apps/mobile/src/app/downloads.tsx apps/mobile/src/app/shelf/[id].tsx apps/mobile/src/app/(tabs)/profile.tsx apps/mobile/src/lib/
@@ -884,8 +884,8 @@ apps/web/e2e/accessibility.spec.ts:
 ─────────────────────────────────────────
 VERIFICATION
 ─────────────────────────────────────────
-pnpm --filter @autolibre/web build
-pnpm --filter @autolibre/web test:e2e -- --grep "accessibility"
+pnpm --filter @xs/web build
+pnpm --filter @xs/web test:e2e -- --grep "accessibility"
 # Manual: navigate entire app using only Tab, Shift+Tab, Enter, Escape, Arrow keys
 # Manual: run with macOS VoiceOver or NVDA — verify library grid and reader are usable
 git add apps/web/src/ apps/web/e2e/accessibility.spec.ts
@@ -982,7 +982,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ apps/web/src/features/library/AuthorPage.tsx
 git commit -m "Phase 14 Stage 6: author photo upload + serving (JPEG + WebP, placeholder SVG)"
 ```

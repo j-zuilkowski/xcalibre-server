@@ -1,27 +1,61 @@
+//! CSV import parsers for Goodreads and StoryGraph export files.
+//!
+//! Both parsers are tolerant of extra/missing columns (`flexible = true`) and trim
+//! leading/trailing whitespace from every field.  Unknown columns are silently ignored.
+//!
+//! # Goodreads format
+//! Export via Goodreads → My Books → Export.  Expected columns:
+//! `Title`, `Author`, `My Rating`, `Date Read`, `Bookshelves`, `Exclusive Shelf`.
+//!
+//! # StoryGraph format
+//! Export via StoryGraph → Settings → Export.  Expected columns:
+//! `Title`, `Authors`, `Read Status`, `Star Rating (x/5)`, `Last Date Read`, `Tags`.
+//!
+//! # Shelf mapping
+//! Shelf names from both formats are used as-is; the API layer maps them to
+//! xcalibre-server shelves (e.g. `"read"` → read shelf, `"to-read"` → want-to-read).
+//! Books are matched against the library by ISBN first, then title+author.
+//!
+//! # Error handling
+//! Returns `AppError::Unprocessable` when required column headers are missing or a
+//! CSV row is malformed.  Individual bad fields fall back to default values.
+
 use crate::AppError;
 use csv::{ReaderBuilder, StringRecord};
 use std::io::Cursor;
 
+/// A single row from a Goodreads CSV export.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GoodreadsRow {
     pub title: String,
     pub author: String,
+    /// Star rating 0–5; 0 means unrated.
     pub my_rating: u8,
     pub date_read: Option<String>,
+    /// Extra shelf names beyond `exclusive_shelf`.
     pub bookshelves: Vec<String>,
+    /// Primary shelf (`"read"`, `"currently-reading"`, `"to-read"`, etc.), lowercased.
     pub exclusive_shelf: String,
 }
 
+/// A single row from a StoryGraph CSV export.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StorygraphRow {
     pub title: String,
     pub authors: String,
+    /// Lowercased status string (e.g. `"read"`, `"currently reading"`).
     pub read_status: String,
+    /// Rating out of 5; `None` means unrated.
     pub star_rating: Option<f32>,
     pub date_finished: Option<String>,
     pub tags: Vec<String>,
 }
 
+/// Parse a Goodreads CSV export byte slice into a list of rows.
+///
+/// # Errors
+/// Returns [`AppError::Unprocessable`] when expected column headers are missing or a
+/// row cannot be read.
 pub fn parse_goodreads_csv(bytes: &[u8]) -> Result<Vec<GoodreadsRow>, AppError> {
     let mut reader = csv_reader(bytes);
     let headers = reader
@@ -56,6 +90,11 @@ pub fn parse_goodreads_csv(bytes: &[u8]) -> Result<Vec<GoodreadsRow>, AppError> 
     Ok(rows)
 }
 
+/// Parse a StoryGraph CSV export byte slice into a list of rows.
+///
+/// # Errors
+/// Returns [`AppError::Unprocessable`] when expected column headers are missing or a
+/// row cannot be read.
 pub fn parse_storygraph_csv(bytes: &[u8]) -> Result<Vec<StorygraphRow>, AppError> {
     let mut reader = csv_reader(bytes);
     let headers = reader

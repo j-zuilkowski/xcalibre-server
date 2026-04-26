@@ -1,3 +1,20 @@
+/**
+ * Integration tests for the download queue and local file management module.
+ *
+ * Tests cover:
+ * - `formatBytes` display helper
+ * - `resolvePreferredDownloadFormat` format selection logic
+ * - `downloadBook` happy path (file written, SQLite row inserted, auth header set)
+ * - Low-storage warning alert flow
+ * - `getLocalPath` returns null when not downloaded
+ * - `deleteDownload` removes the file and the SQLite row
+ * - `getDownloadSummary` and `listDownloadedBooks` return correct data
+ * - `downloadBook` throws `DownloadCancelledError` when `downloadAsync` returns undefined
+ *
+ * All `expo-file-system` and `expo-secure-store` calls are mocked at the module
+ * level. Each test uses an in-memory SQLite database (`:memory:`) with migrations
+ * applied so the schema is always fresh.
+ */
 import { Alert } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as SQLite from "expo-sqlite";
@@ -59,6 +76,10 @@ function createResumableMock() {
   } as never;
 }
 
+/**
+ * Test suite for the downloads module.
+ * Each test gets a fresh in-memory SQLite database and reset mock state.
+ */
 describe("downloads", () => {
   beforeEach(() => {
     mockGetAccessToken.mockReset();
@@ -79,12 +100,17 @@ describe("downloads", () => {
     vi.restoreAllMocks();
   });
 
+  /** Verifies human-readable byte formatting for zero, KB, and MB values. */
   it("formats bytes for display", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(1536)).toBe("1.5 KB");
     expect(formatBytes(3_456_789)).toBe("3.3 MB");
   });
 
+  /**
+   * Verifies that an explicit preference (e.g. "mobi") overrides the default order,
+   * and that null preference falls back to EPUB as the highest-priority default.
+   */
   it("resolves preferred formats with explicit preference first", () => {
     const formats = [
       { id: "1", format: "PDF", size_bytes: 20 },
@@ -96,6 +122,12 @@ describe("downloads", () => {
     expect(resolvePreferredDownloadFormat(formats, null)?.format).toBe("EPUB");
   });
 
+  /**
+   * Verifies that a successful download:
+   * - Returns the correct local file path
+   * - Calls `FileSystem.createDownloadResumable` with the correct server URL and Bearer token
+   * - Inserts a row with the local path and file size into `local_downloads`
+   */
   it("test_download_stores_path", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
     await runMigrations(database);
@@ -130,6 +162,10 @@ describe("downloads", () => {
     expect(row?.size_bytes).toBe(1234);
   });
 
+  /**
+   * Verifies that when free disk space minus the file size falls below 200 MB,
+   * an `Alert.alert` is shown and the download proceeds if the user confirms.
+   */
   it("test_download_prompts_on_low_storage", async () => {
     vi.mocked(FileSystem.getFreeDiskStorageAsync).mockResolvedValue(100 * 1024 * 1024);
 
@@ -150,6 +186,7 @@ describe("downloads", () => {
     alertSpy.mockRestore();
   });
 
+  /** Verifies that `getLocalPath` returns null for a book that has not been downloaded. */
   it("test_get_local_path_returns_null_when_not_downloaded", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
     await runMigrations(database);
@@ -157,6 +194,10 @@ describe("downloads", () => {
     await expect(getLocalPath(database, "book-1", "EPUB")).resolves.toBeNull();
   });
 
+  /**
+   * Verifies that `deleteDownload` calls `FileSystem.deleteAsync` with the correct
+   * path and removes the corresponding row from `local_downloads`.
+   */
   it("test_delete_removes_file_and_row", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
     await runMigrations(database);
@@ -184,6 +225,12 @@ describe("downloads", () => {
     expect(row).toBeNull();
   });
 
+  /**
+   * Verifies that after downloading a book:
+   * - `getDownloadSummary` returns the correct file count and total bytes
+   * - `listDownloadedBooks` returns a row matching the downloaded book's metadata
+   * This test also seeds `local_books` to exercise the LEFT JOIN in `listDownloadedBooks`.
+   */
   it("test_summary_and_listing_include_downloaded_rows", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
     await runMigrations(database);
@@ -243,6 +290,10 @@ describe("downloads", () => {
     ]);
   });
 
+  /**
+   * Verifies that when `FileSystem.downloadAsync` returns undefined (OS-level cancel),
+   * `downloadBook` throws `DownloadCancelledError` rather than a generic Error.
+   */
   it("test_cancel_download_throws_cancelled_error", async () => {
     const database = await SQLite.openDatabaseAsync(":memory:");
     await runMigrations(database);

@@ -71,7 +71,7 @@ async fn setup_totp_for_user(
     let otpauth_uri = setup_body["otpauth_uri"].as_str().expect("uri").to_string();
     let code = generate_code(
         &secret_base32,
-        "autolibre",
+        "xcalibre-server",
         &format!("{username}@example.com"),
     );
 
@@ -124,9 +124,9 @@ async fn test_setup_generates_valid_otpauth_uri() {
     let body: Value = response.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret");
     let otpauth_uri = body["otpauth_uri"].as_str().expect("uri");
-    assert!(otpauth_uri.starts_with("otpauth://totp/autolibre:"));
+    assert!(otpauth_uri.starts_with("otpauth://totp/xcalibre-server:"));
     assert!(otpauth_uri.contains(&format!("secret={secret_base32}")));
-    assert!(otpauth_uri.contains("issuer=autolibre"));
+    assert!(otpauth_uri.contains("issuer=xcalibre-server"));
     assert!(otpauth_uri.contains("algorithm=SHA1"));
     assert!(otpauth_uri.contains("digits=6"));
     assert!(otpauth_uri.contains("period=30"));
@@ -158,7 +158,7 @@ async fn test_confirm_with_valid_code_enables_totp() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret");
-    let code = generate_code(secret_base32, "autolibre", &user.email);
+    let code = generate_code(secret_base32, "xcalibre-server", &user.email);
 
     let confirm = ctx
         .server
@@ -226,7 +226,7 @@ async fn test_confirm_returns_8_backup_codes() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret");
-    let code = generate_code(secret_base32, "autolibre", &user.email);
+    let code = generate_code(secret_base32, "xcalibre-server", &user.email);
 
     let confirm = ctx
         .server
@@ -282,7 +282,7 @@ async fn test_login_with_totp_enabled_returns_totp_required() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret");
-    let code = generate_code(secret_base32, "autolibre", &user.email);
+    let code = generate_code(secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -333,7 +333,7 @@ async fn test_totp_verify_success_returns_tokens_and_clears_lockout() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -355,7 +355,7 @@ async fn test_totp_verify_success_returns_tokens_and_clears_lockout() {
         .await;
     let totp_login_body: Value = totp_login.json();
     let totp_token = totp_login_body["totp_token"].as_str().expect("totp token");
-    let verify_code = generate_code(&secret_base32, "autolibre", &user.email);
+    let verify_code = generate_code(&secret_base32, "xcalibre-server", &user.email);
 
     let preexisting_lockout = (Utc::now() - Duration::minutes(5)).to_rfc3339();
     sqlx::query("UPDATE users SET login_attempts = ?, locked_until = ? WHERE id = ?")
@@ -405,7 +405,7 @@ async fn test_verify_with_invalid_code_returns_422() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -456,7 +456,7 @@ async fn test_verify_backup_code_marks_used() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -523,7 +523,7 @@ async fn test_verify_backup_code_format_and_lookup_failures_hit_db() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -636,7 +636,7 @@ async fn test_totp_token_rejected_as_access_token() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -686,7 +686,7 @@ async fn test_admin_can_disable_totp_for_any_user() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")
@@ -743,7 +743,7 @@ async fn test_self_disable_requires_correct_password() {
         .await;
     let body: Value = setup.json();
     let secret_base32 = body["secret_base32"].as_str().expect("secret").to_string();
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let confirm = ctx
         .server
         .post("/api/v1/auth/totp/confirm")

@@ -1,3 +1,16 @@
+//! Kobo e-reader sync protocol implementation (reverse-engineered Kobo REST API).
+//!
+//! Mounted at `/kobo/:kobo_token/v1/`. The `:kobo_token` path segment is a per-device
+//! opaque token validated by `kobo_auth` middleware before any handler runs.
+//!
+//! Routes: `/initialization` (device registration), `/library/sync` (incremental book
+//! sync), `/library/:id/state` (reading position push), `/library/:id/metadata`
+//! (single-book metadata), `/library/:id` (remove from device), `/user/profile`.
+//!
+//! Only EPUB and PDF formats are exposed to Kobo devices. Download URLs point back to
+//! the standard `/api/v1/books/:id/formats/:format/download` routes, which enforce auth.
+//! Reading state is synced bidirectionally into `reading_progress` via `sync_progress`.
+
 use crate::{
     db::queries::{books as book_queries, kobo as kobo_queries, shelves as shelf_queries},
     middleware::kobo::KoboAuthContext,
@@ -13,6 +26,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Number of books fetched per DB page during library sync pagination.
 const KOBO_PAGE_SIZE: i64 = 100;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -121,6 +135,8 @@ struct KoboRemovedResponse {
     removed: bool,
 }
 
+/// Device initialization: registers the device if unknown (using `X-Kobo-DeviceId` header)
+/// and returns the URL map and feature flags the Kobo firmware uses for subsequent calls.
 async fn initialization(
     State(state): State<AppState>,
     Extension(context): Extension<KoboAuthContext>,
@@ -132,6 +148,8 @@ async fn initialization(
     )))
 }
 
+/// Incremental library sync: returns books modified since the device's last sync token
+/// and the user's shelf (collection) changes, then updates the stored sync token.
 async fn library_sync(
     State(state): State<AppState>,
     Extension(context): Extension<KoboAuthContext>,
@@ -158,6 +176,8 @@ async fn library_sync(
     }))
 }
 
+/// Receives a reading-position update from the Kobo device and persists it to both
+/// `kobo_reading_states` and the unified `reading_progress` table.
 async fn update_reading_state(
     State(state): State<AppState>,
     Extension(context): Extension<KoboAuthContext>,
@@ -222,6 +242,8 @@ async fn book_metadata(
     Ok(Json(build_book_metadata(&book)))
 }
 
+/// Kobo firmware calls this to remove a book from the device; we confirm the book exists
+/// and return `removed: true` without actually deleting library data.
 async fn remove_book(
     State(state): State<AppState>,
     Extension(context): Extension<KoboAuthContext>,
@@ -275,6 +297,8 @@ fn build_initialization_response(
     }
 }
 
+/// Returns the registered device from context if already resolved, otherwise registers it
+/// using the `X-Kobo-DeviceId` and `X-Kobo-DeviceName` headers from the request.
 async fn ensure_device(
     state: &AppState,
     context: &KoboAuthContext,
@@ -460,6 +484,8 @@ async fn supported_format_for_book(
     Err(AppError::NotFound)
 }
 
+/// Upserts a reading progress record into `reading_progress` using the Kobo-provided
+/// CFI position and percentage; conflicts on `(user_id, book_id)` update in place.
 async fn sync_progress(
     state: &AppState,
     user_id: &str,

@@ -1,3 +1,17 @@
+//! Atomic book upload insert.
+//! Touches: `books`, `book_authors`, `authors`, `formats`, `identifiers`.
+//!
+//! `insert_uploaded_book_impl` wraps the full insert in a single transaction:
+//! - Book metadata row is written first.
+//! - Author names are normalised (split on `;`, `&`, `,`; deduplicated;
+//!   fallback to "Unknown Author") then resolved via `get_or_create_author`.
+//! - A single format row is inserted with the file path from the caller.
+//! - Identifiers are deduplicated by lower-cased `id_type` before insert.
+//!
+//! Duplicate detection (ISBN + title/author fuzzy match) is the caller's
+//! responsibility before invoking this function.  On commit failure the
+//! transaction is automatically rolled back by sqlx.
+
 use super::books::{
     get_book_by_id, get_or_create_author, normalize_author_names, optional_trimmed, UploadBookInput,
 };
@@ -6,6 +20,10 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+/// Inserts a new book with its format file, authors, and identifiers in a
+/// single transaction.  Returns the fully-hydrated `Book` loaded via
+/// `get_book_by_id` after commit.  Errors if the transaction fails for any
+/// reason; the caller must handle file cleanup in that case.
 pub async fn insert_uploaded_book_impl(
     db: &SqlitePool,
     input: UploadBookInput,

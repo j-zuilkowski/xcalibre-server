@@ -107,7 +107,7 @@ async fn start_hook_server(
 async fn custom_context(http_client: reqwest::Client) -> TestContext {
     let storage = tempfile::tempdir().expect("tempdir");
     let db = test_db().await;
-    std::env::set_var("AUTOLIBRE_DISABLE_METRICS", "1");
+    std::env::set_var("XCS_DISABLE_METRICS", "1");
 
     let mut config = AppConfig::default();
     config.app.storage_path = storage.path().to_string_lossy().to_string();
@@ -363,7 +363,7 @@ async fn test_delivery_sends_correct_hmac_signature() {
     assert_eq!(
         request
             .headers
-            .get("X-Autolibre-Event")
+            .get("X-Xcalibre-server-Event")
             .and_then(|value| value.to_str().ok()),
         Some("book.added")
     );
@@ -377,7 +377,7 @@ async fn test_delivery_sends_correct_hmac_signature() {
     assert_eq!(
         request
             .headers
-            .get("X-Autolibre-Signature")
+            .get("X-Xcalibre-server-Signature")
             .and_then(|value| value.to_str().ok()),
         Some(expected.as_str())
     );
@@ -570,7 +570,7 @@ async fn test_test_endpoint_fires_ping_synchronously() {
     assert_eq!(
         captured[0]
             .headers
-            .get("X-Autolibre-Event")
+            .get("X-Xcalibre-server-Event")
             .and_then(|value| value.to_str().ok()),
         Some("ping")
     );
@@ -578,6 +578,6 @@ async fn test_test_endpoint_fires_ping_synchronously() {
         serde_json::from_str(&captured[0].body).expect("parse body");
     assert_eq!(
         parsed_body,
-        json!({ "message": "Webhook test from autolibre" })
+        json!({ "message": "Webhook test from xcalibre-server" })
     );
 }

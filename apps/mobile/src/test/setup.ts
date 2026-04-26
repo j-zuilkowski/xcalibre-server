@@ -10,6 +10,15 @@ vi.mock("expo-image", () => {
   };
 });
 
+vi.mock("@expo/vector-icons", () => {
+  return {
+    Ionicons: "Ionicons",
+    MaterialIcons: "MaterialIcons",
+    Feather: "Feather",
+    AntDesign: "AntDesign",
+  };
+});
+
 vi.mock("expo-secure-store", () => {
   const store = new Map<string, string>();
 

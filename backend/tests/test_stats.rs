@@ -60,7 +60,13 @@ fn shift_month(year: i32, month: u32, offset: i32) -> (i32, u32) {
     (shifted_year, shifted_month as u32)
 }
 
-async fn insert_book_user_state(ctx: &TestContext, user_id: &str, book_id: &str, updated_at: &str, is_read: bool) {
+async fn insert_book_user_state(
+    ctx: &TestContext,
+    user_id: &str,
+    book_id: &str,
+    updated_at: &str,
+    is_read: bool,
+) {
     sqlx::query(
         r#"
         INSERT INTO book_user_state (user_id, book_id, is_read, is_archived, updated_at)
@@ -132,9 +138,15 @@ async fn test_stats_returns_zero_for_new_user() {
     assert_eq!(stats["reading_streak_days"], 0);
     assert_eq!(stats["longest_streak_days"], 0);
     assert_eq!(stats["average_progress_per_session"], 0.0);
-    assert!(stats["formats_read"].as_object().is_some_and(|formats| formats.is_empty()));
-    assert!(stats["top_tags"].as_array().is_some_and(|tags| tags.is_empty()));
-    assert!(stats["top_authors"].as_array().is_some_and(|authors| authors.is_empty()));
+    assert!(stats["formats_read"]
+        .as_object()
+        .is_some_and(|formats| formats.is_empty()));
+    assert!(stats["top_tags"]
+        .as_array()
+        .is_some_and(|tags| tags.is_empty()));
+    assert!(stats["top_authors"]
+        .as_array()
+        .is_some_and(|authors| authors.is_empty()));
     assert_eq!(stats["monthly_books"].as_array().map(Vec::len), Some(12));
     assert!(stats["monthly_books"]
         .as_array()
@@ -216,7 +228,9 @@ async fn test_streak_counts_consecutive_days() {
 
     for offset in 0..3 {
         let date = today - chrono::Duration::days(offset);
-        let (book, _) = ctx.create_book_with_file(&format!("Book {offset}"), "EPUB").await;
+        let (book, _) = ctx
+            .create_book_with_file(&format!("Book {offset}"), "EPUB")
+            .await;
         let format_id = book.formats[0].id.clone();
         insert_reading_progress(
             &ctx,
@@ -246,7 +260,9 @@ async fn test_streak_resets_on_gap() {
     let day_offsets = [0_i64, 2, 3];
     for offset in day_offsets {
         let date = today - chrono::Duration::days(offset);
-        let (book, _) = ctx.create_book_with_file(&format!("Book {offset}"), "EPUB").await;
+        let (book, _) = ctx
+            .create_book_with_file(&format!("Book {offset}"), "EPUB")
+            .await;
         let format_id = book.formats[0].id.clone();
         insert_reading_progress(
             &ctx,
@@ -318,7 +334,9 @@ async fn test_monthly_books_covers_last_12_months() {
     insert_reading_progress(&ctx, &user_id, &old_book.id, &old_format, &old_date, 30.0).await;
 
     let stats = stats_body(&ctx, &token).await;
-    let months = stats["monthly_books"].as_array().expect("monthly books array");
+    let months = stats["monthly_books"]
+        .as_array()
+        .expect("monthly books array");
 
     assert_eq!(months.len(), 12);
 

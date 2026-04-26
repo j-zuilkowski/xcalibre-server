@@ -1,4 +1,4 @@
-# Codex Desktop App — autolibre Phase 16: Security Remediation
+# Codex Desktop App — xcalibre-server Phase 16: Security Remediation
 
 ## What Phase 16 Builds
 
@@ -28,7 +28,7 @@ Targeted fixes for every finding from the Phase 15 post-completion security and 
 The function signature accepts `_total: u64` but ignores it, deferring clamping to `get_range()`. This means `bytes=0-18446744073709551615` is accepted and passed to the storage layer, which must clamp it at read time — a memory pressure risk for large files. The fix is to validate `start < total` and `end < total` at parse time, returning `None` for out-of-bounds ranges (clients receive 416 Range Not Satisfiable).
 
 **HKDF salt separation:**
-Using `None` as the HKDF salt is not cryptographically wrong (the IKM provides all entropy), but it means TOTP key derivation and webhook key derivation use the same salt-less HKDF invocation over the same input key material. Distinct documented constant salts (`b"autolibre-totp-v1"` and `b"autolibre-webhook-v1"`) provide domain separation — a leak of one derived key does not help recover another.
+Using `None` as the HKDF salt is not cryptographically wrong (the IKM provides all entropy), but it means TOTP key derivation and webhook key derivation use the same salt-less HKDF invocation over the same input key material. Distinct documented constant salts (`b"xcalibre-server-totp-v1"` and `b"xcalibre-server-webhook-v1"`) provide domain separation — a leak of one derived key does not help recover another.
 
 **Proxy auth trust model:**
 `X-Remote-User` header authentication is a common pattern for deployments behind Authentik, Authelia, or Nginx auth_request. The risk is that any client who reaches the backend port directly (bypassing the proxy) can set this header arbitrarily. The mitigation is a configurable trusted proxy CIDR list checked against the connection's remote IP. Operators who run behind a proxy set `auth.proxy.trusted_cidrs = ["127.0.0.1/32", "10.0.0.0/8"]`; all other sources have the header stripped before processing.
@@ -488,8 +488,8 @@ DELIVERABLE
 
 backend/src/auth/totp.rs — add distinct salt constants:
 
-  const TOTP_HKDF_SALT:    &[u8] = b"autolibre-totp-v1";
-  const WEBHOOK_HKDF_SALT: &[u8] = b"autolibre-webhook-v1";
+  const TOTP_HKDF_SALT:    &[u8] = b"xcalibre-server-totp-v1";
+  const WEBHOOK_HKDF_SALT: &[u8] = b"xcalibre-server-webhook-v1";
 
   Keep the existing TOTP_LABEL and WEBHOOK_LABEL info constants unchanged —
   they differentiate the expand() output; salts differentiate the extract() step.
@@ -1060,13 +1060,13 @@ Audit and enforce SameSite=Strict on the refresh token cookie.
 BACKGROUND
 ─────────────────────────────────────────
 
-autolibre uses JWT bearer tokens for API access (in Authorization header).
+xcalibre-server uses JWT bearer tokens for API access (in Authorization header).
 Browser clients store the refresh token in an HttpOnly cookie. If that cookie
 is SameSite=Lax or SameSite=None, cross-site requests (CSRF) can trigger
 a token refresh and obtain a new access token on behalf of the user.
 
 SameSite=Strict prevents the cookie from being sent on any cross-origin
-request. Since the autolibre frontend is served from the same origin as the
+request. Since the xcalibre-server frontend is served from the same origin as the
 API (behind Caddy), Strict is safe and correct.
 
 ─────────────────────────────────────────

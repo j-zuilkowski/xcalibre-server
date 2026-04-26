@@ -8,8 +8,8 @@
     "baseUrl": ".",
     "types": ["vitest/globals"],
     "paths": {
-      "@autolibre/shared": ["../../packages/shared/src/index.ts"],
-      "@autolibre/shared/*": ["../../packages/shared/src/*"]
+      "@xs/shared": ["../../packages/shared/src/index.ts"],
+      "@xs/shared/*": ["../../packages/shared/src/*"]
     }
   },
   "include": ["src", "vitest.config.ts"]

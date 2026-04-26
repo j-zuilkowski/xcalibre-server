@@ -1,3 +1,18 @@
+//! Search endpoints: full-text, semantic, and hybrid chunk search.
+//!
+//! Routes under `/api/v1/search/`. All routes require a valid JWT.
+//!
+//! - `GET /search` — full-text search via Meilisearch (falls back to SQLite FTS5).
+//! - `GET /search/semantic` — vector similarity search via sqlite-vec embeddings;
+//!   returns 503 when LLM/semantic indexing is disabled.
+//! - `GET /search/chunks` — hybrid BM25+vector passage search with Reciprocal Rank
+//!   Fusion scoring and optional LLM reranking; the primary RAG retrieval surface.
+//! - `GET /search/suggestions` — query autocomplete from the search backend.
+//! - `GET /system/search-status` — reports which backends are active.
+//!
+//! `run_chunk_search` and `collection_book_ids_for_search` are exported for use
+//! by `collections.rs` (collection-scoped chunk search).
+
 use crate::{
     db::queries::{
         book_chunks as chunk_queries, books as book_queries, collections as collection_queries,
@@ -434,6 +449,8 @@ fn normalize_ids(mut ids: Vec<String>) -> Vec<String> {
     ids
 }
 
+/// Sanitizes a raw query string for SQLite FTS5: strips non-alphanumeric characters
+/// (to prevent FTS5 syntax injection) and appends `*` prefix-matching to each token.
 fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
     let raw = raw?.trim();
     if raw.is_empty() {
@@ -463,6 +480,9 @@ fn normalize_fts_query(raw: Option<&str>) -> Option<String> {
     }
 }
 
+/// Core chunk retrieval pipeline: runs BM25 and (if available) semantic search in parallel,
+/// fuses results with RRF, optionally reranks with an LLM, then resolves book titles.
+/// `book_ids` is `None` to search all accessible books or `Some(ids)` to scope to a subset.
 pub(crate) async fn run_chunk_search(
     state: &AppState,
     auth_user: &AuthenticatedUser,
@@ -578,6 +598,8 @@ pub(crate) async fn run_chunk_search(
     })
 }
 
+/// Resolves the book ID allow-list for a collection-scoped search, verifying the caller
+/// can see the collection. Returns `None` when no `collection_id` is given (search all books).
 pub(crate) async fn collection_book_ids_for_search(
     state: &AppState,
     user_id: &str,
@@ -614,6 +636,7 @@ struct FusedChunk {
     rerank_score: Option<f32>,
 }
 
+/// Merges BM25 and semantic hit lists using Reciprocal Rank Fusion, deduplicating by chunk ID.
 fn fuse_chunk_results(
     bm25_hits: Vec<chunk_queries::ChunkSearchRecord>,
     semantic_hits: Vec<chunk_queries::ChunkSearchRecord>,
@@ -677,6 +700,8 @@ fn fuse_chunk_results(
     ordered
 }
 
+/// Computes the RRF score for a chunk given its optional rank in each result list.
+/// Uses the standard k=60 constant: `score = Σ 1/(k + rank)`.
 fn reciprocal_rank_fusion_score(bm25_rank: Option<usize>, cosine_rank: Option<usize>) -> f64 {
     const K: f64 = 60.0;
     let mut score = 0.0;
@@ -689,6 +714,9 @@ fn reciprocal_rank_fusion_score(bm25_rank: Option<usize>, cosine_rank: Option<us
     score
 }
 
+/// Asks the LLM to score each chunk's relevance to the query (0.0–1.0) and re-sorts by that score.
+/// Operates on at most the top 50 RRF-fused chunks; applies a 10-second timeout and returns
+/// `None` on any failure so callers fall back to RRF ordering silently.
 async fn rerank_chunk_results(
     chat_client: &crate::llm::chat::ChatClient,
     query: &str,
@@ -776,6 +804,8 @@ fn semantic_search_or_unavailable(
     Ok(semantic)
 }
 
+/// Serde helper that accepts either a single string or an array of strings for the `book_ids[]`
+/// query parameter, because different HTTP clients serialize repeated params differently.
 pub(crate) fn deserialize_string_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,

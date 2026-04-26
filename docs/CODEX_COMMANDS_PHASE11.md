@@ -1,4 +1,4 @@
-# Codex Desktop App — autolibre Phase 11: Open Items
+# Codex Desktop App — xcalibre-server Phase 11: Open Items
 
 ## What Phase 11 Builds
 
@@ -179,8 +179,8 @@ TESTS
 ─────────────────────────────────────────
 VERIFICATION
 ─────────────────────────────────────────
-pnpm --filter @autolibre/mobile tsc --noEmit
-pnpm --filter @autolibre/mobile test
+pnpm --filter @xs/mobile tsc --noEmit
+pnpm --filter @xs/mobile test
 git add apps/mobile/ packages/
 git commit -m "Phase 11 Stage 1: mobile search screen (FTS + semantic)"
 ```
@@ -244,7 +244,7 @@ backend/src/api/auth.rs — add routes:
        Do NOT store the plaintext secret.
     4. Compute the otpauth:// URI:
          otpauth://totp/{issuer}:{email}?secret={base32}&issuer={issuer}&algorithm=SHA1&digits=6&period=30
-       where issuer = config.app.library_name (or "autolibre" if unset)
+       where issuer = config.app.library_name (or "xcalibre-server" if unset)
     5. Return:
          { "secret_base32": "JBSWY3DPEHPK3PXP", "otpauth_uri": "otpauth://totp/..." }
        The client renders the QR code from otpauth_uri using qrcode.react.
@@ -408,8 +408,8 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
-pnpm --filter @autolibre/mobile tsc --noEmit
+pnpm --filter @xs/web build
+pnpm --filter @xs/mobile tsc --noEmit
 git add backend/ apps/
 git commit -m "Phase 11 Stage 2: 2FA/TOTP — setup, login flow, backup codes, admin disable"
 ```
@@ -511,7 +511,7 @@ backend/src/config.rs — add new [storage] section:
                       -- leave empty to use AWS standard endpoint
   access_key   = ""
   secret_key   = ""
-  key_prefix   = ""   -- optional path prefix within the bucket, e.g. "autolibre/"
+  key_prefix   = ""   -- optional path prefix within the bucket, e.g. "xcalibre-server/"
 
 Add StorageSection and S3Section structs. Include StorageSection in AppConfig.
 
@@ -542,7 +542,7 @@ backend/src/storage_s3.rs — new file:
   impl S3Storage {
     pub async fn new(cfg: &S3Section) -> anyhow::Result<Self> {
       let creds = Credentials::new(
-        &cfg.access_key, &cfg.secret_key, None, None, "autolibre-config"
+        &cfg.access_key, &cfg.secret_key, None, None, "xcalibre-server-config"
       );
       let mut builder = Config::builder()
         .credentials_provider(creds)
@@ -717,14 +717,14 @@ config.example.toml — add a new section below [llm]:
 
   # Only required when backend = "s3"
   [storage.s3]
-  bucket       = "my-autolibre-library"
+  bucket       = "my-xcalibre-server-library"
   region       = "us-east-1"
   endpoint_url = ""   # Override for MinIO / Backblaze B2 / Cloudflare R2
                       # Example (MinIO): "http://minio.local:9000"
                       # Example (R2):    "https://<account_id>.r2.cloudflarestorage.com"
   access_key   = ""
   secret_key   = ""
-  key_prefix   = ""   # Optional. Example: "autolibre/" stores all files under that prefix
+  key_prefix   = ""   # Optional. Example: "xcalibre-server/" stores all files under that prefix
 
 ─────────────────────────────────────────
 DOCUMENTATION NOTE
@@ -774,8 +774,8 @@ backend/tests/test_storage_s3.rs:
     - s3_key("../../etc/passwd") → assert result does not contain ".."
 
   test_s3_key_applies_prefix (unit test)
-    - S3Storage with key_prefix = "autolibre"
-    - s3_key("covers/ab/book.jpg") → assert == "autolibre/covers/ab/book.jpg"
+    - S3Storage with key_prefix = "xcalibre-server"
+    - s3_key("covers/ab/book.jpg") → assert == "xcalibre-server/covers/ab/book.jpg"
 
   Integration tests (require real S3/MinIO — mark #[ignore]):
     test_s3_put_get_delete_roundtrip
@@ -800,7 +800,7 @@ VERIFICATION
 ─────────────────────────────────────────
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-pnpm --filter @autolibre/web build
+pnpm --filter @xs/web build
 git add backend/ docs/
 git commit -m "Phase 11 Stage 3: S3-compatible storage backend (LocalFs unchanged, S3 trait impl)"
 ```

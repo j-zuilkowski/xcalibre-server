@@ -1,4 +1,4 @@
-import type { ApiClient as CalibreClient, BookSummary, DocumentType } from "@autolibre/shared";
+import type { ApiClient as CalibreClient, BookSummary, DocumentType } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { runMigrations } from "./db";
 

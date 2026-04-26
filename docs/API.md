@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
 _Status: Current_
-_Last updated: 2026-04-22_
+_Last updated: 2026-04-24_
 
 ---
 
@@ -243,7 +243,7 @@ interface Role {
 { ok: true }
 ```
 
-#### `DELETE /auth/totp`
+#### `POST /api/v1/auth/totp/disable`
 Disables TOTP for the authenticated user. Requires valid TOTP code or backup code as `X-TOTP-Code` header.
 
 #### `POST /auth/refresh`
@@ -648,7 +648,7 @@ Role
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| POST | `/admin/migrate` | Yes | Admin | Run `autolibre-migrate` |
+| POST | `/admin/migrate` | Yes | Admin | Run `xs-migrate` |
 | GET | `/admin/migrate/:id` | Yes | Admin | Migration run status |
 | GET | `/admin/migrate` | Yes | Admin | Migration history |
 
@@ -901,9 +901,9 @@ Axum's `tower-http ServeFile` handles this natively.
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| GET | `/users/me/downloads` | Yes | Any | Paginated download history for current user |
+| GET | `/api/v1/books/downloads` | Yes | Any | Paginated download history for current user |
 
-#### `GET /users/me/downloads`
+#### `GET /api/v1/books/downloads`
 ```typescript
 // Query params
 { page?: number; page_size?: number }
@@ -1014,18 +1014,18 @@ OPDS-PS 1.2 catalog. Browse endpoints return Atom/XML feeds. Download links requ
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/opds` | No | Root catalog feed |
+| GET | `/opds/catalog` | No | All books browse feed |
 | GET | `/opds/new` | No | Recently added books |
-| GET | `/opds/popular` | No | Highly rated books |
 | GET | `/opds/authors` | No | Author browse feed |
-| GET | `/opds/authors/:id/books` | No | Books by author |
+| GET | `/opds/authors/:id` | No | Books by author |
 | GET | `/opds/series` | No | Series browse feed |
-| GET | `/opds/series/:id/books` | No | Books in series |
+| GET | `/opds/series/:id` | No | Books in series |
 | GET | `/opds/publishers` | No | Publisher browse feed |
-| GET | `/opds/publishers/:publisher/books` | No | Books by publisher |
+| GET | `/opds/publishers/:id` | No | Books by publisher |
 | GET | `/opds/languages` | No | Language browse feed |
-| GET | `/opds/languages/:lang/books` | No | Books in language |
-| GET | `/opds/ratings/:rating/books` | No | Books with this rating (0–10) |
-| GET | `/opds/books/:id` | No | Single book entry |
+| GET | `/opds/languages/:lang_code` | No | Books in language |
+| GET | `/opds/ratings` | No | Rating browse feed |
+| GET | `/opds/ratings/:rating` | No | Books with this rating (0–10) |
 | GET | `/opds/books/:id/formats/:format/download` | Token | Download (requires `?token=<api_token>`) |
 | GET | `/opds/search` | No | OpenSearch description |
 
@@ -1166,6 +1166,227 @@ ApiError    // email not configured
 
 // Response 200
 Book                         // updated target book
+```
+
+---
+
+### Collections
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/collections` | Yes | Any | List own collections (+ public collections) |
+| POST | `/collections` | Yes | Any | Create collection |
+| GET | `/collections/:id` | Yes | Any | Collection detail + book list |
+| PATCH | `/collections/:id` | Yes | Owner/Admin | Update name, description, domain, public flag |
+| DELETE | `/collections/:id` | Yes | Owner/Admin | Delete collection |
+| POST | `/collections/:id/books` | Yes | Owner | Add books to collection |
+| DELETE | `/collections/:id/books/:book_id` | Yes | Owner | Remove book from collection |
+| GET | `/collections/:id/search/chunks` | Yes | Any | Hybrid chunk search across all books in collection |
+
+#### `POST /collections`
+```typescript
+// Request
+{
+  name: string
+  description?: string
+  domain?: 'technical' | 'electronics' | 'culinary' | 'legal' | 'academic' | 'narrative'  // default 'technical'
+  is_public?: boolean
+}
+
+// Response 201
+{
+  id: string
+  name: string
+  description: string | null
+  domain: string
+  is_public: boolean
+  book_count: number
+  created_at: string
+  updated_at: string
+}
+```
+
+#### `POST /collections/:id/books`
+```typescript
+// Request
+{ book_ids: string[] }
+
+// Response 200
+{ added: number }
+```
+
+#### `GET /collections/:id/search/chunks`
+See chunk search params below — identical to `GET /search/chunks` but scoped to this collection's books.
+
+---
+
+### Chunk Search
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/search/chunks` | Yes | Any | Hybrid BM25 + semantic chunk search across all accessible books |
+
+#### `GET /search/chunks`
+```typescript
+// Query params
+{
+  q: string
+  book_ids?: string[]       // restrict to specific books
+  chunk_type?: 'text' | 'procedure' | 'reference' | 'concept' | 'example' | 'image'
+  limit?: number            // default 10, max 100
+}
+
+// Response 200
+{
+  items: Array<{
+    chunk_id: string
+    book_id: string
+    book_title: string
+    chunk_index: number
+    chapter_index: number
+    heading_path: string | null
+    chunk_type: string
+    text: string
+    word_count: number
+    score: number           // RRF-fused rank score
+    rerank_score: number | null  // cross-encoder score; null if llm.enabled = false
+  }>
+  engine: 'hybrid' | 'bm25' | 'semantic'
+}
+```
+
+---
+
+### Book Annotations
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/books/:id/annotations` | Yes | Any | List own annotations for a book |
+| POST | `/books/:id/annotations` | Yes | Any | Create annotation |
+| PATCH | `/books/:id/annotations/:annotation_id` | Yes | Owner | Update color or note |
+| DELETE | `/books/:id/annotations/:annotation_id` | Yes | Owner | Delete annotation |
+
+#### `POST /books/:id/annotations`
+```typescript
+// Request
+{
+  type: 'highlight' | 'note' | 'bookmark'
+  cfi_range: string
+  highlighted_text?: string | null
+  note?: string | null
+  color?: 'yellow' | 'green' | 'blue' | 'pink'  // default 'yellow'
+}
+
+// Response 201
+{
+  id: string
+  user_id: string
+  book_id: string
+  type: string
+  cfi_range: string
+  highlighted_text: string | null
+  note: string | null
+  color: string
+  created_at: string
+  updated_at: string
+}
+```
+
+#### `PATCH /books/:id/annotations/:annotation_id`
+```typescript
+// Request — all optional
+{ note?: string | null; color?: 'yellow' | 'green' | 'blue' | 'pink' }
+
+// Response 200
+// Same shape as POST 201 response
+```
+
+---
+
+### Webhooks
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/webhooks` | Yes | Any | List own webhooks |
+| POST | `/webhooks` | Yes | Any | Create webhook |
+| PATCH | `/webhooks/:id` | Yes | Owner | Update webhook |
+| DELETE | `/webhooks/:id` | Yes | Owner | Delete webhook |
+| GET | `/webhooks/:id/deliveries` | Yes | Owner | List recent deliveries |
+
+#### `POST /webhooks`
+```typescript
+// Request
+{
+  url: string               // validated against SSRF blocklist at creation
+  secret: string            // caller-provided HMAC secret
+  events: string[]          // e.g. ["book.created", "book.updated"]
+  enabled?: boolean         // default true
+}
+
+// Response 201
+{ id: string; url: string; events: string[]; enabled: boolean; created_at: string }
+// secret is never returned after creation
+```
+
+Payloads are HMAC-SHA256 signed; signature in `X-Xcalibre-server-Signature` header. Delivery retried up to 5× with exponential backoff. Payloads capped at 1 MB.
+
+---
+
+### Goodreads / StoryGraph Import
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| POST | `/users/me/import/reading-history` | Yes | Any | Import reading history + shelves from CSV |
+| GET | `/users/me/import/:id` | Yes | Any | Import job status |
+
+#### `POST /users/me/import/reading-history`
+```typescript
+// Request: multipart/form-data
+{
+  file: File        // Goodreads or StoryGraph export CSV
+  source: 'goodreads' | 'storygraph'
+}
+
+// Response 202 Accepted
+{ job_id: string }
+```
+
+#### `GET /users/me/import/:id`
+```typescript
+// Response 200
+{
+  id: string
+  source: 'goodreads' | 'storygraph'
+  status: 'pending' | 'running' | 'complete' | 'failed'
+  total_rows: number | null
+  matched: number
+  unmatched: number
+  errors: string | null
+  created_at: string
+  completed_at: string | null
+}
+```
+
+---
+
+### Reading Statistics
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/users/me/stats` | Yes | Any | Reading statistics for the current user |
+
+#### `GET /users/me/stats`
+```typescript
+// Response 200
+{
+  books_read_total: number
+  books_read_this_year: number
+  current_streak_days: number
+  longest_streak_days: number
+  monthly_counts: Array<{ month: string; count: number }>   // last 12 months
+  top_authors: Array<{ name: string; book_count: number }>  // top 5
+  top_tags: Array<{ name: string; book_count: number }>     // top 5
+}
 ```
 
 ---

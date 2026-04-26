@@ -1,5 +1,5 @@
 {
-  "app_name": "Autolibre",
+  "app_name": "Xcalibre-server",
   "common": {
     "actions": "Actions",
     "active": "Active",
@@ -53,9 +53,11 @@
     "yes": "Yes"
   },
   "nav": {
-    "admin_panel": "Admin",
+    "admin_panel": "Admin Panel",
     "downloads": "Downloads",
     "library": "Library",
+    "import_history": "Import History",
+    "reading_stats": "Reading Stats",
     "profile": "Profile",
     "search": "Search",
     "shelves": "Shelves"
@@ -83,7 +85,7 @@
     "create_admin_title": "Create administrator",
     "email": "Email",
     "first_admin_prompt": "Create the first administrator to continue.",
-    "invalid_credentials": "Invalid credentials.",
+    "invalid_credentials": "Invalid username or password.",
     "login_subtitle": "Sign in to manage your library.",
     "login_title": "Welcome back",
     "password": "Password",
@@ -104,6 +106,25 @@
     "page_title": "Profile",
     "server_url": "Server URL"
   },
+  "stats": {
+    "average_progress": "Average progress",
+    "books_read": "Books read",
+    "days": "{{value}} days",
+    "formats_breakdown": "Formats breakdown",
+    "formats_breakdown_subtitle": "Share of books by format",
+    "in_progress": "In progress",
+    "last_12_months": "Last 12 months",
+    "monthly_books": "Monthly books",
+    "page_title": "Reading Stats",
+    "pp": "pp",
+    "streak": "Streak",
+    "this_month": "This month",
+    "this_year": "This year",
+    "top_authors": "Top authors",
+    "top_tags": "Top tags",
+    "total_sessions": "Reading sessions",
+    "unable_to_load": "Unable to load reading stats."
+  },
   "library": {
     "author": "Author",
     "books": "Books",
@@ -118,7 +139,11 @@
     "show_archived": "Show archived",
     "sort": "Sort",
     "title": "Title",
-    "unable_to_load": "Unable to load library."
+    "unable_to_load": "Unable to load library.",
+    "format": "Format",
+    "series": "Series",
+    "tag": "Fiction",
+    "language": "English"
   },
   "downloads": {
     "activity": "Download activity",
@@ -137,7 +162,7 @@
     "enter_query": "Enter a search query.",
     "library_tab": "Library",
     "match": "Match {{score}}%",
-    "no_matching_books": "No matching books found.",
+    "no_matching_books": "No results.",
     "no_suggestions": "No suggestions found.",
     "page_title": "Search",
     "quick_results": "Quick results",
@@ -291,6 +316,7 @@
   "admin": {
     "add_custom_column": "Add custom column",
     "add_library": "Add library",
+    "authors": "Authors",
     "all_job_types": "All job types",
     "all_llm_surfaces_disabled": "All LLM surfaces disabled.",
     "all_statuses": "All statuses",

@@ -51,7 +51,7 @@ async fn enable_totp_and_get_pending_token(
         .as_str()
         .expect("secret")
         .to_string();
-    let code = generate_code(&secret_base32, "autolibre", email);
+    let code = generate_code(&secret_base32, "xcalibre-server", email);
 
     let confirm = ctx
         .server
@@ -307,7 +307,7 @@ async fn test_login_reauthentication_invalidates_stale_pending_totp_token() {
 
     assert_ne!(pending_token_a, pending_token_b);
 
-    let code = generate_code(&secret_base32, "autolibre", &user.email);
+    let code = generate_code(&secret_base32, "xcalibre-server", &user.email);
     let stale = post_totp_verify(
         &ctx,
         &pending_token_a,

@@ -1,3 +1,14 @@
+//! Admin-only management routes for xcalibre-server.
+//!
+//! All routes under `/api/v1/admin/` require both an authenticated JWT and the
+//! `RequireAdmin` extractor (role must be "admin"). The `auth_layer` enforces
+//! authentication; `require_admin_layer` enforces the admin role check.
+//!
+//! Routes owned: users CRUD, role list, tag management (rename/merge/delete),
+//! user tag restrictions, TOTP admin disable, API tokens, email settings,
+//! Kobo device management, library CRUD, background jobs, scheduled tasks,
+//! and an update-check endpoint (cached 1 hour) against the GitHub releases API.
+
 use crate::{
     auth::password::hash_password,
     auth::TokenScope,
@@ -31,6 +42,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+/// Builds the admin sub-router with two middleware layers: JWT auth then admin role check.
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
         middleware::from_fn_with_state(state.clone(), crate::middleware::auth::require_auth);
@@ -323,8 +335,10 @@ struct GitHubRelease {
     html_url: String,
 }
 
+/// Process-lifetime cache for the GitHub releases check, reset on demand via `clear_update_check_cache`.
 static UPDATE_CHECK_CACHE: OnceLock<RwLock<Option<CachedUpdateCheck>>> = OnceLock::new();
 
+/// Lists all tags with book counts, with optional prefix-search filtering.
 async fn list_tags(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -401,6 +415,7 @@ async fn delete_tag(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Merges all book associations from `source_id` into `into_tag_id`, then deletes the source tag.
 async fn merge_tag(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -457,6 +472,7 @@ async fn list_user_tag_restrictions(
     ))
 }
 
+/// Sets an allow/block tag restriction for a user; mode must be exactly "allow" or "block".
 async fn set_user_tag_restriction(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1252,6 +1268,8 @@ async fn delete_scheduled_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Checks the GitHub releases API for a newer version; caches the result for 1 hour
+/// to avoid hammering the external API on every admin page load.
 async fn update_check(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
@@ -1279,6 +1297,7 @@ fn cached_update_check() -> &'static RwLock<Option<CachedUpdateCheck>> {
     UPDATE_CHECK_CACHE.get_or_init(|| RwLock::new(None))
 }
 
+/// Invalidates the in-memory update-check cache; called by tests to avoid stale state.
 pub async fn clear_update_check_cache() {
     *cached_update_check().write().await = None;
 }
@@ -1287,7 +1306,7 @@ async fn fetch_update_check() -> (StatusCode, UpdateCheckResponse) {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .user_agent("autolibre")
+        .user_agent("xcalibre-server")
         .build()
     {
         Ok(client) => client,
@@ -1299,11 +1318,11 @@ async fn fetch_update_check() -> (StatusCode, UpdateCheckResponse) {
         }
     };
 
-    let url = std::env::var("AUTOLIBRE_RELEASES_URL").unwrap_or_else(|_| {
-        "https://api.github.com/repos/autolibre/autolibre/releases/latest".to_string()
+    let url = std::env::var("XCS_RELEASES_URL").unwrap_or_else(|_| {
+        "https://api.github.com/repos/xcalibre-server/xcalibre-server/releases/latest".to_string()
     });
 
-    let response = match client.get(url).header(USER_AGENT, "autolibre").send().await {
+    let response = match client.get(url).header(USER_AGENT, "xcalibre-server").send().await {
         Ok(response) if response.status().is_success() => response,
         _ => {
             return (
@@ -1363,12 +1382,14 @@ fn normalize_scheduled_task_type(task_type: &str) -> Option<&'static str> {
     }
 }
 
+/// No-op guard kept for consistency; actual admin enforcement is at the router layer via `RequireAdmin`.
 async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), AppError> {
     let _ = (state, user_id);
     // Admin authorization is enforced by RequireAdmin at the router layer.
     Ok(())
 }
 
+/// Rejects a token-creation request if a non-admin user attempts to create an Admin-scope token.
 pub fn validate_token_scope_request(
     user: &crate::db::models::User,
     scope: TokenScope,
@@ -1390,6 +1411,7 @@ fn hash_token(token: &str) -> String {
     hex::encode(digest)
 }
 
+/// Returns email settings with the SMTP password blanked so it is never sent to the client.
 fn mask_email_settings(settings: email_queries::EmailSettings) -> EmailSettingsResponse {
     EmailSettingsResponse {
         id: settings.id,
