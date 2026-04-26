@@ -46,7 +46,7 @@ pub async fn run_sse_server(
     tracing::info!(
         bind_addr = %bind_addr,
         llm_enabled = config.llm.enabled,
-        "starting xs-mcp sse server"
+        "starting calibre-mcp sse server"
     );
     axum::serve(listener, app).await?;
     Ok(())

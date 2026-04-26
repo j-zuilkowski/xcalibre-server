@@ -1,7 +1,10 @@
 [package]
-name = "xs-mcp"
+name = "calibre-mcp"
 version = "0.1.0"
 edition = "2021"
+
+[lib]
+name = "xs_mcp"
 
 [dependencies]
 anyhow = "1"

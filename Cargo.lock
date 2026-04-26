@@ -980,6 +980,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "calibre-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "backend",
+ "chrono",
+ "config",
+ "hex",
+ "reqwest 0.13.2",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6474,30 +6498,6 @@ name = "xmlparser"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
-
-[[package]]
-name = "xs-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "backend",
- "chrono",
- "config",
- "hex",
- "reqwest 0.13.2",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
 
 [[package]]
 name = "xs-migrate"

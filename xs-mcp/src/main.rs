@@ -90,7 +90,7 @@ fn parse_args(args: Vec<String>) -> anyhow::Result<CliArgs> {
 
 fn print_help() {
     eprintln!(
-        "Usage: xs-mcp [--transport stdio|sse] [--port <u16>]\n\
+        "Usage: calibre-mcp [--transport stdio|sse] [--port <u16>]\n\
          Defaults: --transport stdio, --port 8084"
     );
 }
