@@ -1,13 +1,13 @@
 services:
   app:
-    image: ghcr.io/${GITHUB_REPOSITORY:-xcalibre-server}:latest
+    image: ghcr.io/${GITHUB_REPOSITORY:-calibre-web-rs}:latest
     restart: unless-stopped
     ports: ["127.0.0.1:8083:8083"]
     volumes:
-      - ../config.toml:/app/config.toml:ro
+      - ./config.toml:/app/config.toml:ro
       - library_data:/app/storage
     environment:
-      APP_DATABASE_URL: sqlite:///app/storage/library.db
+      APP_DATABASE__URL: sqlite:///app/storage/library.db
       RUST_LOG: warn
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/api/v1/llm/health"]

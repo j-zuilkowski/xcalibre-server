@@ -1,5 +1,6 @@
 FROM rust:1.77-slim AS builder
 ARG TARGETARCH
+ARG TARGETVARIANT
 WORKDIR /app
 
 RUN set -eux; \
@@ -21,7 +22,11 @@ RUN set -eux; \
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
         arm64) rustup target add aarch64-unknown-linux-gnu ;; \
-        arm) rustup target add armv7-unknown-linux-gnueabihf ;; \
+        arm) \
+            case "${TARGETVARIANT:-v7}" in \
+                v7) rustup target add armv7-unknown-linux-gnueabihf ;; \
+                *) echo "unsupported TARGETVARIANT for arm: ${TARGETVARIANT:-unset}" >&2; exit 1 ;; \
+            esac ;; \
         amd64) : ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH:-unset}" >&2; exit 1 ;; \
     esac
@@ -46,12 +51,20 @@ case "${TARGETARCH:-amd64}" in
         cp /app/target/aarch64-unknown-linux-gnu/release/backend /app/target/release/backend
         ;;
     arm)
-        env \
-            CARGO_BUILD_TARGET=armv7-unknown-linux-gnueabihf \
-            CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
-            cargo build --release --locked -p backend
-        mkdir -p /app/target/release
-        cp /app/target/armv7-unknown-linux-gnueabihf/release/backend /app/target/release/backend
+        case "${TARGETVARIANT:-v7}" in
+            v7)
+                env \
+                    CARGO_BUILD_TARGET=armv7-unknown-linux-gnueabihf \
+                    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
+                    cargo build --release --locked -p backend
+                mkdir -p /app/target/release
+                cp /app/target/armv7-unknown-linux-gnueabihf/release/backend /app/target/release/backend
+                ;;
+            *)
+                echo "unsupported TARGETVARIANT for arm: ${TARGETVARIANT:-unset}" >&2
+                exit 1
+                ;;
+        esac
         ;;
     *)
         echo "unsupported TARGETARCH: ${TARGETARCH:-unset}" >&2
