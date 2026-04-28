@@ -161,10 +161,12 @@ export function AppShell() {
   return (
     <div className={`min-h-screen ${theme === "dark" ? "bg-zinc-950 text-zinc-100" : "bg-zinc-50 text-zinc-900"}`}>
       <aside className="group fixed left-0 top-0 z-40 flex h-full w-12 flex-col border-r border-zinc-200 bg-white/95 shadow-sm transition-[width] duration-200 hover:w-48">
-        <div className="flex h-16 items-center justify-center border-b border-zinc-200">
-          <span className="rounded-lg bg-teal-600 px-2 py-1 text-xs font-bold uppercase tracking-[0.2em] text-white">
-            cw
-          </span>
+        <div className="flex h-16 items-center justify-center border-b border-zinc-200 px-1">
+          <img
+            src="/logo.png"
+            alt="xcalibre"
+            className="h-9 w-9 object-contain transition-[width] duration-200 group-hover:h-10 group-hover:w-auto group-hover:max-w-[160px]"
+          />
         </div>
 
         <nav aria-label="Main navigation" className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">

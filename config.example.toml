@@ -23,6 +23,9 @@ header = "x-remote-user"
 enabled = false
 # Set to true when using a local model server (LM Studio, Ollama, etc.)
 # allow_private_endpoints = false
+# Override model used for /v1/embeddings — set this when your embedding model
+# (e.g. nomic-embed-text-v1.5) differs from the chat model in llm.librarian.model.
+# embedding_model = "nomic-embed-text-v1.5"
 
 [storage]
 backend = "local"   # "local" or "s3"

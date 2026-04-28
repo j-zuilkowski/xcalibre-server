@@ -1,6 +1,6 @@
 # Project State — xcalibre-server (Rust Rewrite)
 
-_Last updated: 2026-04-24_
+_Last updated: 2026-04-28_
 
 > **Note:** Earlier versions of this file described the calibre-web Python predecessor project (audit results, dependency upgrades, flake8/bandit findings). That content is no longer relevant. The Rust rewrite is the active project.
 
@@ -33,6 +33,8 @@ All 18 security remediation stages shipped. The codebase is clean against the fu
 | Phase 15 | Cross-document synthesis engine (chunking, hybrid retrieval, collections) | ✅ Complete |
 | Phase 16 | Security remediation (14 findings from post-Phase 15 review) | ✅ Complete |
 | Phase 17 | Security remediation II (18 findings from post-Phase 16 review — final) | ✅ Complete |
+| Phase 18 | Merlin memory integration (memory_chunks API, /search/chunks source filter) | 🔲 Queued |
+| Phase 19 | CI/CD pipeline, Playwright E2E, SECURITY.md, xs-migrate tests, v2.0 | 🔲 Queued |
 
 ---
 
@@ -91,7 +93,7 @@ _Last verified: 2026-04-24 (Phase 17 complete)_
 | Item | Value |
 |---|---|
 | LM Studio (local) | `localhost:1234` |
-| LM Studio (remote) | `192.168.0.72:1234` — phi-3-mini |
+| LM Studio (remote) | `192.168.0.72:1234` — phi-3-mini-4k-instruct (chat) + nomic-embed-text-v1.5 (embeddings) |
 | Meilisearch | Optional; FTS5 fallback active when not running |
 | SQLite dev DB | `./library.db` (created by migrations) |
 
@@ -104,6 +106,7 @@ _Last verified: 2026-04-24 (Phase 17 complete)_
 - `llm_features.rs` wiremock tests fail in sandbox (mock HTTP port bind blocked) — environment constraint only; passes on real CI
 - `%2e%2e` in storage paths is treated as a literal Normal component by `Path::components()` — safe for S3 keys; if URL-decoded input ever reaches storage paths, add `percent_decode` before sanitization
 - `allow_private_endpoints` config flag lives under the `llm` namespace but is also used for webhook SSRF validation — consider promoting to a top-level config key in a future polish pass
-- API token scope is enforced but not yet surfaced in the frontend admin panel — token creation UI shows no scope selector
+- API token scope is enforced but not yet surfaced in the frontend admin panel — token creation UI shows no scope selector (Phase 19 Stage 5)
+- `embedding_model` hotfix shipped 2026-04-28: `LlmSection.embedding_model: Option<String>` allows separate embedding and chat models on the same LM Studio endpoint; `APP_LLM_EMBEDDING_MODEL` env var override wired
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full build plan history.

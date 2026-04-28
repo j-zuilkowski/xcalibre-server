@@ -316,6 +316,11 @@ pub struct LlmSection {
     pub allow_private_endpoints: bool,
     pub librarian: LlmRoleSection,
     pub architect: LlmRoleSection,
+    /// Override model name used for `/v1/embeddings` calls only.
+    /// When set, EmbeddingClient uses this instead of `librarian.model`,
+    /// allowing a dedicated embedding model (e.g. nomic-embed-text) alongside
+    /// a separate chat model on the same endpoint.
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -614,6 +619,11 @@ fn apply_env_overrides(config: &mut AppConfig) {
         "APP_LLM_ARCHITECT_SYSTEM_PROMPT",
         &config.llm.architect.system_prompt,
     );
+    if let Ok(val) = std::env::var("APP_LLM_EMBEDDING_MODEL") {
+        if !val.trim().is_empty() {
+            config.llm.embedding_model = Some(val);
+        }
+    }
 
     config.limits.upload_max_bytes =
         pick_env_u64("APP_UPLOAD_MAX_BYTES", config.limits.upload_max_bytes);

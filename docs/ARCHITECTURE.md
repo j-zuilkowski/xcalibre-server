@@ -1186,6 +1186,155 @@ _Renumbered in git history as Phase 13; same content as above Phase 12 stages._
 
 ---
 
+### Phase 18 — Pluggable Search Backend + Memory Endpoint
+
+#### Stage 1 — Pluggable SearchBackend Trait
+
+Meilisearch is demoted from required dependency to opt-in. A `SearchBackend` trait abstracts the full-text search layer, leaving the vector (sqlite-vec) layer unchanged.
+
+```
+SearchBackend (trait)
+├── EmbeddedBackend    — SQLite FTS5 (default, zero config)
+└── MeilisearchBackend — external Meilisearch process (opt-in)
+```
+
+Shared interface:
+
+```rust
+#[async_trait]
+pub trait SearchBackend: Send + Sync {
+    async fn index_chunk(&self, id: i64, text: &str, metadata: &ChunkMeta) -> Result<()>;
+    async fn search_chunks(&self, query: &str, filters: &SearchFilters) -> Result<Vec<ChunkHit>>;
+    async fn delete_chunk(&self, id: i64) -> Result<()>;
+}
+```
+
+All callers (book ingestion, memory ingest, RAG query) receive a `Arc<dyn SearchBackend>` — backend-agnostic.
+
+**Activation:** env var or `config.toml`:
+
+```toml
+[search]
+backend = "embedded"   # "embedded" (default) | "meilisearch"
+```
+
+`XCS_SEARCH_BACKEND=meilisearch` overrides at runtime.
+
+**Why `EmbeddedBackend` is acceptable as default:**
+- Personal library scale: 500–2 000 books → ~50k–200k chunks → <80 ms FTS5 query
+- sqlite-vec brute-force cosine is already the vector layer — zero additional IPC
+- Meilisearch's HTTP round-trip (~5–15 ms) is unnecessary at personal scale
+- Ceiling: Meilisearch backend handles 1M+ chunks comfortably; flip the config flag and reindex
+
+**Migration to Meilisearch:** set `backend = "meilisearch"` and run `POST /api/v1/admin/reindex`. No API or Merlin-side changes required — the contract is identical.
+
+- [x] `SearchBackend` trait in `search/backend.rs`
+- [x] `EmbeddedBackend` — wraps existing FTS5 virtual table (`book_chunks_fts`)
+- [x] `MeilisearchBackend` — wraps existing Meilisearch HTTP client
+- [x] Backend wired into `AppState` via `Arc<dyn SearchBackend>` at startup
+- [x] `XCS_SEARCH_BACKEND` env var + `config.toml [search] backend` key
+- [x] `POST /api/v1/admin/reindex` — re-indexes all book chunks through active backend
+
+#### Stage 2 — `memory_chunks` Table
+
+Lightweight ingest table for Merlin episodic and factual memory — separate from `book_chunks`, bypasses the EPUB pipeline entirely.
+
+```sql
+CREATE TABLE memory_chunks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   TEXT,
+    project_path TEXT,
+    chunk_type   TEXT NOT NULL,   -- 'episodic' | 'factual'
+    text         TEXT NOT NULL,
+    tags         TEXT,            -- JSON array
+    model_id     TEXT NOT NULL,   -- prevents cross-model vector contamination
+    embedding    BLOB NOT NULL,   -- little-endian Vec<f32>, same as book_embeddings
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_memory_chunks_project ON memory_chunks(project_path);
+CREATE INDEX idx_memory_chunks_created  ON memory_chunks(created_at);
+CREATE VIRTUAL TABLE memory_chunks_fts USING fts5(text, content=memory_chunks, content_rowid=id);
+```
+
+Vector search pattern mirrors `book_embeddings`:
+
+```sql
+SELECT id, text, vec_distance_cosine(embedding, ?) AS dist
+FROM memory_chunks
+WHERE model_id = ?
+  AND (project_path = ? OR ? IS NULL)
+ORDER BY dist
+LIMIT ?
+```
+
+- [x] Migration `0027_memory_chunks.sql` (SQLite) + `0027_memory_chunks_mariadb.sql`
+- [x] `memory_chunks_fts` virtual table + sync triggers
+
+#### Stage 3 — `/api/v1/memory` Endpoint
+
+Ingest path for Merlin memory chunks. Embeds via the same `EmbeddingClient` as book chunks.
+
+**`POST /api/v1/memory`**
+
+```json
+{
+  "text": "Worked on pluggable search backend. Decided sqlite-vec is sufficient default.",
+  "chunk_type": "episodic",
+  "session_id": "abc-123",
+  "project_path": "/Users/jon/Projects/xcalibre-server",
+  "tags": ["architecture", "search"]
+}
+```
+
+Response `201 Created`:
+
+```json
+{ "id": 42 }
+```
+
+**`DELETE /api/v1/memory/:id`** — removes chunk and FTS row. Returns `204 No Content`.
+
+Auth: same Bearer token as all existing API endpoints.
+Embedding: synchronous — write is acknowledged only after the vector is stored.
+Error on embedding failure: `503 Service Unavailable` with `"message": "embedding unavailable"`.
+
+- [x] `api/memory.rs` — POST handler: validate → embed → insert `memory_chunks` → insert FTS row
+- [x] DELETE handler: delete chunk + FTS row in transaction
+- [x] Route wired: `POST /api/v1/memory`, `DELETE /api/v1/memory/:id`
+- [x] Auth middleware applied (Bearer token)
+
+#### Stage 4 — Unified Chunk Search (Memory + Books)
+
+`GET /api/v1/search/chunks` extended to return memory chunks alongside book chunks, merged by RRF.
+
+**New query parameters:**
+
+| Param | Values | Default |
+|---|---|---|
+| `source` | `books`, `memory`, `all` | `all` |
+| `project_path` | URL-encoded path | — (no filter) |
+| `chunk_type` | `episodic`, `factual` | — (no filter) |
+
+**Response shape unchanged** — existing `source` field on each result indicates origin:
+
+```json
+{
+  "chunks": [
+    { "id": 7,  "source": "memory", "chunk_type": "episodic", "text": "…", "score": 0.94 },
+    { "id": 42, "source": "books",  "chunk_type": "paragraph", "text": "…", "score": 0.91 }
+  ]
+}
+```
+
+RRF fusion runs over both result sets. Cross-encoder reranking (when `llm.enabled`) reranks the merged set identically.
+
+- [x] `search/chunks.rs` — parallel retrieval from `book_chunks` + `memory_chunks`
+- [x] RRF merge extended to accept heterogeneous chunk sources
+- [x] `source`, `project_path`, `chunk_type` filter parameters wired
+- [x] Integration tests: memory-only, books-only, merged result ordering
+
+---
+
 ## Notes & Constraints
 
 - Do not break Calibre DB compatibility during read-only phase — never write to it

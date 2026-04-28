@@ -3,8 +3,6 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const LLM_TIMEOUT_SECS: u64 = 10;
-
 #[derive(Clone)]
 pub struct EmbeddingClient {
     endpoint: String,
@@ -30,14 +28,28 @@ struct EmbeddingData {
 
 impl EmbeddingClient {
     pub fn new(config: &AppConfig) -> anyhow::Result<Self> {
+        let timeout = if config.llm.librarian.timeout_secs > 0 {
+            config.llm.librarian.timeout_secs
+        } else {
+            10
+        };
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(timeout))
             .build()
             .context("build embeddings http client")?;
 
+        let model = config
+            .llm
+            .embedding_model
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(config.llm.librarian.model.as_str())
+            .trim()
+            .to_string();
+
         Ok(Self {
             endpoint: config.llm.librarian.endpoint.trim().to_string(),
-            model: config.llm.librarian.model.trim().to_string(),
+            model,
             http,
         })
     }
