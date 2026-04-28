@@ -43,7 +43,7 @@ describe("SearchBar", () => {
   beforeEach(() => {
     navigateMock.mockReset();
     searchSuggestionsMock.mockReset();
-    window.localStorage.removeItem?.("calibre-web.recent-searches:anon");
+    window.localStorage.removeItem?.("xcalibre.recent-searches:anon");
   });
 
   afterEach(() => {

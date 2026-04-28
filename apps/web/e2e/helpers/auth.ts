@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const API = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8084";
-export const AUTH_STORAGE_KEY = "calibre-web.auth";
+export const AUTH_STORAGE_KEY = "xcalibre.auth";
 export const E2E_ADMIN_USERNAME = process.env.E2E_ADMIN_USERNAME ?? "admin";
 export const E2E_ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "Test1234!";
 

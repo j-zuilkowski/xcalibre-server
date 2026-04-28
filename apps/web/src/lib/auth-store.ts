@@ -9,7 +9,7 @@ type AuthState = {
   clearAuth: () => void;
 };
 
-export const AUTH_STORAGE_KEY = "calibre-web.auth";
+export const AUTH_STORAGE_KEY = "xcalibre.auth";
 
 type StoredAuth = AuthSession;
 

@@ -4,7 +4,7 @@
  * Renders a rounded search input that opens a floating dropdown when focused.
  * The dropdown shows:
  *   - Recent searches (up to 5, stored per-user in localStorage under the key
- *     `calibre-web.recent-searches:<userId>`).
+ *     `xcalibre.recent-searches:<userId>`).
  *   - Live query suggestions fetched from
  *     GET /api/v1/search/suggestions?q=…&limit=5, enabled only when the
  *     input has a non-empty trimmed value.
@@ -39,7 +39,7 @@ type RecentSearch = {
 const RECENT_SEARCH_LIMIT = 5;
 
 function recentSearchStorageKey(userId: string | null): string {
-  return `calibre-web.recent-searches:${userId ?? "anon"}`;
+  return `xcalibre.recent-searches:${userId ?? "anon"}`;
 }
 
 function readRecentSearches(userId: string | null): string[] {

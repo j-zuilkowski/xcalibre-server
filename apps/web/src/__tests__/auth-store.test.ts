@@ -102,7 +102,7 @@ describe("auth store", () => {
       },
     };
 
-    localStorageMock.setItem("calibre-web.auth", JSON.stringify(auth));
+    localStorageMock.setItem("xcalibre.auth", JSON.stringify(auth));
 
     const { useAuthStore } = await import("../lib/auth-store");
 

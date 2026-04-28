@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["pwa-icon.svg", "pwa-maskable.svg"],
       manifest: {
-        name: "Calibre Web",
-        short_name: "Calibre",
-        description: "Library, reader, and admin interface for Calibre Web.",
+        name: "xcalibre",
+        short_name: "xcalibre",
+        description: "Self-hosted ebook library, reader, and admin interface.",
         theme_color: "#0d9488",
         background_color: "#0d9488",
         display: "standalone",

@@ -11,7 +11,7 @@
  *
  * State:
  *   - `theme` — "light" | "sepia" | "dark", persisted to localStorage under
- *     the key "calibre-web.theme" and applied as `data-theme` on <html>.
+ *     the key "xcalibre.theme" and applied as `data-theme` on <html>.
  *   - `menuOpen` — controls the dropdown user menu; closed on pointer-down
  *     outside the menu ref (avoids a focus-loss race on mobile).
  *
@@ -35,7 +35,7 @@ import { changeLanguage, SUPPORTED_LANGUAGES } from "../i18n";
 
 type ThemeMode = "light" | "sepia" | "dark";
 
-const THEME_STORAGE_KEY = "calibre-web.theme";
+const THEME_STORAGE_KEY = "xcalibre.theme";
 
 function readTheme(): ThemeMode {
   if (
