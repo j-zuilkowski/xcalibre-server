@@ -38,8 +38,10 @@ COPY backend/benches backend/benches
 COPY xs-migrate/Cargo.toml xs-migrate/Cargo.toml
 COPY xs-mcp/Cargo.toml xs-mcp/Cargo.toml
 COPY vendor/csv vendor/csv
+COPY vendor/swagger-ui-v5.17.14.zip vendor/swagger-ui-v5.17.14.zip
 COPY xs-migrate/src xs-migrate/src
 COPY xs-mcp/src xs-mcp/src
+ENV SWAGGER_UI_DOWNLOAD_URL=file:///app/vendor/swagger-ui-v5.17.14.zip
 RUN mkdir -p backend/src \
     && printf "fn main() {}\n" > backend/src/main.rs \
     && cat <<'EOF' >/usr/local/bin/cargo-build-backend
