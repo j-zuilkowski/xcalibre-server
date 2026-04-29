@@ -4,7 +4,7 @@ Self-hosted ebook library manager. Rust backend, React web app, native iOS/Andro
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/xcalibre/xcalibre-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Latest Release](https://img.shields.io/badge/release-v1.0-blue)](https://github.com/xcalibre/xcalibre-server/releases)
+[![Latest Release](https://img.shields.io/badge/release-v2.2.0-blue)](https://github.com/xcalibre/xcalibre-server/releases)
 [![Docker Pulls](https://img.shields.io/badge/docker%20pulls-10k+-success)](https://hub.docker.com/r/xcalibre/xcalibre-server)
 
 ---
@@ -36,6 +36,8 @@ Designed as a direct successor to calibre-web with a seamless migration path. Un
 | **Import from Calibre** | One-command migration of existing Calibre libraries (dry-run available) |
 | **Shelves** | Create personal reading lists and curated collections, share with other users |
 | **Search** | Full-text search via Meilisearch (optional) or SQLite FTS5 fallback; semantic search (with AI features) |
+| **In-progress reading** | Dedicated "Continue Reading" row showing books with active reading progress |
+| **Metadata enrichment** | Search Google Books and Open Library to pull covers, descriptions, and identifiers for any book |
 | **Multi-library** | Manage multiple independent book collections with per-user default library |
 | **Localization** | English, French, German, Spanish |
 | **AI features (optional)** | Auto-tagging, semantic search, metadata validation, cross-document synthesis (runsheets, specs, recipes, study guides) — all local, disabled by default |
@@ -76,7 +78,7 @@ xcalibre-server includes a migration tool (`xs-migrate`) for importing existing 
 
 <!-- Screenshots -->
 
-*(Screenshots coming soon — library grid, EPUB reader, book detail, mobile app)*
+*(Screenshots coming soon — home page, library grid, EPUB reader, book detail with metadata identify, mobile app)*
 
 ---
 
