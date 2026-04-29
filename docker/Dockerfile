@@ -1,4 +1,4 @@
-FROM rust:1.77-slim AS builder
+FROM rust:1.94-slim AS builder
 ARG TARGETARCH
 ARG TARGETVARIANT
 WORKDIR /app
