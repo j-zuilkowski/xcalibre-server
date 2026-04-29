@@ -37,10 +37,10 @@ meilisearch-sdk = { version = "0.33.0", default-features = false, features = ["r
 mime = "0.3"
 mime_guess = "2"
 mobi = "0.8"
-oauth2 = { version = "5.0.0", default-features = false, features = ["reqwest", "native-tls"] }
+oauth2 = { version = "5.0.0", default-features = false, features = ["reqwest", "rustls-tls"] }
 ipnet = "2"
 rand = "0.8"
-reqwest = { version = "0.13", default-features = false, features = ["form", "json", "native-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls"] }
 aws-smithy-http-client = { version = "1.1.12", default-features = false, features = ["s2n-tls"] }
 sqlite-vec = { version = "0.1", optional = true } # SQLite extension, loaded at runtime
 serde = { version = "1", features = ["derive"] }
@@ -60,7 +60,7 @@ tower_governor = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs", "set-header", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-ldap3 = { version = "0.12.1", default-features = false, features = ["tls-native"] }
+ldap3 = { version = "0.12.1", default-features = false, features = ["tls-rustls-aws-lc-rs"] }
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
