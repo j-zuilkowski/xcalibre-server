@@ -5,6 +5,11 @@ edition = "2021"
 
 [lib]
 name = "xs_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "calibre-mcp"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
