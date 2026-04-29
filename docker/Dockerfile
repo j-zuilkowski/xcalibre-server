@@ -33,6 +33,7 @@ RUN set -eux; \
 
 COPY Cargo.toml Cargo.lock ./
 COPY backend/Cargo.toml backend/Cargo.toml
+COPY backend/benches backend/benches
 COPY xs-migrate/Cargo.toml xs-migrate/Cargo.toml
 COPY xs-mcp/Cargo.toml xs-mcp/Cargo.toml
 COPY vendor/csv vendor/csv
