@@ -6,9 +6,9 @@ _Last updated: 2026-04-28_
 
 ---
 
-## Overall Status: Phase 20 Complete
+## Overall Status: Phase 21 Complete
 
-Phase 20 delivered the Emby-style UI redesign: home dashboard, browse pages, compact media cards, shell navigation updates, and the search grid refresh. The codebase remains clean against the full post-Phase 16 review (two independent audit passes). No open findings.
+Phase 21 delivered metadata enrichment with Google Books and Open Library Identify support. The codebase remains clean against the full post-Phase 16 review (two independent audit passes). No open findings.
 
 ---
 
@@ -36,7 +36,7 @@ Phase 20 delivered the Emby-style UI redesign: home dashboard, browse pages, com
 | Phase 18 | Merlin memory integration (memory_chunks API, /search/chunks source filter) | ✅ Complete |
 | Phase 19 | CI/CD pipeline, Playwright E2E, SECURITY.md, xs-migrate tests, v2.0 | ✅ Complete |
 | Phase 20 | Emby-style UI redesign (home dashboard, browse pages, alpha sidebar, MediaCard) | ✅ Complete |
-| Phase 21 | Metadata enrichment — Google Books + Open Library Identify feature | 🔲 Queued |
+| Phase 21 | Metadata enrichment — Google Books + Open Library Identify feature | ✅ Complete |
 
 ---
 
@@ -82,13 +82,15 @@ Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
 
 | Check | Status |
 |---|---|
-| `cargo test --workspace` | All integration tests passing |
+| `cargo test --workspace` | All Rust tests passing |
 | `cargo clippy -- -D warnings` | Zero warnings |
 | `cargo audit` | Zero CVEs |
+| `pnpm --filter @xs/web build` | Web production build passing |
+| `pnpm --filter @xs/web test` | Web Vitest suite passing |
 | Multi-arch Docker build (amd64/arm64/armv7) | ✅ Passing in CI |
 | Criterion benchmarks | Non-blocking CI job |
 
-_Last verified: 2026-04-28 (Phase 19 complete)_
+_Last verified: 2026-04-28 (Phase 21 complete)_
 
 ---
 
@@ -109,5 +111,7 @@ _Last verified: 2026-04-28 (Phase 19 complete)_
 - `%2e%2e` in storage paths is treated as a literal Normal component by `Path::components()` — safe for S3 keys; if URL-decoded input ever reaches storage paths, add `percent_decode` before sanitization
 - `embedding_model` hotfix shipped 2026-04-28: `LlmSection.embedding_model: Option<String>` allows separate embedding and chat models on the same LM Studio endpoint; `APP_LLM_EMBEDDING_MODEL` env var override wired
 - Merlin-side: `XcalibreClient.writeMemoryChunk()` and `MemoryEngine` integration not yet implemented (xcalibre-server side is complete)
+- Metadata: Google Books free tier is 1,000 req/day per IP - add optional `google_books_api_key` config field under `[metadata]` for higher quota
+- Metadata i18n: `identify.*` locale keys use English placeholder for FR/DE/ES
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full build plan history.
