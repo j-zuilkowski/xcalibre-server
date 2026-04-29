@@ -8,34 +8,30 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
+          cache: pnpm
 
-      - run: pnpm install
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - run: cargo build --release
+      - run: pnpm install --frozen-lockfile
 
-      - run: npx playwright install --with-deps chromium
-        working-directory: apps/web
-
-      - name: Start backend (test mode)
-        run: |
-          XCS_ENV=test ./target/release/xcalibre-server &
-          echo "BACKEND_PID=$!" >> $GITHUB_ENV
-        env:
-          DATABASE_URL: sqlite::memory:
-          JWT_SECRET: ci-test-secret-do-not-use
+      - name: Install Playwright browsers
+        run: pnpm --filter @xs/web exec playwright install --with-deps chromium
 
       - name: Run E2E tests
-        run: pnpm --filter @xcalibre-server/web test:e2e
+        run: pnpm --filter @xs/web exec playwright test
         env:
-          PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
-          PLAYWRIGHT_API_URL: http://127.0.0.1:8084
+          CI: true
+          XCS_LLM_ENABLED: "false"
 
       - uses: actions/upload-artifact@v4
         if: failure()

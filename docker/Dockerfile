@@ -35,7 +35,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY backend/Cargo.toml backend/Cargo.toml
 RUN mkdir -p backend/src \
     && printf "fn main() {}\n" > backend/src/main.rs \
-    && cat <<'EOF' >/usr/local/bin/cargo-build-backend \
+    && cat <<'EOF' >/usr/local/bin/cargo-build-backend
 #!/bin/sh
 set -eu
 case "${TARGETARCH:-amd64}" in
@@ -72,7 +72,8 @@ case "${TARGETARCH:-amd64}" in
         ;;
 esac
 EOF
-    && chmod +x /usr/local/bin/cargo-build-backend \
+
+RUN chmod +x /usr/local/bin/cargo-build-backend \
     && /usr/local/bin/cargo-build-backend \
     && rm -rf backend/src
 
@@ -91,7 +92,7 @@ COPY apps/web apps/web
 COPY packages/shared packages/shared
 
 RUN pnpm install --frozen-lockfile \
-    && pnpm --filter web build
+    && pnpm --filter @xs/web build
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app

@@ -9,10 +9,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --locked -- -D warnings
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
       - run: cargo audit
-        continue-on-error: false
   bench:
     runs-on: ubuntu-latest
     steps:
