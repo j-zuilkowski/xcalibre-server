@@ -171,10 +171,14 @@ export function AppShell() {
 
         <nav aria-label="Main navigation" className="flex flex-1 flex-col gap-2 px-2 py-3 text-sm">
           {[
-            { to: "/library", label: t("nav.library"), icon: "L" },
-            { to: "/downloads", label: t("nav.downloads"), icon: "D" },
-            { to: "/search", label: t("nav.search"), icon: "S" },
+            { to: "/home", label: t("nav.home"), icon: "⌂" },
+            { to: "/browse/books", label: t("browse.books"), icon: "B" },
+            { to: "/browse/reference", label: t("browse.reference"), icon: "R" },
+            { to: "/browse/periodicals", label: t("browse.periodicals"), icon: "P" },
+            { to: "/browse/magazines", label: t("browse.magazines"), icon: "M" },
             { to: "/shelves", label: t("nav.shelves"), icon: "H" },
+            { to: "/search", label: t("nav.search"), icon: "S" },
+            { to: "/downloads", label: t("nav.downloads"), icon: "D" },
           ].map((item) => (
             <Link
               key={item.to}
@@ -234,13 +238,13 @@ export function AppShell() {
 
             {menuOpen ? (
               <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl">
-              <a
-                href="/profile"
-                className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
-                onClick={() => setMenuOpen(false)}
-              >
-                {t("nav.profile")}
-              </a>
+                <a
+                  href="/profile"
+                  className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  {t("nav.profile")}
+                </a>
                 <Link
                   to="/downloads"
                   className="block px-4 py-3 text-sm text-zinc-700 hover:bg-zinc-100"

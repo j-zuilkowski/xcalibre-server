@@ -55,6 +55,7 @@
   "nav": {
     "admin_panel": "Admin Panel",
     "downloads": "Downloads",
+    "home": "Home",
     "library": "Library",
     "import_history": "Import History",
     "reading_stats": "Reading Stats",

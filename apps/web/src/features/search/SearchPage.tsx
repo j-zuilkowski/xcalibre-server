@@ -313,7 +313,7 @@ export function SearchPage() {
         </div>
 
         {hasQuery && booksQuery.isLoading ? (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+          <div className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
             {Array.from({ length: 8 }).map((_, index) => (
               <div key={index} className="aspect-[2/3] animate-pulse rounded-lg bg-zinc-200" />
             ))}
@@ -342,7 +342,7 @@ export function SearchPage() {
 
         {hasQuery && !booksQuery.isLoading && books.length > 0 ? (
           <>
-            <section className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+            <section className="grid grid-cols-3 gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
               {books.map((book) => (
                 <BookCard
                   key={book.id}

@@ -33,7 +33,8 @@
  * The router instance is exported as `router` and consumed by RouterProvider
  * in main.tsx.  The `routeTree` export is used for type-safe navigation.
  */
-import { Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { Outlet, createRootRoute, createRoute, createRouter, useNavigate } from "@tanstack/react-router";
 import { LoginPage } from "./features/auth/LoginPage";
 import { ProtectedRoute } from "./features/auth/ProtectedRoute";
 import { RegisterPage } from "./features/auth/RegisterPage";
@@ -57,6 +58,8 @@ import { StatsPage } from "./features/profile/StatsPage";
 import { AuthorPage } from "./features/library/AuthorPage";
 import { BookDetailPage } from "./features/library/BookDetailPage";
 import { DownloadHistoryPage } from "./features/library/DownloadHistoryPage";
+import { BrowsePage } from "./features/library/BrowsePage";
+import { HomePage } from "./features/library/HomePage";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { ShelvesPage } from "./features/library/ShelvesPage";
 import { SearchPage } from "./features/search/SearchPage";
@@ -76,6 +79,50 @@ const libraryRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "library",
   component: LibraryPage,
+});
+
+const indexRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/",
+  component: () => {
+    const navigate = useNavigate();
+
+    useEffect(() => {
+      void navigate({ to: "/home", replace: true });
+    }, [navigate]);
+
+    return null;
+  },
+});
+
+const homeRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "home",
+  component: HomePage,
+});
+
+const browseBookRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "browse/books",
+  component: () => <BrowsePage documentType="Book" />,
+});
+
+const browseReferenceRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "browse/reference",
+  component: () => <BrowsePage documentType="Reference" />,
+});
+
+const browsePeriodicalsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "browse/periodicals",
+  component: () => <BrowsePage documentType="Periodical" />,
+});
+
+const browseMagazinesRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "browse/magazines",
+  component: () => <BrowsePage documentType="Magazine" />,
 });
 
 const downloadHistoryRoute = createRoute({
@@ -231,6 +278,12 @@ const registerRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
     libraryRoute,
+    indexRoute,
+    homeRoute,
+    browseBookRoute,
+    browseReferenceRoute,
+    browsePeriodicalsRoute,
+    browseMagazinesRoute,
     downloadHistoryRoute,
     searchRoute,
     shelvesRoute,
