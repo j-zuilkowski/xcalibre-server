@@ -3,7 +3,7 @@ import type { AuthSession, User } from "@xs/shared";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-const API = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8084";
+const API = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8083";
 export const AUTH_STORAGE_KEY = "xcalibre.auth";
 export const E2E_ADMIN_USERNAME = process.env.E2E_ADMIN_USERNAME ?? "admin";
 export const E2E_ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? "Test1234!";
@@ -78,7 +78,7 @@ export async function login(page: Page, username: string, password: string) {
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/library", { waitUntil: "commit" });
+  await page.waitForURL("**/{home,library}", { waitUntil: "commit" });
 }
 
 export async function loginAsAdmin(page: Page) {

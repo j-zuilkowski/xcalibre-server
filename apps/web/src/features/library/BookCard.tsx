@@ -154,7 +154,7 @@ export function BookCard({
         </div>
 
         {safeProgress > 0 ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700/30">
             <div
               data-testid="progress-bar"
               className="h-full bg-teal-600"
