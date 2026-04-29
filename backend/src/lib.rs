@@ -5,6 +5,7 @@ pub mod db;
 pub mod error;
 pub mod ingest;
 pub mod llm;
+pub mod metadata;
 pub mod metrics;
 pub mod middleware;
 pub mod scheduler;
