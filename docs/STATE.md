@@ -6,9 +6,9 @@ _Last updated: 2026-04-28_
 
 ---
 
-## Overall Status: Phase 17 Complete
+## Overall Status: Phase 20 Complete
 
-All 18 security remediation stages shipped. The codebase is clean against the full post-Phase 16 review (two independent audit passes). No open findings.
+Phase 20 delivered the Emby-style UI redesign: home dashboard, browse pages, compact media cards, shell navigation updates, and the search grid refresh. The codebase remains clean against the full post-Phase 16 review (two independent audit passes). No open findings.
 
 ---
 
@@ -33,8 +33,10 @@ All 18 security remediation stages shipped. The codebase is clean against the fu
 | Phase 15 | Cross-document synthesis engine (chunking, hybrid retrieval, collections) | ✅ Complete |
 | Phase 16 | Security remediation (14 findings from post-Phase 15 review) | ✅ Complete |
 | Phase 17 | Security remediation II (18 findings from post-Phase 16 review — final) | ✅ Complete |
-| Phase 18 | Merlin memory integration (memory_chunks API, /search/chunks source filter) | 🔲 Queued |
-| Phase 19 | CI/CD pipeline, Playwright E2E, SECURITY.md, xs-migrate tests, v2.0 | 🔲 Queued |
+| Phase 18 | Merlin memory integration (memory_chunks API, /search/chunks source filter) | ✅ Complete |
+| Phase 19 | CI/CD pipeline, Playwright E2E, SECURITY.md, xs-migrate tests, v2.0 | ✅ Complete |
+| Phase 20 | Emby-style UI redesign (home dashboard, browse pages, alpha sidebar, MediaCard) | ✅ Complete |
+| Phase 21 | Metadata enrichment — Google Books + Open Library Identify feature | 🔲 Queued |
 
 ---
 
@@ -69,12 +71,14 @@ All 18 security remediation stages shipped. The codebase is clean against the fu
 | `0024_session_type.sql` | `session_type` discriminator on `sessions` | ✅ Applied |
 | `0025_api_token_expiry.sql` | `expires_at` column on `api_tokens` | ✅ Applied |
 | `0026_api_token_scope.sql` | `scope` column on `api_tokens` | ✅ Applied |
+| `0027_book_user_state_book_id_idx.sql` | `idx_book_user_state_book_id` index | ✅ Applied |
+| `0028_memory_chunks.sql` | `memory_chunks` table + FTS5 + indexes | ✅ Applied |
 
-Total: **42 tables, 26 migrations** across SQLite and MariaDB migration sets.
+Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
 
 ---
 
-## Quality Gates (last verified: 2026-04-24)
+## Quality Gates (last verified: 2026-04-28)
 
 | Check | Status |
 |---|---|
@@ -84,7 +88,7 @@ Total: **42 tables, 26 migrations** across SQLite and MariaDB migration sets.
 | Multi-arch Docker build (amd64/arm64/armv7) | ✅ Passing in CI |
 | Criterion benchmarks | Non-blocking CI job |
 
-_Last verified: 2026-04-24 (Phase 17 complete)_
+_Last verified: 2026-04-28 (Phase 19 complete)_
 
 ---
 
@@ -101,12 +105,9 @@ _Last verified: 2026-04-24 (Phase 17 complete)_
 
 ## Open Items
 
-- Orphaned translation key `book.unarchive` in locale files — not in EN base; clean up when EN key is added
-- E2E Playwright suite: Chromium sandbox blocked on macOS CI; promote CI job from `continue-on-error: true` to blocking after 2 clean runs on a real CI host
 - `llm_features.rs` wiremock tests fail in sandbox (mock HTTP port bind blocked) — environment constraint only; passes on real CI
 - `%2e%2e` in storage paths is treated as a literal Normal component by `Path::components()` — safe for S3 keys; if URL-decoded input ever reaches storage paths, add `percent_decode` before sanitization
-- `allow_private_endpoints` config flag lives under the `llm` namespace but is also used for webhook SSRF validation — consider promoting to a top-level config key in a future polish pass
-- API token scope is enforced but not yet surfaced in the frontend admin panel — token creation UI shows no scope selector (Phase 19 Stage 5)
 - `embedding_model` hotfix shipped 2026-04-28: `LlmSection.embedding_model: Option<String>` allows separate embedding and chat models on the same LM Studio endpoint; `APP_LLM_EMBEDDING_MODEL` env var override wired
+- Merlin-side: `XcalibreClient.writeMemoryChunk()` and `MemoryEngine` integration not yet implemented (xcalibre-server side is complete)
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full build plan history.
