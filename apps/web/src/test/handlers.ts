@@ -62,6 +62,19 @@ export const handlers = [
   http.get("/api/v1/libraries", () => HttpResponse.json([makeLibrary()])),
   http.get("/api/v1/books", ({ request }) => {
     const url = new URL(request.url);
+    const documentType = url.searchParams.get("document_type");
+    if (documentType) {
+      return HttpResponse.json({
+        items: [
+          makeBookSummary({ id: "browse-a", title: "Atlas", sort_title: "Atlas", document_type: "novel" }),
+          makeBookSummary({ id: "browse-b", title: "Binary", sort_title: "Binary", document_type: "novel" }),
+          makeBookSummary({ id: "browse-z", title: "Zebra", sort_title: "Zebra", document_type: "novel" }),
+        ],
+        total: 3,
+        page: 1,
+        page_size: Number(url.searchParams.get("page_size") ?? "200"),
+      });
+    }
     const sort = url.searchParams.get("sort");
     if (sort === "created_at") {
       return HttpResponse.json({

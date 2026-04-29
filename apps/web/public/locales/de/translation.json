@@ -172,6 +172,13 @@
     "search_placeholder": "Bücher, Autoren, Themen suchen…",
     "see_all": "Alle anzeigen"
   },
+  "browse": {
+    "books": "Bücher",
+    "reference": "Referenz",
+    "periodicals": "Zeitschriften",
+    "magazines": "Magazine",
+    "no_results": "Noch keine Bücher in dieser Kategorie."
+  },
   "search": {
     "coming_later": "Suche kommt später.",
     "enter_query": "Suchanfrage eingeben.",
