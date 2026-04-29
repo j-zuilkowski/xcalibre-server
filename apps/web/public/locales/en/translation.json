@@ -76,6 +76,14 @@
     "dark": "Dark",
     "sepia": "Sepia"
   },
+  "token": {
+    "scope_read": "Read",
+    "scope_write": "Read-Write",
+    "scope_admin": "Admin",
+    "scope_read_desc": "Query books and metadata only",
+    "scope_write_desc": "Full access to user resources",
+    "scope_admin_desc": "Admin panel access (admin users only)"
+  },
   "auth": {
     "account_exists": "An account already exists.",
     "already_have_account": "Already have an account?",
@@ -157,6 +165,13 @@
     "title": "Title",
     "unable_to_load": "Unable to load downloads."
   },
+  "home": {
+    "collections": "Collections",
+    "continue_reading": "Continue Reading",
+    "recently_added": "Recently Added",
+    "search_placeholder": "Search books, authors, topics…",
+    "see_all": "See all"
+  },
   "search": {
     "coming_later": "Search is coming later.",
     "enter_query": "Enter a search query.",
@@ -235,6 +250,7 @@
     "ai": "AI",
     "apply": "Apply",
     "archive": "Archive",
+    "unarchive": "Unarchive",
     "authors": "Authors",
     "book": "Book",
     "categories": "Categories",
@@ -346,6 +362,7 @@
     "job": "Job",
     "job_id": "Job ID",
     "jobs": "Jobs",
+    "tokens": "API tokens",
     "scheduled_tasks": "Scheduled tasks",
     "kobo": "Kobo",
     "kobo_description": "Manage Kobo device sync and restrictions.",

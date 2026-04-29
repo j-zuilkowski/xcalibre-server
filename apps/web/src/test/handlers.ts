@@ -5,7 +5,7 @@ import {
   makeAuthSession,
   makeBook,
   makeBookSummary,
-  makeCollection,
+  makeApiToken,
   makeImportStatus,
   makeJob,
   makeLibrary,
@@ -32,9 +32,49 @@ export const handlers = [
   ),
   http.get("/api/v1/auth/me", () => HttpResponse.json(makeUser())),
   http.patch("/api/v1/auth/me/password", () => HttpResponse.json(null, { status: 204 })),
+  http.get("/api/v1/admin/tokens", () => HttpResponse.json([makeApiToken()])),
+  http.post("/api/v1/admin/tokens", async ({ request }) => {
+    const body = (await request.json()) as { name?: string; scope?: string };
+    return HttpResponse.json(
+      makeApiToken({
+        id: "token-created",
+        name: body.name ?? "New token",
+        scope: (body.scope as "read" | "write" | "admin" | undefined) ?? "write",
+        created_at: "2026-04-19T00:00:00Z",
+      }),
+      { status: 201 },
+    );
+  }),
+  http.post("/api/v1/auth/tokens", async ({ request }) => {
+    const body = (await request.json()) as { name?: string; scope?: string };
+    return HttpResponse.json(
+      {
+        id: "token-created",
+        name: body.name ?? "New token",
+        token: "plain-token",
+        created_at: "2026-04-19T00:00:00Z",
+        scope: (body.scope as "read" | "write" | "admin" | undefined) ?? "write",
+      },
+      { status: 201 },
+    );
+  }),
+  http.delete("/api/v1/admin/tokens/:id", () => HttpResponse.json(null, { status: 204 })),
   http.get("/api/v1/libraries", () => HttpResponse.json([makeLibrary()])),
   http.get("/api/v1/books", ({ request }) => {
     const url = new URL(request.url);
+    const sort = url.searchParams.get("sort");
+    if (sort === "created_at") {
+      return HttpResponse.json({
+        items: [
+          makeBookSummary({ id: "recent-1", title: "Children of Dune" }),
+          makeBookSummary({ id: "recent-2", title: "Dune Messiah" }),
+          makeBookSummary({ id: "recent-3", title: "God Emperor of Dune" }),
+        ],
+        total: 3,
+        page: 1,
+        page_size: Number(url.searchParams.get("page_size") ?? "20"),
+      });
+    }
     const page = Number(url.searchParams.get("page") ?? "1");
     return HttpResponse.json({
       items: page === 2 ? [makeBookSummary({ id: "2", title: "Children of Dune" })] : [],
@@ -43,6 +83,7 @@ export const handlers = [
       page_size: 24,
     });
   }),
+  http.get("/api/v1/books/in-progress", () => HttpResponse.json([])),
   http.get("/api/v1/books/:id", ({ params }) => HttpResponse.json(makeBook({ id: String(params.id) }))),
   http.patch("/api/v1/books/:id", async ({ params, request }) => {
     const patch = (await request.json()) as Record<string, unknown>;
@@ -83,7 +124,7 @@ export const handlers = [
   http.get("/api/v1/search/status", () =>
     HttpResponse.json({ fts: true, meilisearch: true, semantic: true, backend: "meilisearch" }),
   ),
-  http.get("/api/v1/collections", () => HttpResponse.json([makeCollection()])),
+  http.get("/api/v1/collections", () => HttpResponse.json([])),
   http.get("/api/v1/search", ({ request }) => {
     const url = new URL(request.url);
     const q = url.searchParams.get("q") ?? "";

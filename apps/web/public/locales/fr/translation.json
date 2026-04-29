@@ -76,6 +76,14 @@
     "dark": "Sombre",
     "sepia": "Sépia"
   },
+  "token": {
+    "scope_read": "Read",
+    "scope_write": "Read-Write",
+    "scope_admin": "Admin",
+    "scope_read_desc": "Query books and metadata only",
+    "scope_write_desc": "Full access to user resources",
+    "scope_admin_desc": "Admin panel access (admin users only)"
+  },
   "auth": {
     "account_exists": "Un compte existe déjà.",
     "already_have_account": "Vous avez déjà un compte ?",
@@ -156,6 +164,13 @@
     "page_title": "Téléchargements",
     "title": "Titre",
     "unable_to_load": "Impossible de charger les téléchargements."
+  },
+  "home": {
+    "collections": "Collections",
+    "continue_reading": "Continuer la lecture",
+    "recently_added": "Ajoutés récemment",
+    "search_placeholder": "Rechercher des livres, des auteurs, des sujets…",
+    "see_all": "Voir tout"
   },
   "search": {
     "coming_later": "La recherche arrive plus tard.",
@@ -347,6 +362,7 @@
     "job": "Job",
     "job_id": "Job ID",
     "jobs": "Jobs",
+    "tokens": "API tokens",
     "scheduled_tasks": "Tâches planifiées",
     "kobo": "Kobo",
     "kobo_description": "Manage Kobo device sync and restrictions.",

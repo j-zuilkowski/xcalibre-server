@@ -41,6 +41,7 @@ import { AdminLayout } from "./features/admin/AdminLayout";
 import { DashboardPage } from "./features/admin/DashboardPage";
 import { ImportPage as AdminImportPage } from "./features/admin/ImportPage";
 import { AdminJobsPage } from "./features/admin/AdminJobsPage";
+import { ApiTokensPage } from "./features/admin/ApiTokensPage";
 import { KoboDevicesPage } from "./features/admin/KoboDevicesPage";
 import { LibrariesPage } from "./features/admin/LibrariesPage";
 import { CustomColumnsPage } from "./features/admin/CustomColumnsPage";
@@ -185,6 +186,12 @@ const adminJobsRoute = createRoute({
   component: AdminJobsPage,
 });
 
+const adminTokensRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "tokens",
+  component: ApiTokensPage,
+});
+
 const adminScheduledTasksRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "scheduled-tasks",
@@ -242,6 +249,7 @@ export const routeTree = rootRoute.addChildren([
       adminCollectionsRoute,
       adminImportRoute,
       adminJobsRoute,
+      adminTokensRoute,
       adminScheduledTasksRoute,
       adminLibrariesRoute,
       adminCustomColumnsRoute,

@@ -24,6 +24,7 @@ import type {
   AdminAuthor,
   AdminTagWithCount,
   AdminJob,
+  ApiToken,
   AdminUser,
   AdminUserCreateRequest,
   AdminUserUpdateRequest,
@@ -80,6 +81,8 @@ import type {
   ReadingImportJob,
   ReadingImportResponse,
   CreateBookAnnotationRequest,
+  CreateTokenRequest,
+  CreateTokenResponse,
   PatchBookAnnotationRequest,
   SystemStats,
   UserStats,
@@ -419,6 +422,10 @@ export class ApiClient {
     return this.requestJson<PaginatedResponse<BookSummary>>(`/api/v1/books${suffix}`);
   }
 
+  async listInProgress(): Promise<BookSummary[]> {
+    return this.requestJson<BookSummary[]>("/api/v1/books/in-progress");
+  }
+
   /**
    * GET /api/v1/search or GET /api/v1/search/semantic
    *
@@ -558,6 +565,23 @@ export class ApiClient {
     }
     const suffix = search.toString() ? `?${search.toString()}` : "";
     return this.requestJson<PaginatedResponse<AdminAuthor>>(`/api/v1/admin/authors${suffix}`);
+  }
+
+  async listApiTokens(): Promise<ApiToken[]> {
+    return this.requestJson<ApiToken[]>("/api/v1/admin/tokens");
+  }
+
+  async createApiToken(request: CreateTokenRequest): Promise<CreateTokenResponse> {
+    return this.requestJson<CreateTokenResponse>("/api/v1/admin/tokens", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteApiToken(id: string): Promise<void> {
+    await this.requestJson<void>(`/api/v1/admin/tokens/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   }
 
   async mergeAuthor(id: string, intoAuthorId: string): Promise<MergeAuthorResponse> {
