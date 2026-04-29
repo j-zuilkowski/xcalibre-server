@@ -4,9 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { BookSummary, CollectionSummary } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
-import { BookCard } from "./BookCard";
-
-const MediaCard = BookCard;
+import { MediaCard } from "./MediaCard";
 
 function RowHeader({
   title,
