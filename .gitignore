@@ -17,10 +17,16 @@ apps/web/node_modules/.vite
 config.toml
 
 # Local databases
+library.db
+library.db-wal
+library.db-shm
+test_e2e.db
+test_e2e.db-wal
+test_e2e.db-shm
 *.db
 *.db-shm
 *.db-wal
-/storage
+storage/
 storage_e2e/
 
 # Playwright
