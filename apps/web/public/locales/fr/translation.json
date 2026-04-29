@@ -278,6 +278,7 @@
     "google_books": "Google Books",
     "history": "Historique",
     "identifiers": "Identifiers",
+    "identify": "Identify…",
     "invalid_book_id": "Invalid book ID.",
     "isbn_13": "ISBN-13",
     "language": "Langue",
@@ -336,6 +337,17 @@
     "validate": "Valider",
     "year": "Year",
     "unarchive": "Désarchiver"
+  },
+  "identify": {
+    "title": "Identify Book",
+    "search_label": "Search query",
+    "search_button": "Search",
+    "searching": "Searching…",
+    "no_results": "No results found. Try a different query.",
+    "apply": "Apply",
+    "applying": "Applying…",
+    "source_google": "Google Books",
+    "source_open_library": "Open Library"
   },
   "admin": {
     "add_custom_column": "Add custom column",

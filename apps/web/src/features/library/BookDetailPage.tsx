@@ -28,6 +28,10 @@
  * POST /api/v1/books/:id/merge on confirm.  After merge, navigates to the
  * surviving book and invalidates ["books"] and ["book", id] caches.
  *
+ * Identify modal (can_edit only): searches Google Books and Open Library for
+ * metadata suggestions, then applies a chosen candidate back into the book
+ * record and refreshes the book query cache.
+ *
  * Metadata lookup panel: fetches from OpenLibrary or Google Books via
  * GET /api/v1/books/:id/metadata-lookup?source=... and lets the user apply
  * individual fields (title, authors, description, pubdate, isbn13) with a
@@ -76,6 +80,7 @@ import {
   CollapsibleTrigger,
 } from "../../components/ui/collapsible";
 import { CoverPlaceholder } from "./CoverPlaceholder";
+import { IdentifyModal } from "./IdentifyModal";
 
 type BookDetailPageProps = {
   bookId?: string;
@@ -343,6 +348,7 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [shelfMenuOpen, setShelfMenuOpen] = useState(false);
   const [metadataLookupOpen, setMetadataLookupOpen] = useState(false);
+  const [identifyOpen, setIdentifyOpen] = useState(false);
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
   const [mergeSearch, setMergeSearch] = useState("");
   const [selectedDuplicateId, setSelectedDuplicateId] = useState<string | null>(null);
@@ -717,9 +723,19 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
                       ? "border-amber-600 bg-amber-600 text-white"
                       : "border-zinc-300 bg-white text-zinc-800"
                   }`}
-                >
+                  >
                   {book.is_archived ? t("book.unarchive") : t("book.archive")}
                 </button>
+
+                {canEditBook ? (
+                  <button
+                    type="button"
+                    onClick={() => setIdentifyOpen(true)}
+                    className="inline-flex rounded-lg border border-teal-600 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-700"
+                  >
+                    {t("book.identify")}
+                  </button>
+                ) : null}
 
                 <div className="relative">
                   <button
@@ -1497,6 +1513,16 @@ export function BookDetailPage({ bookId }: BookDetailPageProps) {
               ) : null}
             </div>
           </aside>
+        ) : null}
+
+        {identifyOpen && book ? (
+          <IdentifyModal
+            book={book}
+            onClose={() => setIdentifyOpen(false)}
+            onApplied={() => {
+              void queryClient.invalidateQueries({ queryKey: ["book", book.id] });
+            }}
+          />
         ) : null}
       </div>
     </main>

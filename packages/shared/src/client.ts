@@ -25,6 +25,7 @@ import type {
   AdminTagWithCount,
   AdminJob,
   ApiToken,
+  ApplyMetadataBody,
   AdminUser,
   AdminUserCreateRequest,
   AdminUserUpdateRequest,
@@ -42,6 +43,7 @@ import type {
   BookAnnotation,
   BookChapters,
   MetadataLookupResponse,
+  MetadataCandidate,
   MergeAuthorResponse,
   MergeTagResponse,
   BookSummary,
@@ -614,6 +616,21 @@ export class ApiClient {
     return this.requestJson<MetadataLookupResponse>(
       `/api/v1/books/${encodeURIComponent(id)}/metadata-lookup?${search.toString()}`,
     );
+  }
+
+  async searchBookMetadata(bookId: string, q: string): Promise<MetadataCandidate[]> {
+    const search = new URLSearchParams();
+    search.set("q", q);
+    return this.requestJson<MetadataCandidate[]>(
+      `/api/v1/books/${encodeURIComponent(bookId)}/metadata/search?${search.toString()}`,
+    );
+  }
+
+  async applyBookMetadata(bookId: string, body: ApplyMetadataBody): Promise<Book> {
+    return this.requestJson<Book>(`/api/v1/books/${encodeURIComponent(bookId)}/metadata/apply`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   }
 
   async uploadBook(file: File, metadata?: object): Promise<Book> {

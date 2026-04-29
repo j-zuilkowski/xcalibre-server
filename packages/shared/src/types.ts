@@ -534,6 +534,32 @@ export type AdminUserUpdateRequest = {
   force_pw_reset?: boolean;
 };
 
+export type TokenScope = "read" | "write" | "admin";
+
+export type ApiToken = {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: number | null;
+  scope: TokenScope;
+};
+
+export type CreateTokenRequest = {
+  name: string;
+  expires_in_days?: number;
+  scope?: TokenScope;
+};
+
+export type CreateTokenResponse = {
+  id: string;
+  name: string;
+  token: string;
+  created_at: string;
+  scope: TokenScope;
+};
+
 /** Background job row returned by `/api/v1/admin/jobs`. */
 export type AdminJob = {
   /** UUID of the job row. */
@@ -1045,6 +1071,33 @@ export type MetadataLookupResponse = {
   cover_url: string | null;
   isbn_13: string | null;
   categories: string[];
+};
+
+export type MetadataCandidate = {
+  source: string;
+  external_id: string;
+  title: string;
+  authors: string[];
+  description: string | null;
+  publisher: string | null;
+  published_date: string | null;
+  isbn_13: string | null;
+  isbn_10: string | null;
+  thumbnail_url: string | null;
+  cover_url: string | null;
+};
+
+export type ApplyMetadataBody = {
+  source: string;
+  external_id: string;
+  title?: string;
+  authors?: string[];
+  description?: string;
+  publisher?: string;
+  published_date?: string;
+  isbn_13?: string;
+  isbn_10?: string;
+  cover_url?: string;
 };
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../test/render";
+import { makeAdminUser } from "../../test/fixtures";
 import { screen, waitFor, within } from "@testing-library/react";
 
 function renderBookDetailPage() {
@@ -57,5 +58,19 @@ describe("BookDetailPage", () => {
       expect(window.location.pathname).toBe("/library");
       expect(window.location.search).toContain("tag=sci-fi");
     });
+  });
+
+  test("Identify button is visible for admin users and opens the modal", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<></>, {
+      initialPath: "/books/1",
+      authenticated: true,
+      user: makeAdminUser(),
+    });
+
+    const identifyButton = await screen.findByRole("button", { name: /identify/i });
+    await user.click(identifyButton);
+
+    expect(await screen.findByRole("heading", { name: /identify book/i })).toBeTruthy();
   });
 });

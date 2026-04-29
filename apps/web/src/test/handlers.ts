@@ -98,9 +98,45 @@ export const handlers = [
   }),
   http.get("/api/v1/books/in-progress", () => HttpResponse.json([])),
   http.get("/api/v1/books/:id", ({ params }) => HttpResponse.json(makeBook({ id: String(params.id) }))),
+  http.get("/api/v1/books/:id/custom-values", () => HttpResponse.json([])),
+  http.get("/api/v1/llm/health", () =>
+    HttpResponse.json({ enabled: false, librarian_available: false, architect_available: false }),
+  ),
   http.patch("/api/v1/books/:id", async ({ params, request }) => {
     const patch = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json(makeBook({ id: String(params.id), ...patch }));
+  }),
+  http.get("/api/v1/books/:id/metadata/search", () =>
+    HttpResponse.json([
+      {
+        source: "google_books",
+        external_id: "vol123",
+        title: "Identified Book",
+        authors: ["Test Author"],
+        description: "A found book.",
+        publisher: "Publisher",
+        published_date: "2020",
+        isbn_13: null,
+        isbn_10: null,
+        thumbnail_url: null,
+        cover_url: null,
+      },
+    ]),
+  ),
+  http.post("/api/v1/books/:id/metadata/apply", async ({ params, request }) => {
+    const body = (await request.json()) as {
+      title?: string;
+      description?: string | null;
+      published_date?: string | null;
+    };
+    return HttpResponse.json(
+      makeBook({
+        id: String(params.id),
+        title: body.title ?? "Dune",
+        description: body.description ?? "A desert planet adventure.",
+        pubdate: body.published_date ?? "1965-08-01",
+      }),
+    );
   }),
   http.delete("/api/v1/books/:id", () => HttpResponse.json(null, { status: 204 })),
   http.post("/api/v1/books/:id/read", () => HttpResponse.json(null, { status: 204 })),
