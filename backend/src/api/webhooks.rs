@@ -11,8 +11,9 @@
 //! letting users verify reachability before relying on automated delivery.
 
 use crate::{
-    auth::totp as totp_auth, db::queries::webhooks as webhook_queries,
-    middleware::auth::AuthenticatedUser, webhooks as webhook_engine, AppError, AppState,
+    auth::totp as totp_auth, config::effective_allow_private,
+    db::queries::webhooks as webhook_queries, middleware::auth::AuthenticatedUser,
+    webhooks as webhook_engine, AppError, AppState,
 };
 use axum::{
     extract::{Extension, Path, State},
@@ -130,7 +131,7 @@ pub(crate) async fn create_webhook(
     }
 
     if let Err(err) =
-        webhook_engine::validate_webhook_target(&url, state.config.llm.allow_private_endpoints)
+        webhook_engine::validate_webhook_target(&url, effective_allow_private(&state.config))
             .await
     {
         let body = Json(json!({
@@ -196,7 +197,7 @@ pub(crate) async fn update_webhook(
         if url.is_empty() {
             return Err(AppError::BadRequest);
         }
-        webhook_engine::validate_webhook_target(&url, state.config.llm.allow_private_endpoints)
+        webhook_engine::validate_webhook_target(&url, effective_allow_private(&state.config))
             .await?;
         changed = true;
         url

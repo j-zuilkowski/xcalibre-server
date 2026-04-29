@@ -25,6 +25,7 @@ import { Pressable, StatusBar, StyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { ApiClient } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
+import { TextReaderFallback } from "./TextReaderFallback";
 import { loadProgress, saveProgress } from "../../lib/progress";
 
 type PdfReaderScreenProps = {
@@ -189,9 +190,14 @@ export function PdfReaderScreen({
           onPageChanged={handlePageChanged}
         />
       ) : (
-        <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>{t("reader.pdf_renderer_unavailable")}</Text>
-        </View>
+        <TextReaderFallback
+          client={client}
+          database={database}
+          bookId={bookId}
+          title={title}
+          format="PDF"
+          onBack={onBack}
+        />
       )}
 
       <Pressable style={styles.centerTapZone} onPress={toggleCenterOverlay} />

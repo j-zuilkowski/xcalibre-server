@@ -2,7 +2,7 @@ import type { AuthSession, Book } from "@xs/shared";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const API = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8084";
+const API = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8083";
 
 export async function uploadFixtureBook(
   session: AuthSession,

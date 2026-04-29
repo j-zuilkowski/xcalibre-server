@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Calibre Web">
-  <rect width="512" height="512" rx="112" fill="#0d9488"/>
-  <rect x="122" y="128" width="268" height="256" rx="28" fill="#ffffff" opacity="0.14"/>
-  <path d="M164 160h92c28 0 52 12 68 28 16-16 40-28 68-28h24v182h-24c-28 0-52 12-68 28-16-16-40-28-68-28h-92z" fill="#f8fffe"/>
-  <path d="M256 188v168" stroke="#0d9488" stroke-width="18" stroke-linecap="round" opacity="0.9"/>
-  <path d="M180 194h64c22 0 40 8 54 20-14 12-32 20-54 20h-64z" fill="#0d9488" opacity="0.85"/>
-  <path d="M268 214c14-12 32-20 54-20h64v40h-64c-22 0-40-8-54-20z" fill="#0d9488" opacity="0.85"/>
-</svg>

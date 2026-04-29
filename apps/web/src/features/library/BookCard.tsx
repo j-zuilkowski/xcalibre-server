@@ -92,7 +92,7 @@ export function BookCard({
       className={`group outline-none transition focus-visible:ring-2 focus-visible:ring-teal-500 ${book.is_archived ? "opacity-75" : ""}`}
     >
       <div className="relative">
-        <a href={`/books/${encodeURIComponent(book.id)}`} className="block">
+        <a href={`/books/${encodeURIComponent(book.id)}`} className="relative block">
           {book.has_cover ? (
             <img
               src={apiClient.coverUrl(book.id)}
@@ -103,6 +103,14 @@ export function BookCard({
           ) : (
             <CoverPlaceholder title={book.title} />
           )}
+          {safeProgress > 0 ? (
+            <div
+              data-testid="progress-bar"
+              className="absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700/30"
+            >
+              <div className="h-full bg-teal-600" style={{ width: `${safeProgress}%` }} />
+            </div>
+          ) : null}
         </a>
 
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
@@ -153,14 +161,6 @@ export function BookCard({
           </button>
         </div>
 
-        {safeProgress > 0 ? (
-          <div
-            data-testid="progress-bar"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700/30"
-          >
-            <div className="h-full bg-teal-600" style={{ width: `${safeProgress}%` }} />
-          </div>
-        ) : null}
       </div>
 
       <div className="mt-2 flex items-center gap-2">

@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: "/admin/collections", label: "collections" },
   { to: "/admin/import", label: "import" },
   { to: "/admin/jobs", label: "jobs" },
+  { to: "/admin/tokens", label: "tokens" },
   { to: "/admin/scheduled-tasks", label: "scheduled_tasks" },
   { to: "/admin/libraries", label: "libraries" },
   { to: "/admin/custom-columns", label: "custom_columns" },

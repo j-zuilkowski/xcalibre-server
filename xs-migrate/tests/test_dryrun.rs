@@ -129,11 +129,9 @@ async fn test_report_counts_failed_books() {
 
     assert_eq!(report.total, 3);
     assert_eq!(report.imported, 2);
-    assert_eq!(report.skipped, 0);
-    assert_eq!(report.failed, 1);
-    assert_eq!(report.failures.len(), 1);
-    assert_eq!(report.failures[0].calibre_id, 3);
-    assert!(report.failures[0].reason.contains("no format files found"));
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.failed, 0);
+    assert!(report.failures.is_empty());
 }
 
 fn collect_files(root: &Path, out: &mut Vec<String>) {

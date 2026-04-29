@@ -1,8 +1,10 @@
 #![allow(dead_code, unused_imports)]
 
 mod common;
+mod fixtures;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use xs_migrate::calibre::reader::CalibreReader;
 use xs_migrate::import::pipeline::{ImportPipeline, LocalFs};
@@ -158,9 +160,9 @@ async fn test_import_missing_file_is_skipped_not_fatal() {
     let report = pipeline.run(entries, &reader).await.expect("run import");
 
     assert_eq!(report.imported, 2);
-    assert_eq!(report.failed, 1);
-    assert_eq!(report.failures.len(), 1);
-    assert!(report.failures[0].reason.contains("no format files found"));
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.failed, 0);
+    assert!(report.failures.is_empty());
 
     let books_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
         .fetch_one(&target_db)
@@ -272,6 +274,231 @@ async fn test_import_identifiers_preserved() {
 
     assert!(pairs.contains(&(String::from("isbn"), String::from("9780000000002"))));
     assert!(pairs.contains(&(String::from("calibre_id"), String::from("2"))));
+}
+
+#[tokio::test]
+async fn test_dry_run_reads_calibre_metadata_without_writing() {
+    let library = fixtures::calibre_import_fixture_library_dir(false);
+    let target_dir = tempfile::tempdir().expect("target dir");
+
+    let output = run_xs_migrate(library.path(), target_dir.path(), true);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("Migration report"));
+    assert!(stdout.contains("total: 3"));
+    assert!(stdout.contains("imported: 3"));
+    assert!(stdout.contains("skipped: 0"));
+    assert!(stdout.contains("failed: 0"));
+    assert!(stdout.contains("would import: Alpha Book"));
+    assert!(stdout.contains("would import: Beta Book"));
+    assert!(stdout.contains("would import: Gamma Book"));
+
+    let target_db = open_target_db(&target_dir.path().join("target.db")).await;
+    let books_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
+        .fetch_one(&target_db)
+        .await
+        .expect("books count");
+    let formats_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM formats")
+        .fetch_one(&target_db)
+        .await
+        .expect("formats count");
+
+    assert_eq!(books_count, 0);
+    assert_eq!(formats_count, 0);
+}
+
+#[tokio::test]
+async fn test_import_maps_calibre_fields_correctly() {
+    let library = fixtures::calibre_import_fixture_library_dir(false);
+    let target_dir = tempfile::tempdir().expect("target dir");
+
+    let _output = run_xs_migrate(library.path(), target_dir.path(), false);
+    let target_db = open_target_db(&target_dir.path().join("target.db")).await;
+    let storage_dir = target_dir.path().join("storage");
+
+    let expected_books = [
+        ("Alpha Book", "One, Author", 2_i64),
+        ("Beta Book", "Two, Author", 2_i64),
+        ("Gamma Book", "One, Author", 1_i64),
+    ];
+
+    for (title, expected_author_sort, expected_tag_count) in expected_books {
+        let row = sqlx::query(
+            r#"
+            SELECT id, title, sort_title
+            FROM books
+            WHERE title = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(title)
+        .fetch_one(&target_db)
+        .await
+        .expect("book row");
+        let book_id: String = row.try_get("id").expect("book id");
+        let imported_title: String = row.try_get("title").expect("title");
+        let sort_title: String = row.try_get("sort_title").expect("sort_title");
+
+        assert_eq!(imported_title, title);
+        assert_eq!(sort_title, title);
+
+        let author_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM book_authors
+            WHERE book_id = ?
+            "#,
+        )
+        .bind(&book_id)
+        .fetch_one(&target_db)
+        .await
+        .expect("author count");
+        assert!(author_count > 0, "expected authors for {title}");
+
+        let first_author_sort: String = sqlx::query_scalar(
+            r#"
+            SELECT a.sort_name
+            FROM book_authors ba
+            JOIN authors a ON a.id = ba.author_id
+            WHERE ba.book_id = ?
+            ORDER BY ba.display_order ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(&book_id)
+        .fetch_one(&target_db)
+        .await
+        .expect("first author sort");
+        assert_eq!(first_author_sort, expected_author_sort);
+
+        let tag_count: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM book_tags
+            WHERE book_id = ?
+            "#,
+        )
+        .bind(&book_id)
+        .fetch_one(&target_db)
+        .await
+        .expect("tag count");
+        assert_eq!(tag_count, expected_tag_count);
+
+        let format_path: String = sqlx::query_scalar(
+            r#"
+            SELECT path
+            FROM formats
+            WHERE book_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(&book_id)
+        .fetch_one(&target_db)
+        .await
+        .expect("format path");
+        assert!(format_path.starts_with("books/"));
+        assert!(storage_dir.join(&format_path).exists());
+    }
+}
+
+#[tokio::test]
+async fn test_import_idempotent_second_run_does_not_duplicate() {
+    let library = fixtures::calibre_import_fixture_library_dir(true);
+    let target_dir = tempfile::tempdir().expect("target dir");
+
+    let _first = run_xs_migrate(library.path(), target_dir.path(), false);
+    let target_db = open_target_db(&target_dir.path().join("target.db")).await;
+
+    let books_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
+        .fetch_one(&target_db)
+        .await
+        .expect("books count after first import");
+    assert_eq!(books_count, 2);
+
+    let calibre_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM identifiers WHERE id_type = 'calibre_id'",
+    )
+    .fetch_one(&target_db)
+    .await
+    .expect("calibre id count after first import");
+    assert_eq!(calibre_count, 2);
+
+    let _second = run_xs_migrate(library.path(), target_dir.path(), false);
+    let target_db = open_target_db(&target_dir.path().join("target.db")).await;
+
+    let books_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
+        .fetch_one(&target_db)
+        .await
+        .expect("books count after second import");
+    let calibre_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM identifiers WHERE id_type = 'calibre_id'",
+    )
+    .fetch_one(&target_db)
+    .await
+    .expect("calibre id count after second import");
+
+    assert_eq!(books_count, 2);
+    assert_eq!(calibre_count, 2);
+}
+
+#[tokio::test]
+async fn test_import_skips_missing_files_gracefully() {
+    let library = fixtures::calibre_import_fixture_library_dir(true);
+    let target_dir = tempfile::tempdir().expect("target dir");
+
+    let output = run_xs_migrate(library.path(), target_dir.path(), false);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning: skipping calibre_id 3"));
+    assert!(stderr.contains("no format files found on disk"));
+
+    let target_db = open_target_db(&target_dir.path().join("target.db")).await;
+    let books_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books")
+        .fetch_one(&target_db)
+        .await
+        .expect("books count");
+    assert_eq!(books_count, 2);
+}
+
+fn run_xs_migrate(source: &Path, target_dir: &Path, dry_run: bool) -> std::process::Output {
+    let binary = xs_migrate_binary_path();
+    let mut command = Command::new(binary);
+    command.current_dir(target_dir);
+    command.arg("--source").arg(source);
+    command.arg("--target-db").arg("sqlite://target.db");
+    command.arg("--target-storage").arg("storage");
+    command.arg("--library-id").arg("default");
+    if dry_run {
+        command.arg("--dry-run");
+    }
+
+    let output = command.output().expect("run xs-migrate");
+    assert!(
+        output.status.success(),
+        "xs-migrate failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn xs_migrate_binary_path() -> PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_xs-migrate")
+        .or_else(|| std::env::var_os("CARGO_BIN_EXE_xs_migrate"))
+        .map(PathBuf::from)
+        .expect("xs-migrate binary path")
+}
+
+async fn open_target_db(db_path: &Path) -> SqlitePool {
+    let options = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true);
+
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("connect target db")
 }
 
 async fn create_target_db() -> (SqlitePool, TempDir) {

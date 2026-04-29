@@ -31,6 +31,7 @@ pub mod docs;
 pub mod health;
 pub mod kobo;
 pub mod llm;
+pub mod memory;
 pub mod opds;
 pub mod search;
 pub mod shelves;
@@ -57,6 +58,7 @@ pub fn router(state: crate::AppState) -> Router {
         .merge(webhooks::router(state.clone()))
         .nest("/kobo/:kobo_token/v1", kobo::router(state.clone()))
         .merge(llm::router(state.clone()))
+        .merge(memory::router(state.clone()))
         .nest("/opds", opds::router(state.clone()))
         .merge(shelves::router(state.clone()))
         .merge(search::router(state.clone()))

@@ -93,6 +93,7 @@ export default function BookDetailScreen() {
   const [downloadedFormats, setDownloadedFormats] = useState<Record<string, string>>({});
   const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [readingProgress, setReadingProgress] = useState<number | null>(null);
 
   const bookQuery = useQuery({
     queryKey: ["book", bookId],
@@ -123,18 +124,48 @@ export default function BookDetailScreen() {
     const book = bookQuery.data;
     if (!book) {
       setDownloadedFormats({});
+      setReadingProgress(null);
       return;
     }
 
     if (book.id === "book-1") {
       setDownloadedFormats({
-        EPUB: "file:///documents/book-1.epub",
+        EPUB: client.streamUrl(book.id, "EPUB"),
       });
       return;
     }
 
     setDownloadedFormats({});
   }, [bookQuery.data]);
+
+  useEffect(() => {
+    const book = bookQuery.data;
+    if (!book) {
+      setReadingProgress(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const progress = await client.getReadingProgress(book.id);
+        if (cancelled) {
+          return;
+        }
+
+        setReadingProgress(typeof progress?.percentage === "number" ? progress.percentage : null);
+      } catch {
+        if (!cancelled) {
+          setReadingProgress(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookQuery.data, client]);
 
   const downloadFormat = async (book: Book, format: string): Promise<void> => {
     const normalizedFormat = format.toUpperCase();
@@ -148,10 +179,9 @@ export default function BookDetailScreen() {
     setDownloadError(null);
 
     try {
-      const localPath = `file:///documents/${book.id}.${normalizedFormat.toLowerCase()}`;
       setDownloadedFormats((current) => ({
         ...current,
-        [normalizedFormat]: localPath,
+        [normalizedFormat]: client.streamUrl(book.id, normalizedFormat),
       }));
     } catch (error) {
       setDownloadError(t("book.unable_to_download"));
@@ -193,6 +223,10 @@ export default function BookDetailScreen() {
   // Other formats (MOBI, AZW3) are downloadable but not yet natively readable in-app.
   const preferredReadFormat = downloadedFormats.EPUB ? "EPUB" : downloadedFormats.PDF ? "PDF" : null;
   const hasReadableDownload = Boolean(preferredReadFormat);
+  const readProgressPercent =
+    typeof readingProgress === "number" && readingProgress > 0
+      ? `${Math.round(readingProgress * 100)}%`
+      : null;
 
   if (!bookId) {
     return (
@@ -331,12 +365,16 @@ export default function BookDetailScreen() {
               params: {
                 id: book.id,
                 format: preferredReadFormat,
+                streamUrl: downloadedFormats[preferredReadFormat],
               },
             });
           }}
         >
           <Text style={styles.readButtonText}>{t("common.read")}</Text>
         </Pressable>
+        {readProgressPercent ? (
+          <Text style={styles.readProgressText}>{t("book.progress")}: {readProgressPercent}</Text>
+        ) : null}
       </View>
 
       {llmHealthQuery.data?.enabled ? (

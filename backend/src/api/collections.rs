@@ -12,7 +12,7 @@
 use crate::{
     api::{
         books::{accessible_library_id, load_book_or_not_found},
-        search::{collection_book_ids_for_search, run_chunk_search},
+        search::{collection_book_ids_for_search, run_chunk_search, ChunkSearchScope},
     },
     db::queries::collections as collection_queries,
     middleware::auth::AuthenticatedUser,
@@ -432,15 +432,19 @@ pub(crate) async fn search_collection_chunks(
         &state,
         &auth_user,
         query_text,
-        scoped_book_ids,
-        query
-            .chunk_type
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
-        limit,
-        rerank,
+        crate::api::search::ChunkSearchOptions {
+            book_ids: scoped_book_ids,
+            chunk_type: query
+                .chunk_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            source: ChunkSearchScope::Books,
+            project_path: None,
+            limit,
+            rerank,
+        },
     )
     .await?;
 

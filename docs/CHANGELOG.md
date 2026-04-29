@@ -8,6 +8,25 @@ All notable changes to the xcalibre-server Rust rewrite. Format: `[YYYY-MM-DD] �
 
 ---
 
+## [2.0.0] — 2026-04-28
+
+### Added
+- Memory API: POST /api/v1/memory, DELETE /api/v1/memory/{id}
+- /search/chunks?source=memory|all for unified RAG retrieval
+- embedding_model config field - split embedding and chat model configuration
+- Playwright E2E test suite - register, upload, search, read, memory ingest
+- API token scope selector in admin panel (read / read-write / admin)
+- xs-migrate test coverage - dry run, field mapping, idempotency
+
+### Changed
+- allow_private_endpoints promoted to [network] top-level config section
+  (llm.allow_private_endpoints still works for backwards compatibility)
+
+### Security
+- SECURITY.md rewritten with xcalibre-specific advisory process and SLA
+
+---
+
 ## 2026-04-24 — Phase 17 Stage 18: Proxy auth email validation — reject provisioning when email header is missing (6d00318)
 
 - `backend/src/api/auth.rs` — proxy provisioning rejects new users when extracted email is empty; logs actionable error; returns 401 with message

@@ -315,6 +315,54 @@ describe("ApiClient", () => {
     });
   });
 
+  test("test_create_api_token_sends_scope", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.post("http://example.test/api/v1/admin/tokens", async ({ request }) => {
+        requestSpy(await request.json());
+        return HttpResponse.json({
+          id: "token-1",
+          name: "Reader",
+          token: "plain-token",
+          created_at: "2026-04-18T00:00:00Z",
+          scope: "read",
+        });
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.createApiToken({ name: "Reader", scope: "read" });
+
+    expect(requestSpy).toHaveBeenCalledWith({ name: "Reader", scope: "read" });
+  });
+
+  test("test_list_api_tokens_uses_admin_tokens_endpoint", async () => {
+    const requestSpy = vi.fn();
+
+    server.use(
+      http.get("http://example.test/api/v1/admin/tokens", ({ request }) => {
+        requestSpy(request.url.toString());
+        return HttpResponse.json([
+          {
+            id: "token-1",
+            name: "Reader",
+            created_by: "user-1",
+            created_at: "2026-04-18T00:00:00Z",
+            last_used_at: null,
+            expires_at: null,
+            scope: "write",
+          },
+        ]);
+      }),
+    );
+
+    const client = new ApiClient("http://example.test", () => null, () => {});
+    await client.listApiTokens();
+
+    expect(requestSpy).toHaveBeenCalledWith("http://example.test/api/v1/admin/tokens");
+  });
+
   test("test_api_error_on_non_ok_response", async () => {
     server.use(
       http.get("http://example.test/api/v1/books/abc", () =>

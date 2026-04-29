@@ -171,6 +171,24 @@ async fn test_llm_endpoint_rejects_localhost_by_default() {
 }
 
 #[tokio::test]
+async fn test_effective_allow_private_prefers_network_section() {
+    let mut config = backend::config::AppConfig::default();
+    config.network.allow_private_endpoints = true;
+    config.llm.allow_private_endpoints = false;
+
+    assert!(backend::config::effective_allow_private(&config));
+}
+
+#[tokio::test]
+async fn test_effective_allow_private_falls_back_to_llm_section() {
+    let mut config = backend::config::AppConfig::default();
+    config.network.allow_private_endpoints = false;
+    config.llm.allow_private_endpoints = true;
+
+    assert!(backend::config::effective_allow_private(&config));
+}
+
+#[tokio::test]
 async fn test_llm_endpoint_allows_localhost_when_flag_set() {
     let result = backend::config::validate_llm_endpoint("http://localhost:1234/v1", true);
 

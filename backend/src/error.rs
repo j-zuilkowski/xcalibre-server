@@ -25,6 +25,8 @@ pub enum AppError {
     PayloadTooLarge,
     #[error("unprocessable")]
     Unprocessable,
+    #[error("{0}")]
+    UnprocessableMessage(String),
     #[error("no extractable format")]
     NoExtractableFormat,
     #[error("not implemented")]
@@ -53,7 +55,9 @@ impl IntoResponse for AppError {
             AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             AppError::Conflict => (StatusCode::CONFLICT, "conflict"),
             AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
-            AppError::Unprocessable => (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable"),
+            AppError::Unprocessable | AppError::UnprocessableMessage(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable")
+            }
             AppError::NoExtractableFormat => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "no_extractable_format")
             }

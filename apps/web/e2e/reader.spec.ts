@@ -75,10 +75,10 @@ test("reading progress is saved and shown on return to library", async ({ page }
     },
   );
 
-  await page.goto("/library");
+  await page.goto("/library?view=grid");
   const bookCard = page.locator(`article:has(a[href="/books/${uploadedBook.id}"])`).first();
-  await bookCard.hover();
-  await expect(bookCard.getByTestId("progress-bar")).toBeVisible();
+  const progressFill = bookCard.locator('[data-testid="progress-bar"] > div');
+  await expect(progressFill).toHaveAttribute("style", /width:\s*\d/);
 });
 
 test("reader settings panel opens on gear icon click", async ({ page }) => {

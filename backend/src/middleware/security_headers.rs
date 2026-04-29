@@ -13,7 +13,7 @@
 //! Rate limiting uses `tower-governor` with a `ClientIpKeyExtractor` that
 //! reads `X-Forwarded-For` (first address), then `X-Real-IP`, then the
 //! direct socket address.  Separate layers are applied to auth endpoints
-//! (`AUTH_RATE_LIMIT_PER_MINUTE = 10`) and the global API.
+//! (configurable via `APP_AUTH_RATE_LIMIT_PER_MINUTE`, default 10) and the global API.
 //!
 //! `enforce_upload_size` checks `Content-Length` against `max_upload_bytes`
 //! before the request body is read, avoiding unnecessary memory allocation.
@@ -52,7 +52,6 @@ const CONTENT_SECURITY_POLICY_VALUE: &str = concat!(
 );
 const PERMISSIONS_POLICY_VALUE: &str = "camera=(), microphone=(), geolocation=()";
 
-const AUTH_RATE_LIMIT_PER_MINUTE: u32 = 10;
 const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 const UPLOAD_ROUTE: &str = "/api/v1/books";
 
@@ -72,12 +71,13 @@ impl RateLimitHeaderConfig {
 }
 
 pub(crate) fn auth_rate_limit_layer(
+    requests_per_minute: u32,
 ) -> GovernorLayer<ClientIpKeyExtractor, governor::middleware::NoOpMiddleware> {
-    governor_layer(AUTH_RATE_LIMIT_PER_MINUTE)
+    governor_layer(requests_per_minute.max(1))
 }
 
-pub(crate) fn auth_rate_limit_headers_config() -> RateLimitHeaderConfig {
-    RateLimitHeaderConfig::new(AUTH_RATE_LIMIT_PER_MINUTE, RATE_LIMIT_WINDOW_SECONDS)
+pub(crate) fn auth_rate_limit_headers_config(requests_per_minute: u32) -> RateLimitHeaderConfig {
+    RateLimitHeaderConfig::new(requests_per_minute, RATE_LIMIT_WINDOW_SECONDS)
 }
 
 pub(crate) fn global_rate_limit_layer(

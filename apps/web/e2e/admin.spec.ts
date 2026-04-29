@@ -56,8 +56,9 @@ test("delete user removes them from the table", async ({ page }) => {
   const row = page.getByRole("row").filter({ hasText: username });
   await expect(row).toBeVisible();
 
-  page.once("dialog", (dialog) => dialog.accept());
   await row.getByRole("button", { name: "Delete" }).click();
+  // The UI opens a React Dialog (not a native browser confirm); click the confirm button.
+  await page.getByRole("button", { name: "Delete" }).last().click();
 
   await expect(page.getByRole("row").filter({ hasText: username })).toHaveCount(0);
 });

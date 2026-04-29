@@ -3,6 +3,12 @@
 base_url = "http://localhost:8083"
 storage_path = "./storage"
 
+[network]
+# allow_private_endpoints = false
+# Set to true to allow LLM endpoints and webhook targets on
+# private/loopback addresses. Also configurable as
+# llm.allow_private_endpoints for backwards compatibility.
+
 [database]
 url = "sqlite://library.db"
 
@@ -21,7 +27,7 @@ header = "x-remote-user"
 
 [llm]
 enabled = false
-# Set to true when using a local model server (LM Studio, Ollama, etc.)
+# Legacy compatibility only; prefer [network].
 # allow_private_endpoints = false
 # Override model used for /v1/embeddings — set this when your embedding model
 # (e.g. nomic-embed-text-v1.5) differs from the chat model in llm.librarian.model.

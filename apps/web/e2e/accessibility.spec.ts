@@ -6,7 +6,7 @@ import { bootstrapAdminSession, seedAuthState } from "./helpers/auth";
 import { uploadFixtureBook } from "./helpers/books";
 
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/test.epub", import.meta.url));
-const API_BASE = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8084";
+const API_BASE = process.env.PLAYWRIGHT_API_URL ?? "http://127.0.0.1:8083";
 
 let adminSession!: AuthSession;
 let uploadedBook!: Book;

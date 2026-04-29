@@ -59,6 +59,7 @@ pub struct AppConfig {
     pub ldap: LdapSection,
     pub metadata: MetadataLookupSection,
     pub meilisearch: MeilisearchSection,
+    pub network: NetworkSection,
     pub llm: LlmSection,
     pub limits: LimitsSection,
 }
@@ -304,7 +305,7 @@ impl std::fmt::Debug for AuthSection {
 /// LLM feature configuration.
 ///
 /// `enabled` defaults to `false`; opt-in via `ENABLE_LLM_FEATURES=true`.
-/// `allow_private_endpoints` must be `true` to use LM Studio / Ollama on localhost.
+/// `allow_private_endpoints` remains as a legacy alias; prefer `network`.
 /// Default is `false` to block SSRF via RFC 1918 / loopback addresses.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -321,6 +322,14 @@ pub struct LlmSection {
     /// allowing a dedicated embedding model (e.g. nomic-embed-text) alongside
     /// a separate chat model on the same endpoint.
     pub embedding_model: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetworkSection {
+    /// Top-level opt-in for private/loopback endpoints.
+    /// This supersedes the legacy llm.allow_private_endpoints namespace.
+    pub allow_private_endpoints: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -355,6 +364,7 @@ pub struct LlmRoleSection {
 pub struct LimitsSection {
     pub upload_max_bytes: u64,
     pub rate_limit_per_ip: u32,
+    pub auth_rate_limit_per_minute: u32,
 }
 
 impl Default for AppConfig {
@@ -376,10 +386,12 @@ impl Default for AppConfig {
             ldap: LdapSection::default(),
             metadata: MetadataLookupSection::default(),
             meilisearch: MeilisearchSection::default(),
+            network: NetworkSection::default(),
             llm: LlmSection::default(),
             limits: LimitsSection {
                 upload_max_bytes: 524_288_000,
                 rate_limit_per_ip: 200,
+                auth_rate_limit_per_minute: 10,
             },
         }
     }
@@ -397,7 +409,8 @@ impl Default for AppConfig {
 /// # Errors
 /// Returns an error for missing required fields, sub-minimum argon2 parameters,
 /// invalid base64 or too-short JWT secret, unsupported storage backend, or
-/// LLM endpoint pointing at a private address without `allow_private_endpoints`.
+/// LLM endpoint pointing at a private address without an effective
+/// `allow_private_endpoints` flag enabled in either `network` or `llm`.
 pub async fn load_config() -> anyhow::Result<AppConfig> {
     let path = config_path();
     if path.exists() {
@@ -592,6 +605,10 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.meilisearch.url = pick_env("APP_MEILISEARCH_URL", &config.meilisearch.url);
     config.meilisearch.api_key = pick_env("APP_MEILISEARCH_API_KEY", &config.meilisearch.api_key);
 
+    config.network.allow_private_endpoints = pick_env_bool(
+        "APP_NETWORK_ALLOW_PRIVATE_ENDPOINTS",
+        config.network.allow_private_endpoints,
+    );
     config.llm.enabled = pick_env_bool("APP_LLM_ENABLED", config.llm.enabled);
     config.llm.allow_private_endpoints = pick_env_bool(
         "APP_LLM_ALLOW_PRIVATE_ENDPOINTS",
@@ -629,6 +646,10 @@ fn apply_env_overrides(config: &mut AppConfig) {
         pick_env_u64("APP_UPLOAD_MAX_BYTES", config.limits.upload_max_bytes);
     config.limits.rate_limit_per_ip =
         pick_env_u32("APP_RATE_LIMIT_PER_IP", config.limits.rate_limit_per_ip);
+    config.limits.auth_rate_limit_per_minute = pick_env_u32(
+        "APP_AUTH_RATE_LIMIT_PER_MINUTE",
+        config.limits.auth_rate_limit_per_minute,
+    );
 
     config.app.base_url = pick_env("BASE_URL", &config.app.base_url);
     config.server.https_only = pick_env_bool("SERVER_HTTPS_ONLY", config.server.https_only);
@@ -652,6 +673,10 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.meilisearch.url = pick_env("MEILISEARCH_URL", &config.meilisearch.url);
     config.meilisearch.api_key = pick_env("MEILISEARCH_API_KEY", &config.meilisearch.api_key);
     config.llm.enabled = pick_env_bool("ENABLE_LLM_FEATURES", config.llm.enabled);
+    config.network.allow_private_endpoints = pick_env_bool(
+        "NETWORK_ALLOW_PRIVATE_ENDPOINTS",
+        config.network.allow_private_endpoints,
+    );
     config.llm.allow_private_endpoints = pick_env_bool(
         "LLM_ALLOW_PRIVATE_ENDPOINTS",
         config.llm.allow_private_endpoints,
@@ -714,20 +739,25 @@ fn decode_base64_secret(secret: &str) -> Result<Vec<u8>, base64::DecodeError> {
 // Private/loopback endpoints are warned about at startup but not blocked so local
 // model servers remain usable by default.
 fn validate_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
+    let allow_private_endpoints = effective_allow_private(config);
     for endpoint in llm_endpoints(config) {
         if endpoint.trim().is_empty() {
             continue;
         }
         let endpoint_info = inspect_llm_endpoint(endpoint)?;
-        if endpoint_info.private_or_loopback && !config.llm.allow_private_endpoints {
+        if endpoint_info.private_or_loopback && !allow_private_endpoints {
             tracing::warn!(
                 endpoint = %endpoint,
                 resolved_ips = ?endpoint_info.resolved_ips,
-                "LLM endpoint resolves to a private/loopback address; startup continues because llm.allow_private_endpoints = false"
+                "LLM endpoint resolves to a private/loopback address; startup continues because network.allow_private_endpoints and llm.allow_private_endpoints are both false"
             );
         }
     }
     Ok(())
+}
+
+pub fn effective_allow_private(config: &AppConfig) -> bool {
+    config.network.allow_private_endpoints || config.llm.allow_private_endpoints
 }
 
 fn llm_endpoints(config: &AppConfig) -> [&str; 2] {

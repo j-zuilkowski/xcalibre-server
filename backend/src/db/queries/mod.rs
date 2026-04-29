@@ -27,6 +27,7 @@ pub mod import_logs;
 pub mod kobo;
 pub mod libraries;
 pub mod llm;
+pub mod memory_chunks;
 pub mod oauth;
 pub mod opds;
 pub mod scheduled_tasks;

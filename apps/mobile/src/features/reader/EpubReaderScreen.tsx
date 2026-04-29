@@ -57,6 +57,7 @@ import type {
   CreateBookAnnotationRequest,
 } from "@xs/shared";
 import type { SQLiteDatabase } from "expo-sqlite";
+import { TextReaderFallback } from "./TextReaderFallback";
 import { loadProgress, saveProgress } from "../../lib/progress";
 import {
   ANNOTATION_COLORS,
@@ -786,9 +787,14 @@ export function EpubReaderScreen({
           onHighlight={handleRendererHighlight}
         />
       ) : (
-        <View style={styles.loadingState}>
-          <Text style={styles.loadingText}>{t("reader.epub_renderer_unavailable")}</Text>
-        </View>
+        <TextReaderFallback
+          client={client}
+          database={database}
+          bookId={bookId}
+          title={title}
+          format={format === "EPUB" ? "EPUB" : "EPUB"}
+          onBack={onBack}
+        />
       )}
 
       <Pressable style={styles.centerTapZone} onPress={toggleHeader} />

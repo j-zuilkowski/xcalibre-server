@@ -53,6 +53,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         state.clone(),
         crate::middleware::auth::require_totp_pending,
     );
+    let auth_rpm = state.config.limits.auth_rate_limit_per_minute;
     let public = Router::new()
         .route("/providers", get(auth_providers))
         .route("/oauth/:provider", get(oauth_start))
@@ -60,9 +61,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/refresh", post(refresh))
-        .layer(crate::middleware::security_headers::auth_rate_limit_layer())
+        .layer(crate::middleware::security_headers::auth_rate_limit_layer(auth_rpm))
         .layer(middleware::from_fn_with_state(
-            crate::middleware::security_headers::auth_rate_limit_headers_config(),
+            crate::middleware::security_headers::auth_rate_limit_headers_config(auth_rpm),
             crate::middleware::security_headers::apply_rate_limit_headers,
         ));
     let protected = Router::new()
@@ -77,9 +78,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/totp/verify", post(totp_verify))
         .route("/totp/verify-backup", post(totp_verify_backup))
         .layer(totp_pending_layer)
-        .layer(crate::middleware::security_headers::auth_rate_limit_layer())
+        .layer(crate::middleware::security_headers::auth_rate_limit_layer(auth_rpm))
         .layer(middleware::from_fn_with_state(
-            crate::middleware::security_headers::auth_rate_limit_headers_config(),
+            crate::middleware::security_headers::auth_rate_limit_headers_config(auth_rpm),
             crate::middleware::security_headers::apply_rate_limit_headers,
         ));
 

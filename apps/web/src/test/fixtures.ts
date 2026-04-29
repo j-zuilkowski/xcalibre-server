@@ -9,6 +9,7 @@ import type {
   CollectionSummary,
   ImportStatus,
   Library,
+  ApiToken,
   ReadingProgress,
   Role,
   SearchResultItem,
@@ -269,6 +270,19 @@ export function makeImportStatus(overrides: Partial<ImportStatus> = {}): ImportS
     failures: [],
     started_at: "2026-04-19T00:00:00Z",
     completed_at: "2026-04-19T00:01:00Z",
+    ...overrides,
+  };
+}
+
+export function makeApiToken(overrides: Partial<ApiToken> = {}): ApiToken {
+  return {
+    id: "token-1",
+    name: "Reader",
+    created_by: "user-1",
+    created_at: "2026-04-19T00:00:00Z",
+    last_used_at: null,
+    expires_at: null,
+    scope: "write",
     ...overrides,
   };
 }

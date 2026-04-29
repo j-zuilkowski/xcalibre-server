@@ -97,16 +97,16 @@ impl ImportPipeline {
 
             let available_formats = collect_existing_formats(reader, &entry);
             if available_formats.is_empty() {
-                report.failed += 1;
-                report.failures.push(FailureRecord {
-                    calibre_id: entry.book.id,
-                    title: entry.book.title.clone(),
-                    reason: "no format files found on disk".to_string(),
-                });
+                eprintln!(
+                    "warning: skipping calibre_id {} ({}) because no format files found on disk",
+                    entry.book.id, entry.book.title
+                );
+                report.skipped += 1;
                 continue;
             }
 
             if self.dry_run {
+                println!("would import: {}", entry.book.title);
                 report.imported += 1;
                 continue;
             }
@@ -116,6 +116,7 @@ impl ImportPipeline {
                 .await
             {
                 Ok(()) => {
+                    println!("imported: {}", entry.book.title);
                     report.imported += 1;
                 }
                 Err(err) => {

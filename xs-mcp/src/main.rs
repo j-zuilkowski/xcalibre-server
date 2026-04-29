@@ -103,7 +103,10 @@ fn validate_configured_llm_endpoints(config: &AppConfig) -> anyhow::Result<()> {
         if endpoint.trim().is_empty() {
             continue;
         }
-        backend::config::validate_llm_endpoint(endpoint, config.llm.allow_private_endpoints)
+        backend::config::validate_llm_endpoint(
+            endpoint,
+            backend::config::effective_allow_private(config),
+        )
             .map_err(|err| anyhow::anyhow!("invalid llm endpoint {endpoint}: {err}"))?;
     }
     Ok(())
