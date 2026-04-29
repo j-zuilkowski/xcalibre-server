@@ -773,7 +773,7 @@ TDD BUILD LOOP — do not stop until all tests pass:
     If exit code is 0 (all tests pass): exit loop and commit.
 
 Commit when all tests are green:
-  cd /Users/jonzuilkowski/Documents/localProject/xcalibre-server
+  cd /path/to/xcalibre-server
   git add apps/web/src/test/ \
           apps/web/src/features/auth/*.test.tsx \
           apps/web/src/features/library/*.test.tsx \

@@ -9,7 +9,7 @@ reliability improvements. All existing tests must continue to pass.
 ## Context
 
 - Language/Framework: Rust 2021 + Axum 0.7 (backend), React + Vite + TypeScript (web frontend)
-- Repo root: `/Users/jonzuilkowski/Documents/localProject/xcalibre-server`
+- Repo root: `/path/to/xcalibre-server`
 - Key files:
   - `backend/src/api/books.rs`
   - `backend/src/ingest/text.rs`

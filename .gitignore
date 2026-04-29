@@ -1,9 +1,44 @@
+# Build output
 /target
 /backend/target
+/xs-migrate/target
+/xs-mcp/target
+
+# Node
 /node_modules
-/.claude/cache
+**/node_modules
+**/.turbo
+
+# Vite / dist
+apps/web/dist
+apps/web/node_modules/.vite
+
+# Config with real secrets — use config.example.toml as the template
+config.toml
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
 /storage
-/library.db
-/.DS_Store
+storage_e2e/
+
+# Playwright
+apps/web/test-results/
+apps/web/.playwright-e2e-run-id
+
+# Expo / React Native
+apps/mobile/.expo/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Vim swaps
 **/*.swp
+
+# Large vendored asset (not in git)
 /apps/web/public/djvu.min.js
+
+# Claude dev cache
+/.claude/cache

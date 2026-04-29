@@ -40,7 +40,7 @@ If `llm.enabled = false` or the embedding endpoint is not configured, `POST /api
 Existing Merlin callers and the web frontend currently call `GET /api/v1/search/chunks` without a `source` parameter. Defaulting to `"books"` means no behaviour change for existing clients. Merlin's `RAGTools.buildEnrichedMessage` will explicitly pass `source=all` to get unified retrieval.
 
 **`project_path` scoping:**
-Memory chunks are tagged with the filesystem path of the project they were generated from (e.g. `/Users/jon/Documents/localProject/xcalibre-server`). Merlin passes this at ingest and at query time. The semantic search query filters by `project_path` when provided, preventing memory from one project leaking into another. Pass `project_path = null` to search all memory (used for user-level factual memory that spans projects).
+Memory chunks are tagged with the filesystem path of the project they were generated from (e.g. `/path/to/xcalibre-server`). Merlin passes this at ingest and at query time. The semantic search query filters by `project_path` when provided, preventing memory from one project leaking into another. Pass `project_path = null` to search all memory (used for user-level factual memory that spans projects).
 
 **RRF merge for `source=all`:**
 When `source=all`, the handler runs two independent searches (book chunks + memory chunks) then merges by Reciprocal Rank Fusion — the same algorithm already used for hybrid book chunk search. Each result carries a `source` field (`"books"` or `"memory"`) so the caller can distinguish them. The combined list is re-ranked by the merged RRF score, not interleaved in source order.
