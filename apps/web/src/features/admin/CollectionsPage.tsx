@@ -41,7 +41,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { CollectionDetail, CollectionDomain, CollectionSummary, BookSummary } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 
 const DOMAIN_OPTIONS: Array<{ value: CollectionDomain; label: string }> = [
   { value: "technical", label: "Technical" },

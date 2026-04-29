@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AdminAuthor } from "@xs/shared";
 import { apiClient } from "../../lib/api-client";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { AuthorAutocomplete } from "./AuthorAutocomplete";
 
 const PAGE_SIZE = 20;

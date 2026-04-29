@@ -51,7 +51,7 @@ import type { AnnotationColor, BookAnnotation } from "@xs/shared";
 import { useAuthStore } from "../../lib/auth-store";
 import { apiClient } from "../../lib/api-client";
 import { useTranslation } from "react-i18next";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
 import type { ReaderComponentProps } from "./types";
 

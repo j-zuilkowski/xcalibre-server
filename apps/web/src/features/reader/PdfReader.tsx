@@ -30,7 +30,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiClient } from "../../lib/api-client";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/Sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../../components/ui/sheet";
 import { useReaderToolbar } from "./useReaderToolbar";
 import type { ReaderComponentProps } from "./types";
 
