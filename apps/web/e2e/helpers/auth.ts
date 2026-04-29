@@ -78,7 +78,7 @@ export async function login(page: Page, username: string, password: string) {
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL("**/{home,library}", { waitUntil: "commit" });
+  await page.waitForURL(/\/(home|library)/, { waitUntil: "commit" });
 }
 
 export async function loginAsAdmin(page: Page) {
@@ -150,19 +150,8 @@ export function makeUserSession(user: User, accessToken: string, refreshToken: s
   };
 }
 
-export async function bootstrapAdminSession(browser: Browser): Promise<AuthSession> {
-  const page = await browser.newPage();
-  try {
-    await loginAsAdmin(page);
-    const stored = await page.evaluate((storageKey) => localStorage.getItem(storageKey), AUTH_STORAGE_KEY);
-    if (!stored) {
-      throw new Error("Missing admin auth session");
-    }
-
-    const session = JSON.parse(stored) as AuthSession;
-    cachedAdminSession = session;
-    return session;
-  } finally {
-    await page.close();
-  }
+export async function bootstrapAdminSession(_browser: Browser): Promise<AuthSession> {
+  const session = await ensureAdminAccount();
+  cachedAdminSession = session;
+  return session;
 }

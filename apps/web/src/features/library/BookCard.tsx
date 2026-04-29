@@ -154,12 +154,11 @@ export function BookCard({
         </div>
 
         {safeProgress > 0 ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700/30">
-            <div
-              data-testid="progress-bar"
-              className="h-full bg-teal-600"
-              style={{ width: `${safeProgress}%` }}
-            />
+          <div
+            data-testid="progress-bar"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-zinc-700/30"
+          >
+            <div className="h-full bg-teal-600" style={{ width: `${safeProgress}%` }} />
           </div>
         ) : null}
       </div>
