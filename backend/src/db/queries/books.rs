@@ -76,6 +76,7 @@ pub struct ListBooksParams {
     pub language: Option<String>,
     pub publisher: Option<String>,
     pub format: Option<String>,
+    pub document_type: Option<String>,
     pub rating_bucket: Option<i64>,
     pub sort: Option<String>,
     pub order: Option<String>,
@@ -1971,6 +1972,17 @@ fn apply_list_filters(
         qb.push(")");
     }
 
+    if let Some(dt) = params
+        .document_type
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        and_where(qb);
+        qb.push("b.document_type = ");
+        qb.push_bind(dt);
+    }
+
     if let Some(publisher) = params
         .publisher
         .as_ref()
@@ -2050,6 +2062,40 @@ fn apply_list_filters(
         qb.push("b.library_id = ");
         qb.push_bind(library_id);
     }
+}
+
+/// Returns the authenticated user's books with active reading progress, ordered by
+/// the most recently updated progress and limited to the first 20 rows.
+pub async fn list_in_progress_books<'e, E>(
+    db: E,
+    user_id: &str,
+    library_id: Option<&str>,
+) -> anyhow::Result<Vec<BookSummary>>
+where
+    E: Copy,
+    E: sqlx::Executor<'e, Database = Sqlite>,
+{
+    let library_id = library_id.filter(|value| !value.trim().is_empty());
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT rp.book_id FROM reading_progress rp INNER JOIN books b ON b.id = rp.book_id",
+    );
+    query.push(" WHERE rp.user_id = ");
+    query.push_bind(user_id);
+    query.push(" AND rp.percentage > 0 AND rp.percentage < 100");
+    if let Some(library_id) = library_id {
+        query.push(" AND b.library_id = ");
+        query.push_bind(library_id);
+    }
+    query.push(" ORDER BY rp.updated_at DESC, rp.id DESC LIMIT 20");
+
+    let book_ids: Vec<String> = query
+        .build_query_scalar()
+        .fetch_all(db)
+        .await
+        .context("list in-progress book ids")?;
+
+    list_book_summaries_by_ids(db, &book_ids, library_id, Some(user_id)).await
 }
 
 fn clamp_page_size(page_size: i64) -> i64 {

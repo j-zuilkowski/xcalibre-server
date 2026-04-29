@@ -78,6 +78,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             post(upload_book).layer(DefaultBodyLimit::max(upload_max_bytes as usize)),
         )
         .route(
+            "/api/v1/books/in-progress",
+            get(list_in_progress_books),
+        )
+        .route(
             "/api/v1/books/custom-columns",
             get(list_custom_columns).post(create_custom_column),
         )
@@ -148,6 +152,7 @@ pub(crate) struct ListBooksQuery {
     tag: Option<SingleOrMany>,
     language: Option<String>,
     format: Option<String>,
+    document_type: Option<String>,
     sort: Option<String>,
     order: Option<String>,
     page: Option<i64>,
@@ -506,6 +511,7 @@ impl UploadFormat {
         ("tag" = Option<String>, Query, description = "Filter by tag"),
         ("language" = Option<String>, Query, description = "Filter by language"),
         ("format" = Option<String>, Query, description = "Filter by format"),
+        ("document_type" = Option<String>, Query, description = "Filter by document type"),
         ("sort" = Option<String>, Query, description = "Sort field"),
         ("order" = Option<String>, Query, description = "Sort order"),
         ("page" = Option<i64>, Query, description = "Page number"),
@@ -538,6 +544,7 @@ pub(crate) async fn list_books(
         language: query.language,
         publisher: None,
         format: query.format,
+        document_type: query.document_type,
         rating_bucket: None,
         sort: query.sort,
         order: query.order,
@@ -559,6 +566,39 @@ pub(crate) async fn list_books(
         page: page.page,
         page_size: page.page_size,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/in-progress",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Books with in-progress reading state", body = [book_queries::BookSummary]),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+/// Returns up to 20 books that the authenticated user has started but not finished.
+/// Books are ordered by most recently updated reading progress.
+pub(crate) async fn list_in_progress_books(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<book_queries::BookSummary>>, AppError> {
+    let library_id = accessible_library_id(&auth_user.user);
+    let books = book_queries::list_in_progress_books(
+        &state.db,
+        &auth_user.user.id,
+        library_id,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    Ok(Json(books))
 }
 
 #[utoipa::path(
