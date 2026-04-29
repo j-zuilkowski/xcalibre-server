@@ -130,6 +130,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/books/:id/comic/page/:index", get(get_comic_page))
         .route("/api/v1/books/:id/metadata-lookup", get(metadata_lookup))
         .route("/api/v1/books/:id/metadata/search", get(search_book_metadata))
+        .route("/api/v1/books/:id/metadata/apply", post(apply_book_metadata))
         .route(
             "/api/v1/books/:id/formats/:format/download",
             get(download_format),
@@ -236,6 +237,20 @@ struct MetadataLookupQuery {
 #[derive(Debug, Deserialize, Default, IntoParams)]
 pub(crate) struct MetadataSearchQuery {
     q: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ApplyMetadataBody {
+    source: String,
+    external_id: String,
+    title: Option<String>,
+    authors: Option<Vec<String>>,
+    description: Option<String>,
+    publisher: Option<String>,
+    published_date: Option<String>,
+    isbn_13: Option<String>,
+    isbn_10: Option<String>,
+    cover_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -479,6 +494,152 @@ pub(crate) async fn search_book_metadata(
         google_books.unwrap_or_default(),
         open_library.unwrap_or_default(),
     )))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/books/{id}/metadata/apply",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id")
+    ),
+    request_body = ApplyMetadataBody,
+    responses(
+        (status = 200, description = "Updated book", body = crate::db::models::Book),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+/// Applies a selected metadata candidate to the book record, updating title, description,
+/// authors, publisher flags, identifiers, and an optional downloaded cover image.
+pub(crate) async fn apply_book_metadata(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Json(payload): Json<ApplyMetadataBody>,
+) -> Result<Json<crate::db::models::Book>, AppError> {
+    let perms = book_queries::role_permissions_for_user(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+    if !perms.can_edit {
+        return Err(AppError::Forbidden("forbidden".into()));
+    }
+
+    let _ = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let source = payload.source.trim();
+    if source.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    let external_id = payload.external_id.trim();
+    if external_id.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    let patch = book_queries::PatchBookInput {
+        title: payload.title.map(trim_owned),
+        sort_title: None,
+        description: payload.description.map(trim_optional_owned),
+        pubdate: payload.published_date.map(trim_optional_owned),
+        language: None,
+        rating: None,
+        series_id: None,
+        series_index: None,
+        authors: None,
+        identifiers: None,
+    };
+
+    let _ = book_queries::patch_book_with_audit(
+        &state.db,
+        &book_id,
+        &auth_user.user.id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+        patch,
+    )
+    .await
+    .map_err(|err| {
+        if format!("{err:#}").contains("duplicate_isbn") {
+            AppError::Conflict
+        } else if format!("{err:#}").contains("rating") {
+            AppError::Unprocessable
+        } else {
+            AppError::Internal
+        }
+    })?
+    .ok_or(AppError::NotFound)?;
+
+    if let Some(authors) = payload.authors.clone() {
+        book_queries::replace_book_authors(&state.db, &book_id, authors)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+
+    if let Some(publisher) = payload.publisher.as_deref() {
+        book_queries::update_book_publisher(&state.db, &book_id, publisher)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    upsert_book_identifier(&state.db, &book_id, source, external_id, &now)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    if let Some(isbn_13) = payload
+        .isbn_13
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        upsert_book_identifier(&state.db, &book_id, "isbn_13", isbn_13, &now)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+
+    if let Some(isbn_10) = payload
+        .isbn_10
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        upsert_book_identifier(&state.db, &book_id, "isbn_10", isbn_10, &now)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+
+    if let Some(cover_url) = payload
+        .cover_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Err(err) = download_and_store_cover(&state, &book_id, cover_url).await {
+            tracing::warn!(book_id = %book_id, error = %err, "metadata cover download failed");
+        }
+    }
+
+    let updated = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    Ok(Json(updated))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2465,6 +2626,125 @@ fn interleave_metadata_candidates(
     merged
 }
 
+async fn upsert_book_identifier(
+    db: &sqlx::SqlitePool,
+    book_id: &str,
+    id_type: &str,
+    value: &str,
+    now: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        INSERT INTO identifiers (id, book_id, id_type, value, last_modified)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(book_id, id_type) DO UPDATE SET
+            value = excluded.value,
+            last_modified = excluded.last_modified
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(book_id)
+    .bind(id_type.trim().to_lowercase())
+    .bind(value.trim())
+    .bind(now)
+    .execute(db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+    Ok(())
+}
+
+async fn download_and_store_cover(
+    state: &AppState,
+    book_id: &str,
+    cover_url: &str,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|err| anyhow::anyhow!("build cover client: {err}"))?;
+    let response = client
+        .get(cover_url)
+        .send()
+        .await
+        .map_err(|err| anyhow::anyhow!("download cover: {err}"))?
+        .error_for_status()
+        .map_err(|err| anyhow::anyhow!("cover status: {err}"))?;
+    let raw_cover = response
+        .bytes()
+        .await
+        .map_err(|err| anyhow::anyhow!("read cover bytes: {err}"))?;
+
+    let Some(cover_variants) = render_cover_variants(&raw_cover) else {
+        return Err(anyhow::anyhow!("cover image could not be rendered"));
+    };
+
+    let bucket = &book_id[..2];
+    let cover_relative_path = format!("covers/{bucket}/{book_id}.jpg");
+    let thumb_relative_path = format!("covers/{bucket}/{book_id}.thumb.jpg");
+    let cover_webp_relative_path = format!("covers/{bucket}/{book_id}.webp");
+    let thumb_webp_relative_path = format!("covers/{bucket}/{book_id}.thumb.webp");
+    let generated_cover_paths = [
+        cover_relative_path.as_str(),
+        thumb_relative_path.as_str(),
+        cover_webp_relative_path.as_str(),
+        thumb_webp_relative_path.as_str(),
+    ];
+
+    if let Err(err) = state
+        .storage
+        .put(
+            &cover_relative_path,
+            bytes::Bytes::from(cover_variants.cover_jpg),
+        )
+        .await
+    {
+        delete_storage_paths(state, &generated_cover_paths).await;
+        return Err(anyhow::anyhow!("store cover jpeg: {err}"));
+    }
+    if let Err(err) = state
+        .storage
+        .put(
+            &thumb_relative_path,
+            bytes::Bytes::from(cover_variants.thumb_jpg),
+        )
+        .await
+    {
+        delete_storage_paths(state, &generated_cover_paths).await;
+        return Err(anyhow::anyhow!("store thumb jpeg: {err}"));
+    }
+    if let Err(err) = state
+        .storage
+        .put(
+            &cover_webp_relative_path,
+            bytes::Bytes::from(cover_variants.cover_webp),
+        )
+        .await
+    {
+        delete_storage_paths(state, &generated_cover_paths).await;
+        return Err(anyhow::anyhow!("store cover webp: {err}"));
+    }
+    if let Err(err) = state
+        .storage
+        .put(
+            &thumb_webp_relative_path,
+            bytes::Bytes::from(cover_variants.thumb_webp),
+        )
+        .await
+    {
+        delete_storage_paths(state, &generated_cover_paths).await;
+        return Err(anyhow::anyhow!("store thumb webp: {err}"));
+    }
+
+    if let Err(err) =
+        book_queries::set_book_cover_path(&state.db, book_id, &cover_relative_path).await
+    {
+        delete_storage_paths(state, &generated_cover_paths).await;
+        return Err(anyhow::anyhow!("persist cover path: {err}"));
+    }
+
+    Ok(())
+}
+
 /// Returns the page index for a CBZ/CBR comic archive; requires `can_download` permission.
 async fn get_comic_pages(
     State(state): State<AppState>,
@@ -3919,6 +4199,15 @@ fn parse_tag_query(raw_tags: Option<SingleOrMany>) -> Vec<String> {
 
 fn trim_owned(value: String) -> String {
     value.trim().to_string()
+}
+
+fn trim_optional_owned(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 /// Wraps `ingest_text::list_chapters`, returning an empty list instead of propagating errors.

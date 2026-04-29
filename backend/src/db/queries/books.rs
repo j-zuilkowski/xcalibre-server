@@ -1026,7 +1026,7 @@ pub async fn bulk_update_books(
         }
 
         if let Some(publisher) = input.publisher.as_ref() {
-            update_book_publisher(&mut tx, &book_id, publisher, &now).await?;
+            update_book_publisher_in_tx(&mut tx, &book_id, publisher, &now).await?;
             changed = true;
         }
 
@@ -2311,7 +2311,7 @@ async fn get_or_create_tag(
     Ok(tag_id)
 }
 
-async fn update_book_publisher(
+async fn update_book_publisher_in_tx(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     book_id: &str,
     publisher: &str,
@@ -2348,6 +2348,58 @@ async fn update_book_publisher(
         .execute(&mut **tx)
         .await?;
 
+    Ok(())
+}
+
+/// Updates the book publisher flag payload in `books.flags`, preserving the existing transaction
+/// pattern used by bulk-edit and metadata apply flows.
+pub async fn update_book_publisher(
+    db: &SqlitePool,
+    book_id: &str,
+    publisher: &str,
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = db.begin().await?;
+    update_book_publisher_in_tx(&mut tx, book_id, publisher, &now).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Replaces the book's author links using author names, creating authors as needed.
+/// Empty input falls back to `Unknown Author` via the normalizer.
+pub async fn replace_book_authors(
+    db: &SqlitePool,
+    book_id: &str,
+    author_names: Vec<String>,
+) -> anyhow::Result<()> {
+    let now = Utc::now().to_rfc3339();
+    let authors = normalize_author_names(author_names);
+    let mut tx = db.begin().await?;
+
+    sqlx::query("DELETE FROM book_authors WHERE book_id = ?")
+        .bind(book_id)
+        .execute(&mut *tx)
+        .await?;
+
+    for (display_order, author_name) in authors.into_iter().enumerate() {
+        let author_id = get_or_create_author(&mut tx, &author_name, &now).await?;
+        sqlx::query(
+            "INSERT INTO book_authors (book_id, author_id, display_order) VALUES (?, ?, ?)",
+        )
+        .bind(book_id)
+        .bind(author_id)
+        .bind(display_order as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    sqlx::query("UPDATE books SET last_modified = ? WHERE id = ?")
+        .bind(&now)
+        .bind(book_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
