@@ -36,6 +36,8 @@ COPY backend/Cargo.toml backend/Cargo.toml
 COPY xs-migrate/Cargo.toml xs-migrate/Cargo.toml
 COPY xs-mcp/Cargo.toml xs-mcp/Cargo.toml
 COPY vendor/csv vendor/csv
+COPY xs-migrate/src xs-migrate/src
+COPY xs-mcp/src xs-mcp/src
 RUN mkdir -p backend/src \
     && printf "fn main() {}\n" > backend/src/main.rs \
     && cat <<'EOF' >/usr/local/bin/cargo-build-backend
