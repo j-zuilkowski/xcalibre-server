@@ -9,7 +9,7 @@ Design spec: docs/DESIGN.md
 Skills reference: docs/SKILLS.md
 
 ## Status
-Phase 17 Stage 18 complete. All 18 security hardening stages shipped. 41 DB tables across 26 migrations.
+Phase 21 complete (v2.2.0). 44 tables, 28 migrations. Phases 1–21 all shipped.
 
 ## Stack
 - Backend: Rust, Axum 0.7, sqlx 0.7, SQLite default / MariaDB optional

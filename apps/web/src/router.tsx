@@ -4,18 +4,24 @@
  * Route hierarchy:
  *   rootRoute
  *   └── protectedRoute  (ProtectedRoute — redirects unauthenticated users to /login)
- *       ├── /library        — LibraryPage
- *       ├── /downloads      — DownloadHistoryPage
- *       ├── /search         — SearchPage
- *       ├── /shelves        — ShelvesPage
- *       ├── /profile        — ProfilePage
- *       ├── /profile/stats  — StatsPage
- *       ├── /profile/import — ImportPage (user)
+ *       ├── /           — redirect → /home
+ *       ├── /home             — HomePage (dashboard: Continue Reading, Recently Added, Collections)
+ *       ├── /library          — LibraryPage (legacy grid view, still accessible)
+ *       ├── /browse/books     — BrowsePage (document_type=Book, alpha sidebar)
+ *       ├── /browse/reference — BrowsePage (document_type=Reference)
+ *       ├── /browse/periodicals — BrowsePage (document_type=Periodical)
+ *       ├── /browse/magazines — BrowsePage (document_type=Magazine)
+ *       ├── /downloads        — DownloadHistoryPage
+ *       ├── /search           — SearchPage
+ *       ├── /shelves          — ShelvesPage
+ *       ├── /profile          — ProfilePage
+ *       ├── /profile/stats    — StatsPage
+ *       ├── /profile/import   — ImportPage (user)
  *       ├── /profile/webhooks — WebhooksPage
- *       ├── /books/$id      — BookDetailPage
- *       ├── /authors/$id    — AuthorPage
+ *       ├── /books/$id        — BookDetailPage
+ *       ├── /authors/$id      — AuthorPage
  *       ├── /books/$id/read/$format — ReaderPage
- *       └── /admin          — AdminLayout
+ *       └── /admin            — AdminLayout
  *           ├── /admin/dashboard
  *           ├── /admin/users
  *           ├── /admin/tags
@@ -26,7 +32,8 @@
  *           ├── /admin/scheduled-tasks
  *           ├── /admin/libraries
  *           ├── /admin/custom-columns
- *           └── /admin/kobo-devices
+ *           ├── /admin/kobo-devices
+ *           └── /admin/api-tokens
  *   ├── /login    — LoginPage  (public)
  *   └── /register — RegisterPage  (public, first-admin only)
  *

@@ -127,8 +127,9 @@ prefix override file values. Use double underscores for nested keys, such as
 | `auth.refresh_token_ttl_days` | `30` | No | Refresh token lifetime in days |
 | `auth.max_login_attempts` | `10` | No | Failed attempts before lockout |
 | `llm.enabled` | `false` | No | Enables LLM features |
-| `llm.allow_private_endpoints` | `false` | No | Allow LLM endpoints on LAN/private IPs |
+| `llm.embedding_model` | - | No | Separate model for embeddings (e.g. `nomic-embed-text-v1.5`); falls back to `llm.librarian.model` if unset |
 | `llm.librarian.endpoint` | - | If `llm.enabled` | LM Studio or Ollama base URL |
+| `network.allow_private_endpoints` | `false` | No | Allow LLM endpoints and webhook targets on LAN/private IPs (also settable as `llm.allow_private_endpoints` for backwards compatibility) |
 | `llm.librarian.model` | auto | No | Model name; auto-discovered from `/v1/models` if blank |
 | `limits.upload_max_bytes` | `524288000` | No | Max upload size, default 500 MB |
 

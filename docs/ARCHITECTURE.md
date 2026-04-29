@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phase 17 Stage 18 Complete_
-_Last updated: 2026-04-24_
+_Status: Active — Phase 21 Complete (v2.2.0)_
+_Last updated: 2026-04-28_
 
 ---
 
@@ -1186,7 +1186,7 @@ _Renumbered in git history as Phase 13; same content as above Phase 12 stages._
 
 ---
 
-### Phase 18 — Pluggable Search Backend + Memory Endpoint
+### Phase 18 — Pluggable Search Backend + Merlin RAG Memory Integration ✅ Complete
 
 #### Stage 1 — Pluggable SearchBackend Trait
 
@@ -1235,103 +1235,55 @@ backend = "embedded"   # "embedded" (default) | "meilisearch"
 - [x] `XCS_SEARCH_BACKEND` env var + `config.toml [search] backend` key
 - [x] `POST /api/v1/admin/reindex` — re-indexes all book chunks through active backend
 
-#### Stage 2 — `memory_chunks` Table
+#### Merlin RAG Memory Integration
 
-Lightweight ingest table for Merlin episodic and factual memory — separate from `book_chunks`, bypasses the EPUB pipeline entirely.
+Persistent episodic and factual memory for Merlin agents. Memory lives in a dedicated table so it can be written synchronously without involving the EPUB chunking pipeline.
+
+**Schema**
 
 ```sql
 CREATE TABLE memory_chunks (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     session_id   TEXT,
     project_path TEXT,
-    chunk_type   TEXT NOT NULL,   -- 'episodic' | 'factual'
-    text         TEXT NOT NULL,
-    tags         TEXT,            -- JSON array
-    model_id     TEXT NOT NULL,   -- prevents cross-model vector contamination
-    embedding    BLOB NOT NULL,   -- little-endian Vec<f32>, same as book_embeddings
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    chunk_type   TEXT    NOT NULL DEFAULT 'episodic',
+    text         TEXT    NOT NULL,
+    tags         TEXT,
+    model_id     TEXT    NOT NULL DEFAULT '',
+    embedding    BLOB,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch())
 );
-CREATE INDEX idx_memory_chunks_project ON memory_chunks(project_path);
-CREATE INDEX idx_memory_chunks_created  ON memory_chunks(created_at);
-CREATE VIRTUAL TABLE memory_chunks_fts USING fts5(text, content=memory_chunks, content_rowid=id);
 ```
 
-Vector search pattern mirrors `book_embeddings`:
+Indexes and search support:
+- `idx_memory_chunks_session_id`
+- `idx_memory_chunks_project_path`
+- `idx_memory_chunks_created_at`
+- `memory_chunks_fts` FTS5 virtual table with sync triggers
 
-```sql
-SELECT id, text, vec_distance_cosine(embedding, ?) AS dist
-FROM memory_chunks
-WHERE model_id = ?
-  AND (project_path = ? OR ? IS NULL)
-ORDER BY dist
-LIMIT ?
-```
+**Ingest path**
+- `POST /api/v1/memory` validates text, `chunk_type`, and length
+- `EmbeddingClient.embed()` is used when LLM features are available
+- If embeddings are unavailable or fail, the chunk still stores with `embedding = NULL` and `model_id = ""`
+- The write is synchronous; Merlin gets the chunk id only after the row commits
 
-- [x] Migration `0027_memory_chunks.sql` (SQLite) + `0027_memory_chunks_mariadb.sql`
-- [x] `memory_chunks_fts` virtual table + sync triggers
+**Retrieval path**
+- `GET /api/v1/search/chunks?source=all` merges book chunks and memory chunks in one RRF-ranked result set
+- `source=books` preserves the historical book-only behavior
+- `source=memory` scopes retrieval to memory only
+- `project_path` isolates memory retrieval to a project when set
 
-#### Stage 3 — `/api/v1/memory` Endpoint
+**Embedding split**
+- `llm.embedding_model` is used for embeddings when set
+- `llm.librarian.model` remains the chat model
+- This allows `nomic-embed-text-v1.5` for embeddings and `phi-3-mini-4k-instruct` for chat on the same endpoint
 
-Ingest path for Merlin memory chunks. Embeds via the same `EmbeddingClient` as book chunks.
-
-**`POST /api/v1/memory`**
-
-```json
-{
-  "text": "Worked on pluggable search backend. Decided sqlite-vec is sufficient default.",
-  "chunk_type": "episodic",
-  "session_id": "abc-123",
-  "project_path": "/Users/jon/Projects/xcalibre-server",
-  "tags": ["architecture", "search"]
-}
-```
-
-Response `201 Created`:
-
-```json
-{ "id": 42 }
-```
-
-**`DELETE /api/v1/memory/:id`** — removes chunk and FTS row. Returns `204 No Content`.
-
-Auth: same Bearer token as all existing API endpoints.
-Embedding: synchronous — write is acknowledged only after the vector is stored.
-Error on embedding failure: `503 Service Unavailable` with `"message": "embedding unavailable"`.
-
-- [x] `api/memory.rs` — POST handler: validate → embed → insert `memory_chunks` → insert FTS row
-- [x] DELETE handler: delete chunk + FTS row in transaction
-- [x] Route wired: `POST /api/v1/memory`, `DELETE /api/v1/memory/:id`
-- [x] Auth middleware applied (Bearer token)
-
-#### Stage 4 — Unified Chunk Search (Memory + Books)
-
-`GET /api/v1/search/chunks` extended to return memory chunks alongside book chunks, merged by RRF.
-
-**New query parameters:**
-
-| Param | Values | Default |
-|---|---|---|
-| `source` | `books`, `memory`, `all` | `all` |
-| `project_path` | URL-encoded path | — (no filter) |
-| `chunk_type` | `episodic`, `factual` | — (no filter) |
-
-**Response shape unchanged** — existing `source` field on each result indicates origin:
-
-```json
-{
-  "chunks": [
-    { "id": 7,  "source": "memory", "chunk_type": "episodic", "text": "…", "score": 0.94 },
-    { "id": 42, "source": "books",  "chunk_type": "paragraph", "text": "…", "score": 0.91 }
-  ]
-}
-```
-
-RRF fusion runs over both result sets. Cross-encoder reranking (when `llm.enabled`) reranks the merged set identically.
-
-- [x] `search/chunks.rs` — parallel retrieval from `book_chunks` + `memory_chunks`
-- [x] RRF merge extended to accept heterogeneous chunk sources
-- [x] `source`, `project_path`, `chunk_type` filter parameters wired
-- [x] Integration tests: memory-only, books-only, merged result ordering
+**Checklist**
+- [x] Migration `0028_memory_chunks.sql` (SQLite and MariaDB) applied
+- [x] `POST /api/v1/memory` and `DELETE /api/v1/memory/:id` wired into the router
+- [x] `GET /api/v1/search/chunks` supports `source=books|memory|all`
+- [x] `ChunkSearchItem.source` distinguishes `books` vs `memory` results
+- [x] Integration tests cover ingest, delete, auth, source filtering, and embedding fallback
 
 ---
 

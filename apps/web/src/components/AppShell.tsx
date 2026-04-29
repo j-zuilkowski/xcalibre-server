@@ -4,6 +4,9 @@
  * Layout:
  *   - Fixed collapsible sidebar (12 px collapsed / 192 px expanded on hover)
  *     with icon-only nav links that reveal labels on hover.
+ *     Nav items: Home (/home), Books (/browse/books), Reference (/browse/reference),
+ *     Periodicals (/browse/periodicals), Magazines (/browse/magazines),
+ *     Shelves (/shelves), Search (/search), Downloads (/downloads).
  *   - Fixed top bar containing the SearchBar, an optional library switcher
  *     (only rendered when the user belongs to >1 library), and a user-avatar
  *     menu button.

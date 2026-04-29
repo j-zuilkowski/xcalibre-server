@@ -4,7 +4,8 @@
 //!
 //! Role guards applied inside handlers (not at router level):
 //! - `can_upload` — required for `POST /books` (upload) and `PATCH /books` (bulk edit).
-//! - `can_edit` — required for `PATCH /books/:id`, `DELETE /books/:id`, merge, custom columns.
+//! - `can_edit` — required for `PATCH /books/:id`, `DELETE /books/:id`, merge, custom columns,
+//!   and `POST /books/:id/metadata/apply`.
 //! - `can_download` — required for `GET /books/:id/formats/:format/download` and stream.
 //! - Admin — required for bulk-edit across users and certain tag confirmation flows.
 //!
@@ -17,6 +18,16 @@
 //! RAG surface: `GET /books/:id/chunks` re-chunks the book on demand if needed and
 //! returns structured text passages. `GET /books/:id/text` extracts plain text for
 //! display or external consumption.
+//!
+//! Reading progress: `GET /books/in-progress` returns up to 20 BookSummary rows for
+//! books the authenticated user has started but not finished (0 < percentage < 100),
+//! ordered by most-recently-read. Must be registered before `/books/:id` so the
+//! literal path wins over the param route.
+//!
+//! Metadata enrichment: `GET /books/:id/metadata/search` queries Google Books and
+//! Open Library in parallel and returns merged candidates. `POST /books/:id/metadata/apply`
+//! writes the selected candidate back — updating title, description, publisher, pubdate,
+//! identifiers, and optionally downloading and storing a new cover image.
 
 use crate::{
     db::queries::{

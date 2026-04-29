@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
 _Status: Current_
-_Last updated: 2026-04-24_
+_Last updated: 2026-04-28_
 
 ---
 
@@ -262,6 +262,7 @@ Disables TOTP for the authenticated user. Requires valid TOTP code or backup cod
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
 | GET | `/books` | Yes | Any | List books (paginated, filterable, sortable) |
+| GET | `/books/in-progress` | Yes | Any | Up to 20 books the user has started but not finished, ordered by most-recently-read |
 | GET | `/books/:id` | Yes | Any | Single book detail |
 | POST | `/books` | Yes | `can_upload` | Upload single book file |
 | PATCH | `/books/:id` | Yes | `can_edit` | Update book metadata |
@@ -274,6 +275,8 @@ Disables TOTP for the authenticated user. Requires valid TOTP code or backup cod
 | GET | `/books/:id/progress` | Yes | Any | Reading progress for current user |
 | PUT | `/books/:id/progress` | Yes | Any | Upsert reading progress |
 | GET | `/books/:id/history` | Yes | Any | Audit log for this book |
+| GET | `/books/:id/metadata/search` | Yes | Any | Search Google Books + Open Library for metadata candidates |
+| POST | `/books/:id/metadata/apply` | Yes | `can_edit` | Apply a selected metadata candidate (updates fields + downloads cover) |
 
 #### `GET /books`
 ```typescript
@@ -285,6 +288,7 @@ Disables TOTP for the authenticated user. Requires valid TOTP code or backup cod
   tag?: string[]                // multiple allowed
   language?: string
   format?: string
+  document_type?: string        // filter by document type e.g. 'Book', 'Reference', 'Periodical', 'Magazine'
   rating_min?: number
   sort?: 'title' | 'author' | 'pubdate' | 'added' | 'rating'
   order?: 'asc' | 'desc'
@@ -1216,7 +1220,7 @@ Book                         // updated target book
 ```
 
 #### `GET /collections/:id/search/chunks`
-See chunk search params below — identical to `GET /search/chunks` but scoped to this collection's books.
+See chunk search params below — identical to `GET /search/chunks`, but scoped to this collection's books.
 
 ---
 
@@ -1224,36 +1228,139 @@ See chunk search params below — identical to `GET /search/chunks` but scoped t
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| GET | `/search/chunks` | Yes | Any | Hybrid BM25 + semantic chunk search across all accessible books |
+| GET | `/search/chunks` | Yes | Any | Hybrid BM25 + semantic chunk search across books and memory |
 
 #### `GET /search/chunks`
 ```typescript
 // Query params
 {
   q: string
+  source?: 'books' | 'memory' | 'all'   // default 'books'
+  project_path?: string                // optional; scopes memory results to a project path
   book_ids?: string[]       // restrict to specific books
-  chunk_type?: 'text' | 'procedure' | 'reference' | 'concept' | 'example' | 'image'
+  chunk_type?: string       // book or memory chunk type filter
   limit?: number            // default 10, max 100
 }
 
 // Response 200
 {
-  items: Array<{
+  query: string
+  chunks: Array<{
     chunk_id: string
-    book_id: string
-    book_title: string
-    chunk_index: number
-    chapter_index: number
+    source: 'books' | 'memory'
+    book_id: string | null
+    book_title: string | null
     heading_path: string | null
     chunk_type: string
     text: string
-    word_count: number
-    score: number           // RRF-fused rank score
-    rerank_score: number | null  // cross-encoder score; null if llm.enabled = false
+    word_count: number | null
+    bm25_score: number | null
+    cosine_score: number | null
+    rrf_score: number
+    rerank_score: number | null
   }>
-  engine: 'hybrid' | 'bm25' | 'semantic'
+  total_searched: number
+  retrieval_ms: number
 }
 ```
+
+### Memory
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| POST | `/memory` | Yes | Any | Ingest a Merlin memory chunk |
+| DELETE | `/memory/:id` | Yes | Any | Delete a memory chunk |
+
+#### `POST /memory`
+```typescript
+// Request
+{
+  text: string
+  session_id?: string
+  project_path?: string
+  chunk_type?: 'episodic' | 'factual'   // default 'episodic'
+  tags?: string[]
+}
+
+// Response 201
+{
+  id: string
+  created_at: number
+}
+```
+
+Validation:
+- `text` must not be blank
+- `text` must not exceed 32,768 characters
+- `chunk_type` must be `episodic` or `factual`
+
+If embeddings are unavailable, the chunk still stores successfully with `embedding = null`.
+
+#### `DELETE /memory/:id`
+```typescript
+// Response 204 No Content
+```
+
+Errors:
+- `404` when the chunk does not exist
+
+---
+
+### Book Metadata Enrichment
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/books/:id/metadata/search` | Yes | Any | Search Google Books + Open Library for metadata candidates |
+| POST | `/books/:id/metadata/apply` | Yes | `can_edit` | Apply selected candidate — updates fields and downloads cover |
+
+#### `GET /books/:id/metadata/search`
+```typescript
+// Query params
+{
+  q?: string   // search query; defaults to "<title> <first_author>" if omitted
+}
+
+// Response 200
+Array<{
+  source: 'google_books' | 'open_library'
+  external_id: string         // volumeId or Open Library work key
+  title: string
+  authors: string[]
+  description: string | null
+  publisher: string | null
+  published_date: string | null
+  isbn_13: string | null
+  isbn_10: string | null
+  thumbnail_url: string | null   // shown in picker UI
+  cover_url: string | null       // downloaded on apply
+}>
+```
+
+Results are merged from both sources (up to 20 total, interleaved). Returns `[]` on
+external API failure — never errors on network issues.
+
+#### `POST /books/:id/metadata/apply`
+```typescript
+// Request
+{
+  source: 'google_books' | 'open_library'
+  external_id: string
+  title?: string
+  authors?: string[]
+  description?: string
+  publisher?: string
+  published_date?: string
+  isbn_13?: string
+  isbn_10?: string
+  cover_url?: string   // if provided, downloaded and stored as the book cover
+}
+
+// Response 200 — updated Book
+```
+
+The `external_id` is stored in the `identifiers` table with `id_type = source`
+(e.g. `id_type = "google_books"`). Cover download failure is non-fatal — metadata
+is still written and the endpoint returns 200.
 
 ---
 

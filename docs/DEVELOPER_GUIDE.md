@@ -17,7 +17,8 @@ This guide is structured so you can jump directly to the section relevant to you
 7. [Search Architecture](#7-search-architecture)
 8. [LLM Integration](#8-llm-integration)
 9. [Phase 15: Cross-Document Synthesis Engine](#9-phase-15-cross-document-synthesis-engine)
-10. [Kobo Sync Protocol](#10-kobo-sync-protocol)
+10. [Phase 18–21: Memory, Config, UI Redesign, Metadata](#10-phase-1821-memory-config-ui-redesign-metadata)
+11. [Kobo Sync Protocol](#11-kobo-sync-protocol)
 11. [Mobile Architecture](#11-mobile-architecture)
 12. [Security Decisions Log](#12-security-decisions-log)
 13. [Adding a New Feature (Walkthrough)](#13-adding-a-new-feature-walkthrough)
@@ -713,7 +714,74 @@ Source attribution is carried in `SynthesisSource` records embedded in the respo
 
 ---
 
-## 10. Kobo Sync Protocol
+## 10. Phase 18–21: Memory, Config, UI Redesign, Metadata
+
+### Phase 18 — Merlin Memory Integration
+
+The `memory_chunks` table stores episodic and factual RAG memory chunks written by the Merlin supervisor-worker system. Chunks are embedded with sqlite-vec and indexed with FTS5.
+
+Key files:
+- `backend/src/api/memory.rs` — `POST /api/v1/memory`, `DELETE /api/v1/memory/:id`
+- `backend/src/db/queries/memory_chunks.rs` — insert, delete, FTS + vector search
+- `backend/src/api/search.rs` — `GET /search/chunks?source=books|memory|all` unified search
+
+The `source` query param on `/search/chunks` controls which table is searched:
+- `books` (default) — only `book_chunks`
+- `memory` — only `memory_chunks`
+- `all` — both, merged by RRF score
+
+### Phase 19 — Configuration Structure
+
+`allow_private_endpoints` was promoted from `[llm]` to a top-level `[network]` section. The old `llm.allow_private_endpoints` key still works as a fallback.
+
+```toml
+[network]
+allow_private_endpoints = true   # required for LM Studio / Ollama on LAN
+```
+
+Helper: `crate::config::effective_allow_private(&AppConfig) -> bool`
+
+API token scope (read / write / admin) is enforced backend-side and selectable in the admin panel at `/admin/api-tokens`.
+
+### Phase 20 — Emby-Style UI Redesign
+
+The frontend landing page changed from `/library` (flat grid) to `/home` (dashboard). New routes:
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/home` | `HomePage` | Continue Reading row, Recently Added row, Collections shelf, hero search |
+| `/browse/books` | `BrowsePage` | Full book grid filtered by `document_type=Book`, A–Z sidebar |
+| `/browse/reference` | `BrowsePage` | `document_type=Reference` |
+| `/browse/periodicals` | `BrowsePage` | `document_type=Periodical` |
+| `/browse/magazines` | `BrowsePage` | `document_type=Magazine` |
+
+`MediaCard` (`apps/web/src/features/library/MediaCard.tsx`) is a slim cover-dominant card used in scroll rows. `BookCard` is still used in grid pages.
+
+The `GET /api/v1/books/in-progress` endpoint returns up to 20 in-progress books (reading_progress.percentage > 0 AND < 100) for the authenticated user.
+
+### Phase 21 — Metadata Enrichment (Identify)
+
+The metadata module (`backend/src/metadata/`) fetches book metadata from Google Books and Open Library.
+
+```
+backend/src/metadata/mod.rs          — MetadataCandidate struct
+backend/src/metadata/google_books.rs — search(), strip_edge_curl(), upgrade_to_https()
+backend/src/metadata/open_library.rs — search(), cover_url_for_id()
+```
+
+Both clients use a 10-second timeout and return `Ok(vec![])` on any network or parse failure — silent fallback, never surface errors to users.
+
+Endpoints:
+- `GET /api/v1/books/:id/metadata/search?q=` — searches both sources in parallel, interleaves up to 20 candidates
+- `POST /api/v1/books/:id/metadata/apply` — writes title/description/publisher/pubdate, upserts identifiers (google_books / open_library / isbn_13 / isbn_10), optionally downloads and stores a new cover
+
+External IDs are stored in the existing `identifiers` table with `id_type = "google_books"` or `id_type = "open_library"`.
+
+Frontend: `IdentifyModal` (`apps/web/src/features/library/IdentifyModal.tsx`) — search form + candidate picker, opened from the BookDetailPage action area (admin/can_edit only).
+
+---
+
+## 11. Kobo Sync Protocol
 
 ### How the Kobo API Works
 
