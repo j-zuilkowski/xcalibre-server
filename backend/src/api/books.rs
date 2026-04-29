@@ -58,7 +58,7 @@ use std::{
 };
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -129,6 +129,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/books/:id/comic/pages", get(get_comic_pages))
         .route("/api/v1/books/:id/comic/page/:index", get(get_comic_page))
         .route("/api/v1/books/:id/metadata-lookup", get(metadata_lookup))
+        .route("/api/v1/books/:id/metadata/search", get(search_book_metadata))
         .route(
             "/api/v1/books/:id/formats/:format/download",
             get(download_format),
@@ -230,6 +231,11 @@ struct SendBookRequest {
 #[derive(Debug, Deserialize)]
 struct MetadataLookupQuery {
     source: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default, IntoParams)]
+pub(crate) struct MetadataSearchQuery {
+    q: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -409,6 +415,70 @@ struct MetadataLookupResponse {
     cover_url: Option<String>,
     isbn_13: Option<String>,
     categories: Vec<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/books/{id}/metadata/search",
+    tag = "books",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Book id"),
+        MetadataSearchQuery
+    ),
+    responses(
+        (status = 200, description = "Metadata candidates", body = [crate::metadata::MetadataCandidate]),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+/// Returns metadata candidates from Google Books and Open Library for a book.
+/// Uses the provided query when present, otherwise falls back to `title + first author`.
+pub(crate) async fn search_book_metadata(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(book_id): Path<String>,
+    Query(query): Query<MetadataSearchQuery>,
+) -> Result<Json<Vec<crate::metadata::MetadataCandidate>>, AppError> {
+    let book = load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+
+    let query = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            let author = book
+                .authors
+                .first()
+                .map(|author| author.name.trim())
+                .filter(|value| !value.is_empty());
+            match author {
+                Some(author) => format!("{} {}", book.title.trim(), author),
+                None => book.title.trim().to_string(),
+            }
+        });
+
+    let (google_books, open_library) = tokio::join!(
+        crate::metadata::google_books::search(&query),
+        crate::metadata::open_library::search(&query),
+    );
+
+    Ok(Json(interleave_metadata_candidates(
+        google_books.unwrap_or_default(),
+        open_library.unwrap_or_default(),
+    )))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2354,6 +2424,45 @@ async fn metadata_lookup(
     };
 
     Ok(Json(result))
+}
+
+fn interleave_metadata_candidates(
+    google_books: Vec<crate::metadata::MetadataCandidate>,
+    open_library: Vec<crate::metadata::MetadataCandidate>,
+) -> Vec<crate::metadata::MetadataCandidate> {
+    let mut merged = Vec::with_capacity((google_books.len() + open_library.len()).min(20));
+    let mut google_iter = google_books.into_iter();
+    let mut open_library_iter = open_library.into_iter();
+
+    loop {
+        let mut advanced = false;
+
+        if merged.len() >= 20 {
+            break;
+        }
+
+        if let Some(candidate) = google_iter.next() {
+            merged.push(candidate);
+            advanced = true;
+            if merged.len() >= 20 {
+                break;
+            }
+        }
+
+        if let Some(candidate) = open_library_iter.next() {
+            merged.push(candidate);
+            advanced = true;
+            if merged.len() >= 20 {
+                break;
+            }
+        }
+
+        if !advanced {
+            break;
+        }
+    }
+
+    merged
 }
 
 /// Returns the page index for a CBZ/CBR comic archive; requires `can_download` permission.
