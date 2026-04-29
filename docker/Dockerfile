@@ -15,6 +15,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         pkg-config \
         libsqlite3-dev \
+        libssl-dev \
         binutils \
         $extra_packages; \
     rm -rf /var/lib/apt/lists/*
@@ -108,7 +109,7 @@ RUN groupadd --gid 10001 app \
     && mkdir -p /app/storage \
     && chown -R app:app /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsqlite3-0 \
+    && apt-get install -y --no-install-recommends libsqlite3-0 libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/backend /app/backend
