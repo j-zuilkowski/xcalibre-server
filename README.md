@@ -41,7 +41,7 @@ Designed as a direct successor to calibre-web with a seamless migration path. Un
 | **Multi-library** | Manage multiple independent book collections with per-user default library |
 | **Localization** | English, French, German, Spanish |
 | **AI features (optional)** | Auto-tagging, semantic search, metadata validation, cross-document synthesis (runsheets, specs, recipes, study guides) — all local, disabled by default |
-| **MCP server** | Agentic AI integration for programmatic library access |
+| **MCP server** | Exposes the library as a RAG source for AI agents (Merlin, Claude Code, or any MCP-compatible tool) via `search_books`, `get_book_text`, `list_chapters`, and `semantic_search` tools. A persistent memory layer (`/api/v1/memory`) lets agents accumulate and retrieve indexed knowledge across sessions without re-reading full books each time. |
 | **S3 storage** | S3-compatible backend for book files (optional alternative to local filesystem) |
 
 ---
