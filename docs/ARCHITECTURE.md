@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phase 21 Complete (v2.2.0)_
-_Last updated: 2026-04-28_
+_Status: Active — Phase 21 Complete (v2.2.0); Phase 22 (KAG) Planned_
+_Last updated: 2026-05-05_
 
 ---
 
@@ -29,6 +29,7 @@ A full rewrite of calibre-web in Rust, replacing the Python/Flask stack with a m
 | K | Multi-library support | ✅ Decided | `library_id` on books; per-user default library; admin-managed |
 | L | Email / Send-to-Kindle | ✅ Decided | SMTP via `lettre`; format sent as-is (no conversion in v1) |
 | M | Metadata lookup | ✅ Decided | Open Library + Google Books (Goodreads deprecated 2020); never auto-applies |
+| N | KAG graph store | ✅ Decided | `knowledge_graph` table in same SQLite/MariaDB DB — no separate graph DB; BFS traversal via indexed subject/object columns; book triples extracted at ingestion (async, LLM-gated); Merlin session triples ingested via REST API |
 
 ---
 
@@ -697,6 +698,168 @@ The design explicitly separates **retrieval** (xcalibre-server's responsibility)
 
 ---
 
+## KAG — Knowledge Graph Layer [Planned: Phase 22]
+
+### Motivation
+
+The synthesis engine (Phase 15) retrieves chunks by semantic similarity and produces grounded outputs. What it cannot answer is *relational* queries — queries that require traversing typed connections between entities rather than ranking passages by similarity.
+
+Examples that semantic search alone cannot answer well:
+- "What other components share the VCC net with U4?" — requires graph traversal of net→component edges
+- "Which structural members are in the load path of beam B?" — requires traversal of supports/depends_on edges
+- "What can substitute for turmeric in this curry given it's too bitter?" — requires ingredient substitution graph
+- "What functions in this codebase call AuthGate.verify()?" — requires call graph
+
+The answers exist in the library — PCB design guides describe net topology rules, structural engineering references define load path relationships, culinary texts describe ingredient substitution graphs. But those answers are currently implicit in prose chunks. KAG makes them explicit in a graph, so traversal queries return precise structured answers rather than ranked passages containing the answer somewhere.
+
+Merlin session triples (what was built, what failed, what was discovered) are written here via the REST API, so a single traversal spans both the book knowledge graph (reference) and the working memory graph (project-specific). This is the key fusion that makes KAG valuable across sessions.
+
+### Schema
+
+```sql
+-- Migration 0029_knowledge_graph.sql
+CREATE TABLE knowledge_graph (
+    id          TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    subject     TEXT    NOT NULL,
+    predicate   TEXT    NOT NULL,
+    object      TEXT    NOT NULL,
+    domain_id   TEXT    NOT NULL DEFAULT 'any',
+    source      TEXT    NOT NULL DEFAULT 'book',   -- 'book' | 'session'
+    source_id   TEXT,                               -- book_id or Merlin session_id
+    chunk_index INTEGER,                            -- book_chunk this was extracted from
+    confidence  REAL    NOT NULL DEFAULT 0.8,       -- 0.0–1.0
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX idx_knowledge_graph_subject    ON knowledge_graph(subject);
+CREATE INDEX idx_knowledge_graph_object     ON knowledge_graph(object);
+CREATE INDEX idx_knowledge_graph_domain     ON knowledge_graph(domain_id);
+CREATE INDEX idx_knowledge_graph_source_id  ON knowledge_graph(source_id);
+
+-- FTS5 over triple text for keyword fallback when entity names are not known exactly
+CREATE VIRTUAL TABLE knowledge_graph_fts USING fts5(
+    subject, predicate, object,
+    content='knowledge_graph', content_rowid='rowid'
+);
+```
+
+### What gets extracted per domain
+
+| Domain | Subject | Predicate | Object |
+|---|---|---|---|
+| Electronics | Component ref | `shares_net` | Net name |
+| Electronics | Design rule | `applies_to` | Component type |
+| Construction | Structural member | `supports` | Member or floor |
+| Construction | Regulation | `requires` | Check type |
+| Culinary | Ingredient | `complements` | Ingredient |
+| Culinary | Ingredient | `substitutes_for` | Ingredient |
+| Software | Function | `calls` | Function |
+| Any | Concept | `defined_in` | Book + section |
+
+### Ingestion pipeline extension
+
+```
+Existing pipeline:
+  parse_book → chunk_text → embed_chunk → write book_chunks
+
+Extended pipeline:
+  parse_book → chunk_text → embed_chunk → write book_chunks
+                                        → extract_triples job queued  (llm.enabled only)
+                                            → write knowledge_graph (source='book')
+```
+
+Triple extraction is async (same job queue as tag classification). It does not block the upload response. Gated behind `llm.enabled = true` — when LLM is disabled, no triples are extracted from books. Merlin session triples (`POST /api/v1/graph/triples`) are always accepted regardless of `llm.enabled`.
+
+### API
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/api/v1/graph/triples` | Ingest triples from Merlin sessions. Body: `{ triples: [{subject, predicate, object, domain_id, source, source_id, confidence}] }`. Auth: Bearer token. |
+| `GET` | `/api/v1/graph/traverse` | BFS from `anchor` entity up to `hops` levels deep. Query params: `anchor`, `hops` (default 2, max 3), `domain_id` (optional filter), `source` (`all`\|`book`\|`session`, default `all`). |
+| `GET` | `/api/v1/search/enriched` | Combined response: hybrid chunk search + graph traversal anchored to entities extracted from the query string. Params: `q`, `hops` (default 2), `limit` (default 10). |
+
+### Graph traversal
+
+BFS from the anchor entity up to `hops` levels deep, across both book triples and session triples, implemented as an iterative SQL query against the indexed `knowledge_graph` table:
+
+```rust
+pub async fn traverse(
+    anchor: &str,
+    hops: u32,
+    domain_id: Option<&str>,
+    source: GraphSource,   // All | Book | Session
+    db: &SqlitePool,
+) -> Vec<KAGTriple>
+```
+
+At `hops=2` with anchor "U4":
+- Hop 1 — direct edges: `(U4, shares_net, VCC)`, `(U4, had_thermal_issue, session:2026-04-10)`
+- Hop 2 — edges of hop-1 objects: `(VCC, connects, C12)`, `(VCC, connects, C15)`, `(thermal_relief, applies_to, high_current_IC)`
+
+### Enriched retrieval response
+
+`GET /api/v1/search/enriched` returns both layers in one response:
+
+```json
+{
+  "chunks": [
+    {
+      "chunk_index": 42,
+      "heading_path": "PCB Design Guide > §8.3 Thermal Management",
+      "text": "High-current ICs require thermal relief vias...",
+      "score": 0.94,
+      "source": "book"
+    }
+  ],
+  "graph": {
+    "anchor_entities": ["U4", "VCC"],
+    "triples": [
+      { "subject": "U4",              "predicate": "shares_net",   "object": "VCC",            "source": "session" },
+      { "subject": "U4",              "predicate": "had_thermal",  "object": "2026-04-10",     "source": "session" },
+      { "subject": "thermal_relief",  "predicate": "applies_to",   "object": "high_current_IC","source": "book"    }
+    ]
+  }
+}
+```
+
+The Merlin agent injects both into context: semantic chunks provide passage-level detail; graph triples provide explicit relational facts. Together they cover both what was *said* and what *structurally connects*.
+
+### Relationship to domain MCP server tools
+
+Domain MCP servers may expose graph traversal as first-class live tools — the PCB domain server reading a KiCad file can answer `net_query(net_id: "VCC")` directly from the file. These domain tools and the xcalibre knowledge graph are complementary:
+
+| Source | Answers | Latency |
+|---|---|---|
+| Domain MCP tool (live file) | Current design state — accurate to the open file | Fast, no extraction lag |
+| xcalibre knowledge graph | Historical sessions + book reference rules | Sub-100ms, spans all sessions and all books |
+
+Both are available to Merlin simultaneously. The agent decides which to call based on whether the query is about the current live design or about reference knowledge and session history.
+
+### Configuration
+
+```toml
+[kag]
+enabled = false                 # default off until Phase 22 ships
+extraction_confidence = 0.7     # minimum LLM confidence score to write a triple
+max_hops = 3                    # server-side cap on traversal depth
+```
+
+### Phase 22 checklist
+
+- [ ] Migration `0029_knowledge_graph.sql` (SQLite and MariaDB)
+- [ ] `graph/extract.rs` — LLM triple extraction, job queue, gated behind `llm.enabled`
+- [ ] `graph/traverse.rs` — iterative BFS (recursive CTE or loop over indexed subject/object columns)
+- [ ] `POST /api/v1/graph/triples` — ingest from Merlin session writes
+- [ ] `GET /api/v1/graph/traverse` — BFS query with domain and source filters
+- [ ] `GET /api/v1/search/enriched` — combined hybrid chunk search + graph traversal
+- [ ] Ingestion pipeline: `extract_triples` job queued after `embed_chunk`
+- [ ] `knowledge_graph_fts` FTS5 virtual table + sync triggers
+- [ ] Integration tests: triple write, BFS traversal, enriched search, empty graph fallback, source filtering
+- [ ] Eval fixtures: triple extraction quality per domain (electronics, culinary, technical)
+- [ ] MCP tool: `graph_traverse(anchor, hops)` added to `calibre-mcp`
+
+---
+
 ## LLM Integration (Graceful Degradation)
 
 Carried forward from current Python implementation. All constraints unchanged:
@@ -1285,6 +1448,20 @@ Indexes and search support:
 - [x] `ChunkSearchItem.source` distinguishes `books` vs `memory` results
 - [x] Integration tests cover ingest, delete, auth, source filtering, and embedding fallback
 
+### Phase 22 — KAG Knowledge Graph Layer [Planned]
+
+Implements the KAG layer described in the [KAG — Knowledge Graph Layer](#kag--knowledge-graph-layer-planned-phase-22) section above.
+
+- [ ] Migration `0029_knowledge_graph.sql` + FTS5 virtual table
+- [ ] `graph/extract.rs` — LLM triple extraction job (gated behind `llm.enabled`)
+- [ ] `graph/traverse.rs` — BFS traversal with domain + source filters
+- [ ] `POST /api/v1/graph/triples` — Merlin session triple ingest
+- [ ] `GET /api/v1/graph/traverse` — BFS query endpoint
+- [ ] `GET /api/v1/search/enriched` — fused chunk + graph response
+- [ ] Ingestion pipeline extended: triple extraction queued after embed
+- [ ] `graph_traverse` MCP tool in `calibre-mcp`
+- [ ] Integration tests + eval fixtures per domain
+
 ---
 
 ## Notes & Constraints
@@ -1324,3 +1501,42 @@ All known keys are accessed via `json_extract(b.flags, '$.key')` in SQL. Do not 
 
 - **LLM endpoints** — validated at startup via `validate_llm_endpoint()` in `config.rs`. Logs a warning when the endpoint resolves to a private/loopback IP and `llm.allow_private_endpoints = false`. Intentionally non-blocking to support LAN-hosted LM Studio. LLM endpoints are config-file-only — not changeable at runtime via API, so runtime SSRF injection is not possible.
 - **SMTP settings** — stored in `email_settings` table and admin-configurable at runtime. The `smtp_host` field has no host-validation guard; a malicious admin could point it at an internal service. Acceptable risk for a self-hosted single-admin app, but worth noting if multi-admin deployments become common.
+
+---
+
+## Versioning Policy
+
+### Sources of truth
+
+All of the following must carry the **same** version string at every commit:
+
+| File | Field |
+|---|---|
+| `backend/Cargo.toml` | `version = "X.Y.Z"` |
+| `xs-mcp/Cargo.toml` | `version = "X.Y.Z"` |
+| `xs-migrate/Cargo.toml` | `version = "X.Y.Z"` |
+| `package.json` (root) | `"version": "X.Y.Z"` |
+| `packages/shared/package.json` | `"version": "X.Y.Z"` |
+
+Git tags (`vX.Y.Z`) are the release record and must exactly match the version in all files above.
+
+### When to bump
+
+| Change type | Version bump |
+|---|---|
+| Patch — bug fix, test fix, infra/CI, no new API surface | `1.0.x → 1.0.x+1` |
+| Minor — new feature, new API endpoint, new phase complete | `1.x.0 → 1.(x+1).0` |
+| Major — breaking API change, schema incompatibility | `x.0.0 → (x+1).0.0` |
+
+### Release procedure
+
+1. Bump `version` in all five files listed above to the new `X.Y.Z`.
+2. Run `cargo check` to refresh `Cargo.lock`.
+3. Run `pnpm install` to refresh `pnpm-lock.yaml`.
+4. Commit: `git commit -m "Bump version to X.Y.Z"`.
+5. Tag: `git tag vX.Y.Z`.
+6. Push: `git push && git push --tags`.
+
+**Never** tag a release without first updating all five version files.
+**Never** let the Cargo crate versions diverge from each other or from the JS packages.
+**Never** reuse or move a tag that has already been pushed to a remote.

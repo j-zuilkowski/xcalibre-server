@@ -63,27 +63,10 @@ Exposes: `search_books`, `get_book_metadata`, `list_chapters`, `get_book_text`, 
 
 ## Versioning
 
-**Single source of truth: `backend/Cargo.toml`, `xs-mcp/Cargo.toml`, `xs-migrate/Cargo.toml`**
+Full versioning policy (sources of truth, increment rules, release procedure) is in
+`docs/ARCHITECTURE.md` → **Versioning Policy** section. Follow that document exactly.
 
-All three crates must always have the same version. Git tags are the release record.
-
-**Version scheme: semver `MAJOR.MINOR.PATCH`**
-- `PATCH` — bug fixes, CI/infra changes, no new API surface
-- `MINOR` — new features, new API endpoints, new phase complete
-- `MAJOR` — breaking API changes, schema incompatibility
-
-**To release a new version:**
-1. Bump `version = "X.Y.Z"` in all three `Cargo.toml` files
-2. Run `cargo check` to update `Cargo.lock`
-3. Commit: `git commit -m "Bump version to X.Y.Z"`
-4. Tag: `git tag vX.Y.Z`
-5. Push: `git push && git push --tags`
-
-**Never** tag a release without first bumping all three `Cargo.toml` files.
-**Never** let the three crate versions diverge from each other.
-
-**Current version: 1.0.0 / git tag v2.3.0**
-(Cargo versions reflect crate maturity; git tags are the release history — both must be updated together going forward.)
+**Current version: 1.0.0** (tag `v2.3.0` — tags and crate versions align going forward)
 
 ---
 
