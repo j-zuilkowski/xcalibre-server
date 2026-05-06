@@ -9,7 +9,7 @@ Design spec: docs/DESIGN.md
 Skills reference: docs/SKILLS.md
 
 ## Status
-Phase 21 complete (v2.2.0). 44 tables, 28 migrations. Phases 1–21 all shipped.
+Phase 21 complete. 44 tables, 28 migrations. Phases 1–21 all shipped. Current release: v2.3.0.
 
 ## Stack
 - Backend: Rust, Axum 0.7, sqlx 0.7, SQLite default / MariaDB optional
@@ -60,6 +60,46 @@ Build: `cargo build --release -p calibre-mcp`
 Register with Claude Code:
 `claude mcp add xcalibre-server-library ./target/release/calibre-mcp --env CONFIG_PATH=./config.toml`
 Exposes: `search_books`, `get_book_metadata`, `list_chapters`, `get_book_text`, `semantic_search`
+
+## Versioning
+
+**Single source of truth: `backend/Cargo.toml`, `xs-mcp/Cargo.toml`, `xs-migrate/Cargo.toml`**
+
+All three crates must always have the same version. Git tags are the release record.
+
+**Version scheme: semver `MAJOR.MINOR.PATCH`**
+- `PATCH` — bug fixes, CI/infra changes, no new API surface
+- `MINOR` — new features, new API endpoints, new phase complete
+- `MAJOR` — breaking API changes, schema incompatibility
+
+**To release a new version:**
+1. Bump `version = "X.Y.Z"` in all three `Cargo.toml` files
+2. Run `cargo check` to update `Cargo.lock`
+3. Commit: `git commit -m "Bump version to X.Y.Z"`
+4. Tag: `git tag vX.Y.Z`
+5. Push: `git push && git push --tags`
+
+**Never** tag a release without first bumping all three `Cargo.toml` files.
+**Never** let the three crate versions diverge from each other.
+
+**Current version: 1.0.0 / git tag v2.3.0**
+(Cargo versions reflect crate maturity; git tags are the release history — both must be updated together going forward.)
+
+---
+
+## Git State Checks
+
+At the start of any session, check for in-progress git operations before doing any work:
+
+```bash
+git status   # look for "rebase in progress", "revert in progress", "merge in progress"
+git log --oneline -5
+git tag --list | sort -V | tail -5
+```
+
+If an in-progress operation exists, surface it to the user and ask whether to abort or continue before proceeding.
+
+---
 
 ## Code Style
 - Rust edition 2021
