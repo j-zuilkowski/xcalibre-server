@@ -85,6 +85,7 @@ pub struct ServerSection {
 pub struct StorageSection {
     pub backend: String,
     pub s3: S3Section,
+    pub google_drive: GoogleDriveSection,
 }
 
 impl Default for StorageSection {
@@ -92,6 +93,7 @@ impl Default for StorageSection {
         Self {
             backend: "local".to_string(),
             s3: S3Section::default(),
+            google_drive: GoogleDriveSection::default(),
         }
     }
 }
@@ -117,6 +119,47 @@ impl Default for S3Section {
             secret_key: String::new(),
             key_prefix: String::new(),
         }
+    }
+}
+
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoogleDriveSection {
+    pub enabled: bool,
+    pub client_id: String,
+    pub client_secret: String,
+    pub refresh_token: String,
+    pub folder_id: String,
+    /// OAuth2 token endpoint — overridable in tests.
+    pub token_endpoint: String,
+    /// Drive API base URL — overridable in tests.
+    pub drive_endpoint: String,
+}
+
+impl Default for GoogleDriveSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            client_id: String::new(),
+            client_secret: String::new(),
+            refresh_token: String::new(),
+            folder_id: String::new(),
+            token_endpoint: "https://oauth2.googleapis.com/token".to_string(),
+            drive_endpoint: "https://www.googleapis.com".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Debug for GoogleDriveSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoogleDriveSection")
+            .field("enabled", &self.enabled)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[redacted]")
+            .field("refresh_token", &"[redacted]")
+            .field("folder_id", &self.folder_id)
+            .finish()
     }
 }
 
@@ -500,7 +543,7 @@ fn validate_required_fields(config: &AppConfig) -> anyhow::Result<()> {
 
     let storage_backend = config.storage.backend.trim().to_ascii_lowercase();
     match storage_backend.as_str() {
-        "local" => {
+        "local" | "google_drive" => {
             tracing::info!(
                 path = %config.app.storage_path,
                 "Storage backend: local filesystem"
@@ -640,6 +683,17 @@ fn apply_env_overrides(config: &mut AppConfig) {
     );
     config.auth.magic_link.enabled =
         pick_env_bool("APP_AUTH_MAGIC_LINK_ENABLED", config.auth.magic_link.enabled);
+    config.storage.google_drive.enabled =
+        pick_env_bool("APP_STORAGE_GOOGLE_DRIVE_ENABLED", config.storage.google_drive.enabled);
+    config.storage.google_drive.client_id =
+        pick_env("APP_STORAGE_GOOGLE_DRIVE_CLIENT_ID", &config.storage.google_drive.client_id);
+    config.storage.google_drive.client_secret =
+        pick_env("APP_STORAGE_GOOGLE_DRIVE_CLIENT_SECRET", &config.storage.google_drive.client_secret);
+    config.storage.google_drive.refresh_token =
+        pick_env("APP_STORAGE_GOOGLE_DRIVE_REFRESH_TOKEN", &config.storage.google_drive.refresh_token);
+    config.storage.google_drive.folder_id =
+        pick_env("APP_STORAGE_GOOGLE_DRIVE_FOLDER_ID", &config.storage.google_drive.folder_id);
+
     config.auth.magic_link.token_ttl_minutes = pick_env_u32(
         "APP_AUTH_MAGIC_LINK_TOKEN_TTL_MINUTES",
         config.auth.magic_link.token_ttl_minutes,

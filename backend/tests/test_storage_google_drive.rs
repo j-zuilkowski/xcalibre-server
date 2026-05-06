@@ -121,25 +121,24 @@ async fn test_google_drive_status_requires_admin() {
 #[tokio::test]
 async fn test_google_drive_file_stored_locally_when_disabled() {
     // When backend = "local", uploads go to local storage (existing behaviour unchanged)
+    use axum_test::multipart::{MultipartForm, Part};
+
     let ctx = TestContext::new().await;
     let token = ctx.admin_token().await;
 
-    let epub_bytes = include_bytes!("fixtures/test.epub");
+    let epub_bytes = common::minimal_epub_bytes();
+    let form = MultipartForm::new().add_part(
+        "file",
+        Part::bytes(epub_bytes)
+            .mime_type("application/epub+zip")
+            .file_name("test.epub"),
+    );
+
     let resp = ctx
         .server
-        .post("/api/v1/books/upload")
+        .post("/api/v1/books")
         .add_header(header::AUTHORIZATION, auth_header(&token))
-        .add_header(
-            header::CONTENT_TYPE,
-            "multipart/form-data; boundary=----TestBoundary",
-        )
-        .bytes(
-            format!(
-                "------TestBoundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.epub\"\r\nContent-Type: application/epub+zip\r\n\r\n{}\r\n------TestBoundary--\r\n",
-                std::str::from_utf8(epub_bytes).unwrap_or("")
-            )
-            .into_bytes(),
-        )
+        .multipart(form)
         .await;
 
     // 200 or 201 — book stored locally, no Drive interaction
@@ -176,8 +175,8 @@ async fn test_google_drive_mapping_row_created_after_upload() {
     let token = ctx.admin_token().await;
 
     // Ingest a book so there's a file to map
-    let book = ctx.create_book("Drive Book", "Test Author").await;
-    let fake_path = format!("{}/drive_book.epub", ctx.storage.path().to_str().unwrap());
+    let (book, fake_path) = ctx.create_book_with_file("Drive Book", "EPUB").await;
+    // Overwrite the placeholder with valid-ish epub bytes
     std::fs::write(&fake_path, b"PK\x03\x04fake-epub").unwrap();
 
     // Trigger sync for this specific book
@@ -190,7 +189,7 @@ async fn test_google_drive_mapping_row_created_after_upload() {
     assert_status!(resp, 202);
 
     // Wait briefly for async upload
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM google_drive_files WHERE book_id = ?")

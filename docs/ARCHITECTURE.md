@@ -1,6 +1,6 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phases 1–21 Complete (v1.0.0); Phase 22 (KAG) Planned_
+_Status: Active — Phases 1–21 Complete (v1.0.0); Phases 19–22 (gap closures) In Progress; Phase 23 (KAG) Planned_
 _Last updated: 2026-05-06_
 
 ---

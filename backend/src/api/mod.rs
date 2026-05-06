@@ -28,6 +28,7 @@ pub mod authors;
 pub mod books;
 pub mod collections;
 pub mod docs;
+pub mod google_drive;
 pub mod health;
 pub mod kobo;
 pub mod llm;

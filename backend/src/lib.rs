@@ -12,6 +12,7 @@ pub mod scheduler;
 pub mod search;
 pub mod state;
 pub mod storage;
+pub mod storage_google_drive;
 pub mod storage_s3;
 pub mod watch_folder;
 pub mod webhooks;

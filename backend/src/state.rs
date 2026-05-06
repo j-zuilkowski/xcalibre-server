@@ -37,7 +37,7 @@ impl AppState {
 
         let storage_kind = config.storage.backend.trim().to_ascii_lowercase();
         let storage: Arc<dyn StorageBackend> = match storage_kind.as_str() {
-            "local" => Arc::new(crate::storage::LocalFsStorage::new(
+            "local" | "google_drive" => Arc::new(crate::storage::LocalFsStorage::new(
                 &config.app.storage_path,
             )),
             "s3" => Arc::new(S3Storage::new(&config.storage.s3).await?),

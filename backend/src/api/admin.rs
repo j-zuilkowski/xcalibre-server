@@ -10,6 +10,7 @@
 //! and an update-check endpoint (cached 1 hour) against the GitHub releases API.
 
 use crate::{
+    api::google_drive,
     api::magic_link,
     api::watch_folder,
     auth::password::hash_password,
@@ -118,6 +119,14 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/admin/watch-folder/log",
             get(watch_folder::get_log),
+        )
+        .route(
+            "/api/v1/admin/storage/google-drive/status",
+            get(google_drive::get_status),
+        )
+        .route(
+            "/api/v1/admin/storage/google-drive/sync",
+            post(google_drive::trigger_sync),
         )
         .route_layer(require_admin_layer);
 
