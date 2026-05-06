@@ -62,6 +62,7 @@ pub struct AppConfig {
     pub network: NetworkSection,
     pub llm: LlmSection,
     pub limits: LimitsSection,
+    pub watch_folder: WatchFolderSection,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -136,6 +137,24 @@ impl std::fmt::Debug for S3Section {
 #[serde(default)]
 pub struct DatabaseSection {
     pub url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatchFolderSection {
+    pub enabled: bool,
+    pub path: String,
+    pub interval_seconds: u64,
+}
+
+impl Default for WatchFolderSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: String::new(),
+            interval_seconds: 30,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -412,6 +431,7 @@ impl Default for AppConfig {
                 rate_limit_per_ip: 200,
                 auth_rate_limit_per_minute: 10,
             },
+            watch_folder: WatchFolderSection::default(),
         }
     }
 }
@@ -623,6 +643,14 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.auth.magic_link.token_ttl_minutes = pick_env_u32(
         "APP_AUTH_MAGIC_LINK_TOKEN_TTL_MINUTES",
         config.auth.magic_link.token_ttl_minutes,
+    );
+
+    config.watch_folder.enabled =
+        pick_env_bool("APP_WATCH_FOLDER_ENABLED", config.watch_folder.enabled);
+    config.watch_folder.path = pick_env("APP_WATCH_FOLDER_PATH", &config.watch_folder.path);
+    config.watch_folder.interval_seconds = pick_env_u64(
+        "APP_WATCH_FOLDER_INTERVAL_SECONDS",
+        config.watch_folder.interval_seconds,
     );
 
     config.meilisearch.enabled =
@@ -940,5 +968,23 @@ mod tests {
     fn magic_link_ttl_defaults_to_15_minutes() {
         let config = AppConfig::default();
         assert_eq!(config.auth.magic_link.token_ttl_minutes, 15);
+    }
+
+    #[test]
+    fn watch_folder_disabled_by_default() {
+        let config = AppConfig::default();
+        assert!(!config.watch_folder.enabled);
+    }
+
+    #[test]
+    fn watch_folder_path_empty_by_default() {
+        let config = AppConfig::default();
+        assert!(config.watch_folder.path.is_empty());
+    }
+
+    #[test]
+    fn watch_folder_interval_defaults_to_30_seconds() {
+        let config = AppConfig::default();
+        assert_eq!(config.watch_folder.interval_seconds, 30);
     }
 }

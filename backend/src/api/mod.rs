@@ -37,6 +37,7 @@ pub mod opds;
 pub mod search;
 pub mod shelves;
 pub mod users;
+pub mod watch_folder;
 pub mod webhooks;
 
 /// Assembles the complete application router with all sub-routers and global middleware.

@@ -11,6 +11,7 @@
 
 use crate::{
     api::magic_link,
+    api::watch_folder,
     auth::password::hash_password,
     auth::TokenScope,
     db::queries::{
@@ -105,6 +106,18 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/admin/magic-link/revoke/:user_id",
             delete(magic_link::revoke_user_magic_links),
+        )
+        .route(
+            "/api/v1/admin/watch-folder/status",
+            get(watch_folder::get_status),
+        )
+        .route(
+            "/api/v1/admin/watch-folder/scan",
+            post(watch_folder::trigger_scan),
+        )
+        .route(
+            "/api/v1/admin/watch-folder/log",
+            get(watch_folder::get_log),
         )
         .route_layer(require_admin_layer);
 

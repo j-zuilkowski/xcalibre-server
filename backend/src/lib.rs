@@ -13,6 +13,7 @@ pub mod search;
 pub mod state;
 pub mod storage;
 pub mod storage_s3;
+pub mod watch_folder;
 pub mod webhooks;
 
 use axum::{routing::get, Router};
@@ -75,6 +76,10 @@ pub async fn run() -> anyhow::Result<()> {
             }
         }
     });
+    if state.config.watch_folder.enabled {
+        let watcher_state = state.clone();
+        tokio::spawn(crate::watch_folder::start_background_watcher(watcher_state));
+    }
     axum::serve(
         listener,
         app(state).into_make_service_with_connect_info::<SocketAddr>(),
