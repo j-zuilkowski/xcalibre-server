@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phase 21 Complete (v2.2.0); Phase 22 (KAG) Planned_
-_Last updated: 2026-05-05_
+_Status: Active — Phases 1–21 Complete (v1.0.0); Phase 22 (KAG) Planned_
+_Last updated: 2026-05-06_
 
 ---
 
@@ -1118,10 +1118,10 @@ Expose the library as a first-class tool provider for external agentic AI system
 - [x] Register MCP server in `claude mcp add` for Claude Code + Claude Desktop integration
 - [x] Documentation: how to connect LangGraph, smolagents, and Claude Desktop to the library
 
-### Phase 9 — Feature Parity (In Progress)
+### Phase 9 — Feature Parity ✅ Complete
 Closes the gap between xcalibre-server and calibre-web's full feature set. Four stages:
 
-#### Stage 1 — Quick Wins ✅ In Progress
+#### Stage 1 — Quick Wins ✅ Complete
 - [x] OPDS catalog (`/opds`) — OPDS-PS 1.2, browse unauthenticated, download token-gated
 - [x] Email / Send-to-Kindle (`POST /api/v1/books/:id/send`) — SMTP via `lettre`
 - [x] CBZ/CBR comic reader — page extraction server-side, `ComicReader.tsx`
