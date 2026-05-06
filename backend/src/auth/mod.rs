@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod ldap;
+pub mod magic_link;
 pub mod password;
 pub mod totp;
 

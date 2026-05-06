@@ -150,6 +150,23 @@ pub struct AuthSection {
     pub argon2_iterations: u32,
     pub argon2_parallelism: u32,
     pub proxy: ProxyAuthSection,
+    pub magic_link: MagicLinkSection,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MagicLinkSection {
+    pub enabled: bool,
+    pub token_ttl_minutes: u32,
+}
+
+impl Default for MagicLinkSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token_ttl_minutes: 15,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -271,6 +288,7 @@ impl Default for AuthSection {
             argon2_iterations: MIN_ARGON2_ITERATIONS,
             argon2_parallelism: MIN_ARGON2_PARALLELISM,
             proxy: ProxyAuthSection::default(),
+            magic_link: MagicLinkSection::default(),
         }
     }
 }
@@ -298,6 +316,7 @@ impl std::fmt::Debug for AuthSection {
             .field("argon2_iterations", &self.argon2_iterations)
             .field("argon2_parallelism", &self.argon2_parallelism)
             .field("proxy", &self.proxy)
+            .field("magic_link", &self.magic_link)
             .finish()
     }
 }
@@ -599,6 +618,12 @@ fn apply_env_overrides(config: &mut AppConfig) {
         "APP_AUTH_PROXY_EMAIL_HEADER",
         &config.auth.proxy.email_header,
     );
+    config.auth.magic_link.enabled =
+        pick_env_bool("APP_AUTH_MAGIC_LINK_ENABLED", config.auth.magic_link.enabled);
+    config.auth.magic_link.token_ttl_minutes = pick_env_u32(
+        "APP_AUTH_MAGIC_LINK_TOKEN_TTL_MINUTES",
+        config.auth.magic_link.token_ttl_minutes,
+    );
 
     config.meilisearch.enabled =
         pick_env_bool("APP_MEILISEARCH_ENABLED", config.meilisearch.enabled);
@@ -657,7 +682,6 @@ fn apply_env_overrides(config: &mut AppConfig) {
     config.app.calibre_db_path = pick_env("CALIBRE_DB_PATH", &config.app.calibre_db_path);
     config.storage.backend = pick_env("STORAGE_BACKEND", &config.storage.backend);
     config.storage.s3.bucket = pick_env("STORAGE_S3_BUCKET", &config.storage.s3.bucket);
-    config.storage.s3.region = pick_env("STORAGE_S3_REGION", &config.storage.s3.region);
     config.storage.s3.endpoint_url =
         pick_env("STORAGE_S3_ENDPOINT_URL", &config.storage.s3.endpoint_url);
     config.storage.s3.access_key = pick_env("STORAGE_S3_ACCESS_KEY", &config.storage.s3.access_key);
@@ -904,5 +928,17 @@ mod tests {
         config.server.https_only = false;
 
         assert!(should_warn_http_base_url_without_https_only(&config));
+    }
+
+    #[test]
+    fn magic_link_disabled_by_default() {
+        let config = AppConfig::default();
+        assert!(!config.auth.magic_link.enabled);
+    }
+
+    #[test]
+    fn magic_link_ttl_defaults_to_15_minutes() {
+        let config = AppConfig::default();
+        assert_eq!(config.auth.magic_link.token_ttl_minutes, 15);
     }
 }

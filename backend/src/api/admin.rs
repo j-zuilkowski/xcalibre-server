@@ -10,6 +10,7 @@
 //! and an update-check endpoint (cached 1 hour) against the GitHub releases API.
 
 use crate::{
+    api::magic_link,
     auth::password::hash_password,
     auth::TokenScope,
     db::queries::{
@@ -101,6 +102,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/api/v1/admin/tokens", post(create_token).get(list_tokens))
         .route("/api/v1/admin/tokens/:id", delete(delete_token))
+        .route(
+            "/api/v1/admin/magic-link/revoke/:user_id",
+            delete(magic_link::revoke_user_magic_links),
+        )
         .route_layer(require_admin_layer);
 
     Router::new().merge(admin_routes).route_layer(auth_layer)

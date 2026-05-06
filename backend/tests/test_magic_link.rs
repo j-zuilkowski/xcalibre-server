@@ -130,16 +130,20 @@ async fn test_magic_link_verify_404_when_disabled() {
     assert_status!(resp, 404);
 }
 
+async fn verify_token(server: &axum_test::TestServer, token: &str) -> axum_test::TestResponse {
+    server
+        .get("/api/v1/auth/magic-link/verify")
+        .add_query_param("token", token)
+        .await
+}
+
 #[tokio::test]
 async fn test_magic_link_verify_issues_jwt_for_valid_token() {
     let ctx = TestContext::new_with_config(magic_link_config(true)).await;
     let (user, _) = ctx.create_user().await;
     seed_token(&ctx, &user.id, "valid-raw-token-abc123", 15).await;
 
-    let resp = ctx
-        .server
-        .get("/api/v1/auth/magic-link/verify?token=valid-raw-token-abc123")
-        .await;
+    let resp = verify_token(&ctx.server, "valid-raw-token-abc123").await;
     assert_status!(resp, 200);
     let body: Value = resp.json();
     assert!(body["access_token"].is_string());
@@ -152,16 +156,10 @@ async fn test_magic_link_verify_single_use() {
     let (user, _) = ctx.create_user().await;
     seed_token(&ctx, &user.id, "single-use-token-xyz789", 15).await;
 
-    let r1 = ctx
-        .server
-        .get("/api/v1/auth/magic-link/verify?token=single-use-token-xyz789")
-        .await;
+    let r1 = verify_token(&ctx.server, "single-use-token-xyz789").await;
     assert_status!(r1, 200);
 
-    let r2 = ctx
-        .server
-        .get("/api/v1/auth/magic-link/verify?token=single-use-token-xyz789")
-        .await;
+    let r2 = verify_token(&ctx.server, "single-use-token-xyz789").await;
     assert_status!(r2, 401);
 }
 
@@ -171,10 +169,7 @@ async fn test_magic_link_verify_expired_token_401() {
     let (user, _) = ctx.create_user().await;
     seed_token(&ctx, &user.id, "expired-token-aaabbbccc", -1).await; // expired 1 min ago
 
-    let resp = ctx
-        .server
-        .get("/api/v1/auth/magic-link/verify?token=expired-token-aaabbbccc")
-        .await;
+    let resp = verify_token(&ctx.server, "expired-token-aaabbbccc").await;
     assert_status!(resp, 401);
 }
 
@@ -182,10 +177,7 @@ async fn test_magic_link_verify_expired_token_401() {
 async fn test_magic_link_verify_unknown_token_401() {
     let ctx = TestContext::new_with_config(magic_link_config(true)).await;
 
-    let resp = ctx
-        .server
-        .get("/api/v1/auth/magic-link/verify?token=no-such-token-ever")
-        .await;
+    let resp = verify_token(&ctx.server, "no-such-token-ever").await;
     assert_status!(resp, 401);
 }
 
@@ -195,9 +187,7 @@ async fn test_magic_link_verify_marks_token_used() {
     let (user, _) = ctx.create_user().await;
     seed_token(&ctx, &user.id, "mark-used-token-111222", 15).await;
 
-    ctx.server
-        .get("/api/v1/auth/magic-link/verify?token=mark-used-token-111222")
-        .await;
+    verify_token(&ctx.server, "mark-used-token-111222").await;
 
     let used_at: Option<i64> =
         sqlx::query_scalar("SELECT used_at FROM magic_link_tokens WHERE user_id = ?")

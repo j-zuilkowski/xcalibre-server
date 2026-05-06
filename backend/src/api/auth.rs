@@ -12,6 +12,7 @@
 //! - Refresh tokens are stored as SHA-256 hashes and rotated on every use.
 
 use crate::{
+    api::magic_link,
     auth::{ldap::authenticate_ldap, password::hash_password, totp as totp_auth},
     db::queries::{auth as auth_queries, oauth as oauth_queries, totp as totp_queries},
     middleware::auth::{
@@ -61,6 +62,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/register", post(register))
         .route("/login", post(login))
         .route("/refresh", post(refresh))
+        .route("/magic-link/request", post(magic_link::request_magic_link))
+        .route("/magic-link/verify", get(magic_link::verify_magic_link))
         .layer(crate::middleware::security_headers::auth_rate_limit_layer(auth_rpm))
         .layer(middleware::from_fn_with_state(
             crate::middleware::security_headers::auth_rate_limit_headers_config(auth_rpm),

@@ -31,6 +31,7 @@ pub mod docs;
 pub mod health;
 pub mod kobo;
 pub mod llm;
+pub mod magic_link;
 pub mod memory;
 pub mod opds;
 pub mod search;

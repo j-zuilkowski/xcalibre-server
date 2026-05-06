@@ -89,6 +89,20 @@ impl TestContext {
         (user, password)
     }
 
+    pub async fn create_user_with_email(&self, email: &str) -> (User, String) {
+        self.seed_role("user").await;
+        let password = "Test1234!".to_string();
+        let user = self
+            .insert_user(
+                email.split('@').next().unwrap_or("user"),
+                email,
+                "user",
+                &password,
+            )
+            .await;
+        (user, password)
+    }
+
     pub async fn login(&self, username: &str, password: &str) -> LoginResult {
         let response = self
             .server
@@ -104,7 +118,7 @@ impl TestContext {
     }
 
     pub async fn user_token(&self) -> String {
-        let (user, password) = self.create_user().await;
+        let (user, password) = self.create_user_with_email("user2@example.com").await;
         self.login(&user.username, &password).await.access_token
     }
 
