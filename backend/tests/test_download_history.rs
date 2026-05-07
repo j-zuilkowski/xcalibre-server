@@ -28,8 +28,7 @@ async fn wait_for_history_count(ctx: &TestContext, user_id: &str, expected: i64)
 async fn test_download_records_history_entry() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users ORDER BY created_at DESC LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user id");
@@ -63,8 +62,7 @@ async fn test_download_history_is_per_user() {
         .fetch_one(&ctx.db)
         .await
         .expect("load admin id");
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users ORDER BY created_at DESC LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user id");
@@ -113,8 +111,7 @@ async fn test_download_history_is_per_user() {
 async fn test_download_history_pagination() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users ORDER BY created_at DESC LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user id");

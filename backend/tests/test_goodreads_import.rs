@@ -230,7 +230,7 @@ async fn test_import_marks_matching_book_as_read() {
 
     let job_id = upload_goodreads_import(&ctx, &token, &csv).await;
     let _ = wait_for_import_status(&ctx, &token, &job_id).await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'user'")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("fetch user id");
@@ -275,7 +275,7 @@ async fn test_import_creates_shelf_if_not_exists() {
     let job_id = upload_goodreads_import(&ctx, &token, &csv).await;
     let _ = wait_for_import_status(&ctx, &token, &job_id).await;
 
-    let shelf_count = query_i64(&ctx, "SELECT COUNT(1) FROM shelves WHERE name = ? AND user_id = (SELECT id FROM users WHERE username = 'user')", &["Favorites"]).await;
+    let shelf_count = query_i64(&ctx, "SELECT COUNT(1) FROM shelves WHERE name = ? AND user_id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1)", &["Favorites"]).await;
     assert_eq!(shelf_count, 1);
 }
 
@@ -302,7 +302,7 @@ async fn test_import_adds_book_to_existing_shelf() {
         SELECT COUNT(1) AS count
         FROM shelf_books sb
         INNER JOIN shelves s ON s.id = sb.shelf_id
-        WHERE s.name = ? AND s.user_id = (SELECT id FROM users WHERE username = 'user') AND sb.book_id = ?
+        WHERE s.name = ? AND s.user_id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1) AND sb.book_id = ?
         "#,
     )
     .bind("Favorites")

@@ -64,8 +64,7 @@ async fn test_blocked_tag_hides_book_from_list() {
     let tag_id = add_tag(&ctx, "blocked-tag").await;
     attach_tag(&ctx, &book.id, &tag_id).await;
 
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user");
@@ -92,8 +91,7 @@ async fn test_allow_restriction_limits_visible_books() {
     attach_tag(&ctx, &allowed.id, &allow_tag_id).await;
     attach_tag(&ctx, &hidden.id, &other_tag_id).await;
 
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user");
@@ -117,8 +115,7 @@ async fn test_admin_can_set_restriction() {
     let _user_token = ctx.user_token().await;
     let _book = ctx.create_book("Admin Book", "Author A").await;
     let tag_id = add_tag(&ctx, "admin-tag").await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user");
@@ -153,8 +150,7 @@ async fn test_restriction_does_not_affect_other_users() {
     let tag_id = add_tag(&ctx, "shared-tag").await;
     attach_tag(&ctx, &book.id, &tag_id).await;
 
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user");

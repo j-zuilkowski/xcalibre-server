@@ -35,8 +35,7 @@ async fn test_toggle_read_false() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
     let book = ctx.create_book("Unread Me", "Author A").await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("user")
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username != 'admin' LIMIT 1")
         .fetch_one(&ctx.db)
         .await
         .expect("load user id");

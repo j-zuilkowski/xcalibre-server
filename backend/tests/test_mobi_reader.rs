@@ -100,7 +100,7 @@ async fn test_to_epub_requires_download_permission() {
     .await
     .expect("insert role");
 
-    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE username = 'user'")
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1)")
         .execute(&ctx.db)
         .await
         .expect("update user role");

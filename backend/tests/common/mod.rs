@@ -118,7 +118,10 @@ impl TestContext {
     }
 
     pub async fn user_token(&self) -> String {
-        let (user, password) = self.create_user_with_email("user2@example.com").await;
+        self.seed_role("user").await;
+        let password = "Test1234!".to_string();
+        let unique = Uuid::new_v4().to_string().replace('-', "")[..12].to_string();
+        let user = self.insert_user(&format!("user-{unique}"), &format!("user-{unique}@example.com"), "user", &password).await;
         self.login(&user.username, &password).await.access_token
     }
 
