@@ -118,7 +118,7 @@ impl TestContext {
     }
 
     pub async fn user_token(&self) -> String {
-        let (user, password) = self.create_user_with_email("user2@example.com").await;
+        let (user, password) = self.create_user().await;
         self.login(&user.username, &password).await.access_token
     }
 
