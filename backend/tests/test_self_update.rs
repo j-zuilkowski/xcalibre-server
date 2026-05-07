@@ -172,6 +172,7 @@ async fn test_updater_apply_downloads_and_verifies_checksum() {
     Mock::given(method("GET"))
         .and(path_regex(r"/releases/download/v999\.0\.0/backend-.*\.sha256"))
         .respond_with(ResponseTemplate::new(200).set_body_string(checksum.clone()))
+        .with_priority(1)
         .mount(&mock)
         .await;
 
@@ -208,6 +209,7 @@ async fn test_updater_apply_aborts_on_checksum_mismatch() {
     Mock::given(method("GET"))
         .and(path_regex(r"/releases/download/v999\.0\.0/backend-.*\.sha256"))
         .respond_with(ResponseTemplate::new(200).set_body_string("deadbeefdeadbeef".to_string()))
+        .with_priority(1)
         .mount(&mock)
         .await;
 
@@ -248,6 +250,7 @@ async fn test_updater_pre_hook_failure_blocks_update_when_configured() {
     Mock::given(method("GET"))
         .and(path_regex(r"\.sha256"))
         .respond_with(ResponseTemplate::new(200).set_body_string(checksum))
+        .with_priority(1)
         .mount(&mock)
         .await;
 
@@ -292,6 +295,7 @@ async fn test_updater_pre_hook_failure_does_not_block_when_not_configured() {
     Mock::given(method("GET"))
         .and(path_regex(r"\.sha256"))
         .respond_with(ResponseTemplate::new(200).set_body_string(checksum))
+        .with_priority(1)
         .mount(&mock)
         .await;
 

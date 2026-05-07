@@ -63,6 +63,8 @@ pub struct AppConfig {
     pub llm: LlmSection,
     pub limits: LimitsSection,
     pub watch_folder: WatchFolderSection,
+    pub updater: UpdaterSection,
+
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -198,6 +200,35 @@ impl Default for WatchFolderSection {
             interval_seconds: 30,
         }
     }
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdaterSection {
+    /// Master switch — when false, all update endpoints return 404.
+    pub enabled: bool,
+    /// When true, the background update-check task also applies the update.
+    pub auto_update: bool,
+    /// Release channel — "stable" or "nightly". Determines which release tag to pull.
+    pub channel: String,
+    /// Shell command run before replacing the binary. Empty = skip.
+    pub pre_update_hook: String,
+    /// When true (default), a non-zero exit from `pre_update_hook` aborts the update.
+    pub block_if_hook_fails: bool,
+}
+
+impl Default for UpdaterSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_update: false,
+            channel: "stable".to_string(),
+            pre_update_hook: String::new(),
+            block_if_hook_fails: true,
+        }
+    }
+
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -475,6 +506,8 @@ impl Default for AppConfig {
                 auth_rate_limit_per_minute: 10,
             },
             watch_folder: WatchFolderSection::default(),
+            updater: UpdaterSection::default(),
+
         }
     }
 }
@@ -706,6 +739,16 @@ fn apply_env_overrides(config: &mut AppConfig) {
         "APP_WATCH_FOLDER_INTERVAL_SECONDS",
         config.watch_folder.interval_seconds,
     );
+
+    config.updater.enabled =
+        pick_env_bool("APP_UPDATER_ENABLED", config.updater.enabled);
+    config.updater.auto_update =
+        pick_env_bool("APP_UPDATER_AUTO_UPDATE", config.updater.auto_update);
+    config.updater.channel = pick_env("APP_UPDATER_CHANNEL", &config.updater.channel);
+    config.updater.pre_update_hook = pick_env("APP_UPDATER_PRE_UPDATE_HOOK", &config.updater.pre_update_hook);
+    config.updater.block_if_hook_fails =
+        pick_env_bool("APP_UPDATER_BLOCK_IF_HOOK_FAILS", config.updater.block_if_hook_fails);
+
 
     config.meilisearch.enabled =
         pick_env_bool("APP_MEILISEARCH_ENABLED", config.meilisearch.enabled);

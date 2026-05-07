@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use serde_json::json;
 use thiserror::Error;
 use utoipa::ToSchema;
 
@@ -21,12 +22,16 @@ pub enum AppError {
     NotFound,
     #[error("conflict")]
     Conflict,
+    #[error("{0}")]
+    ConflictMessage(String),
     #[error("payload too large")]
     PayloadTooLarge,
     #[error("unprocessable")]
     Unprocessable,
     #[error("{0}")]
     UnprocessableMessage(String),
+    #[error("{0}")]
+    UnprocessableEntity(String),
     #[error("no extractable format")]
     NoExtractableFormat,
     #[error("not implemented")]
@@ -47,30 +52,44 @@ pub struct AppErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, error) = match self {
-            AppError::BadRequest => (StatusCode::BAD_REQUEST, "bad_request"),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            AppError::UnauthorizedMessage(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
-            AppError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            AppError::Conflict => (StatusCode::CONFLICT, "conflict"),
-            AppError::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
+        match self {
+            AppError::BadRequest => (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request"}))).into_response(),
+            AppError::Unauthorized | AppError::UnauthorizedMessage(_) => {
+                (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response()
+            }
+            AppError::Forbidden(msg) => {
+                (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden", "message": msg}))).into_response()
+            }
+            AppError::NotFound => (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response(),
+            AppError::Conflict => (StatusCode::CONFLICT, Json(json!({"error": "conflict"}))).into_response(),
+            AppError::ConflictMessage(msg) => {
+                (StatusCode::CONFLICT, Json(json!({"error": msg}))).into_response()
+            }
+            AppError::PayloadTooLarge => {
+                (StatusCode::PAYLOAD_TOO_LARGE, Json(json!({"error": "payload_too_large"}))).into_response()
+            }
             AppError::Unprocessable | AppError::UnprocessableMessage(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable")
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": "unprocessable"}))).into_response()
+            }
+            AppError::UnprocessableEntity(msg) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": msg, "checksum_ok": false}))).into_response()
             }
             AppError::NoExtractableFormat => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "no_extractable_format")
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": "no_extractable_format"}))).into_response()
             }
-            AppError::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
-            AppError::ServiceUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "llm_unavailable"),
-            AppError::SsrfBlocked => (StatusCode::UNPROCESSABLE_ENTITY, "ssrf_blocked"),
-            AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
-        };
-        let body = Json(AppErrorResponse {
-            error: error.to_string(),
-            message: self.to_string(),
-        });
-        (status, body).into_response()
+            AppError::NotImplemented => {
+                (StatusCode::NOT_IMPLEMENTED, Json(json!({"error": "not_implemented"}))).into_response()
+            }
+            AppError::ServiceUnavailable => {
+                (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "llm_unavailable"}))).into_response()
+            }
+            AppError::SsrfBlocked => {
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": "ssrf_blocked"}))).into_response()
+            }
+            AppError::Internal => {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal_error"}))).into_response()
+            }
+        }
     }
 }
 
