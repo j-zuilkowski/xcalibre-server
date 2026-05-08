@@ -55,6 +55,9 @@ pub fn router(state: crate::AppState) -> Router {
         .route("/health", get(health::health_handler))
         .merge(docs::openapi_routes(state.clone()))
         .nest("/api/v1/auth", auth_router)
+        // OAuth link callback must be at the top level (outside auth sub-router)
+        // to avoid route resolution issues with nested :param routes.
+        .route("/api/v1/auth/oauth/:provider/link/callback", get(auth::oauth_link_callback))
         .merge(admin::router(state.clone()))
         .merge(collections::router(state.clone()))
         .merge(authors::router(state.clone()))

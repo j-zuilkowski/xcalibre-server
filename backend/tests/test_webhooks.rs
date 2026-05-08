@@ -123,6 +123,7 @@ async fn custom_context(http_client: reqwest::Client) -> TestContext {
         db,
         storage,
         server,
+        last_user_id: std::cell::RefCell::new(None),
         state,
     }
 }

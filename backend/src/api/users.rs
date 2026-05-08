@@ -9,6 +9,10 @@
 //! - `GET /users/me/import/:job_id` — poll the status of an import job.
 //! - `GET /libraries` — list all libraries (public, no per-user filter).
 //!
+//! Routes under `/api/v1/me/oauth/` (all require JWT):
+//! - `GET /me/oauth/providers` — list linked and available OAuth providers.
+//! - `DELETE /me/oauth/:provider` — unlink a provider account with lockout guard.
+//!
 //! CSV imports are processed in background Tokio tasks; rows are matched against the
 //! library by exact title + fuzzy author. Unmatched rows are counted and logged but do
 //! not cause the job to fail.
@@ -17,7 +21,7 @@ use crate::{
     db::queries::{auth as auth_queries, libraries as library_queries, stats as stats_queries},
     db::queries::{
         book_user_state as book_state_queries, books as book_queries,
-        import_logs as import_log_queries, shelves as shelf_queries,
+        import_logs as import_log_queries, oauth as oauth_queries, shelves as shelf_queries,
     },
     ingest::goodreads::{parse_goodreads_csv, parse_storygraph_csv, GoodreadsRow, StorygraphRow},
     middleware::auth::AuthenticatedUser,
@@ -26,12 +30,13 @@ use crate::{
 use axum::{
     extract::{Extension, Json, Multipart, Path, State},
     middleware,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
 use utoipa::ToSchema;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -49,6 +54,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/users/me/import/:job_id", get(get_import_status))
         .route("/api/v1/libraries", get(list_libraries))
         .route("/api/v1/users/me/library", patch(update_default_library))
+        .route("/api/v1/me/oauth/providers", get(me_oauth_providers))
+        .route("/api/v1/me/oauth/:provider", delete(me_oauth_unlink))
         .route_layer(auth_layer)
 }
 
@@ -86,6 +93,12 @@ struct LibraryResponse {
     book_count: i64,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OAuthProvidersResponse {
+    linked: Vec<String>,
+    available: Vec<String>,
 }
 
 #[utoipa::path(
@@ -206,6 +219,70 @@ pub(crate) async fn patch_me(
             }
         }
     }
+}
+
+/// Returns the list of linked and available OAuth providers for the current user.
+async fn me_oauth_providers(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+) -> Result<Json<OAuthProvidersResponse>, AppError> {
+    let linked = oauth_queries::find_by_user_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let linked_providers: Vec<String> = linked.into_iter().map(|a| a.provider).collect();
+
+    let mut available = Vec::new();
+    for provider in &["github", "google"] {
+        if !linked_providers.contains(&provider.to_string())
+            && crate::api::auth::provider_config(&state.config, provider).is_ok()
+        {
+            available.push(provider.to_string());
+        }
+    }
+
+    Ok(Json(OAuthProvidersResponse {
+        linked: linked_providers,
+        available,
+    }))
+}
+
+/// Unlinks an OAuth provider from the current user.
+/// Lockout guard: if the user has no password set and this is the only linked provider,
+/// returns 400 — the user would lose all access.
+async fn me_oauth_unlink(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    axum::extract::Path(provider): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if provider != "github" && provider != "google" {
+        return Err(AppError::BadRequest);
+    }
+
+    // Lockout guard: check if the user has no password set.
+    let user_auth = auth_queries::find_user_auth_by_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::Unauthorized)?;
+
+    if user_auth.password_hash.is_empty() {
+        let linked_count =
+            oauth_queries::count_oauth_accounts_by_user(&state.db, &auth_user.user.id)
+                .await
+                .map_err(|_| AppError::Internal)?;
+        if linked_count <= 1 {
+            return Err(AppError::BadRequest);
+        }
+    }
+
+    let deleted = oauth_queries::delete_oauth_account(&state.db, &auth_user.user.id, &provider)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    if deleted == 0 {
+        // Nothing to delete — no-op.
+    }
+
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn list_libraries(
@@ -408,7 +485,7 @@ async fn parse_csv_upload(
             .map(sanitize_upload_file_name)
             .unwrap_or_else(|| "upload.csv".to_string());
         if !field_name.to_ascii_lowercase().ends_with(".csv") {
-            return Err(AppError::Unprocessable);
+            return Err(AppError::BadRequest);
         }
 
         let field_bytes = field.bytes().await.map_err(|_| AppError::BadRequest)?;
@@ -427,7 +504,7 @@ async fn parse_csv_upload(
         return Err(AppError::BadRequest);
     };
     if bytes.is_empty() {
-        return Err(AppError::Unprocessable);
+        return Err(AppError::BadRequest);
     }
 
     Ok(UploadedCsv { filename, bytes })

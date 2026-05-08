@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
 _Status: Current_
-_Last updated: 2026-04-28_
+_Last updated: 2026-05-08_
 
 ---
 
@@ -199,6 +199,16 @@ interface Role {
 | PATCH | `/auth/me/password` | Yes | Any | Change own password |
 | GET | `/auth/oauth/:provider` | No | — | Initiate OAuth flow (`google` or `github`) |
 | GET | `/auth/oauth/:provider/callback` | No | — | OAuth callback; creates local user on first login |
+| GET | `/auth/oauth/:provider/link` | Yes | Any | Initiate OAuth provider linking for authenticated user (302 redirect) |
+| GET | `/auth/oauth/:provider/link/callback` | No | — | OAuth link callback; validates link state, returns `{linked: true}` on success |
+| GET | `/me/oauth/providers` | Yes | Any | List linked vs available OAuth providers (`{linked: [], available: []}`) |
+| DELETE | `/me/oauth/:provider` | Yes | Any | Unlink provider from current user (400 if that provider is the user's only auth method) |
+
+#### OAuth Link Callback
+- **200** — Provider account linked successfully: `{linked: true}`
+- **400** — Bad request (missing code/state)
+- **409** — Conflict: provider account is already linked to a different user
+- **422** — Unprocessable (unlink lockout guard: unlinking would leave no authentication method)
 
 #### `POST /auth/login`
 ```typescript

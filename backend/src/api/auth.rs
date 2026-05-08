@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/totp/setup", get(totp_setup))
         .route("/totp/confirm", post(totp_confirm))
         .route("/totp/disable", post(totp_disable))
+        .route("/oauth/:provider/link", get(oauth_link_start))
         .route_layer(auth_layer);
     let totp_pending = Router::new()
         .route("/totp/verify", post(totp_verify))
@@ -118,7 +119,7 @@ struct ChangePasswordRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct OAuthCallbackQuery {
+pub(crate) struct OAuthCallbackQuery {
     code: String,
     state: String,
 }
@@ -130,7 +131,7 @@ struct AuthProvidersResponse {
 }
 
 #[derive(Clone, Debug)]
-struct ProviderSettings {
+pub(crate) struct ProviderSettings {
     client_id: String,
     client_secret: String,
     authorization_url: String,
@@ -1293,7 +1294,7 @@ async fn create_oauth_user(
         .map_err(|_| AppError::Internal)
 }
 
-fn provider_config(
+pub(crate) fn provider_config(
     config: &crate::config::AppConfig,
     provider: &str,
 ) -> Result<ProviderSettings, AppError> {
@@ -1327,6 +1328,14 @@ fn provider_config(
 fn oauth_redirect_uri(base_url: &str, provider: &str) -> String {
     format!(
         "{}/api/v1/auth/oauth/{}/callback",
+        base_url.trim_end_matches('/'),
+        provider
+    )
+}
+
+fn oauth_link_redirect_uri(base_url: &str, provider: &str) -> String {
+    format!(
+        "{}/api/v1/auth/oauth/{}/link/callback",
         base_url.trim_end_matches('/'),
         provider
     )
@@ -1376,6 +1385,172 @@ fn validate_oauth_state(
         return Err(AppError::BadRequest);
     }
     Ok(())
+}
+
+/// Generates an HMAC-protected OAuth link state that embeds the authenticated user ID
+/// alongside the nonce and client IP, so the callback can identify which user to link to.
+/// Produces a 3-part state token: `nonce.user_id.mac_hex` where the MAC covers
+/// `nonce:user_id:client_ip`.
+fn generate_oauth_link_state(
+    jwt_secret: &str,
+    client_ip: &str,
+    user_id: &str,
+) -> Result<(String, String), AppError> {
+    let nonce = generate_random_token(32);
+    let state_payload = format!("{nonce}:{user_id}:{client_ip}");
+    let oauth_state_secret = derive_oauth_state_secret(jwt_secret)?;
+    let mac = hmac_sha256(&oauth_state_secret, state_payload.as_bytes())?;
+    let state_token = format!("{nonce}.{}.{}", user_id, hex::encode(mac));
+    Ok((nonce, state_token))
+}
+
+/// Validates the OAuth link callback state token and extracts the embedded user ID.
+/// The state token format is `nonce.user_id.mac_hex` where the MAC is computed
+/// over `nonce:user_id:client_ip`.
+/// Returns the user_id on success.
+fn validate_oauth_link_state(
+    jwt_secret: &str,
+    cookie_nonce: &str,
+    state_token: &str,
+    client_ip: SocketAddr,
+) -> Result<String, AppError> {
+    let parts: Vec<&str> = state_token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(AppError::BadRequest);
+    }
+    let state_nonce = parts[0];
+    let state_user_id = parts[1];
+    let state_mac_hex = parts[2];
+
+    if state_nonce != cookie_nonce {
+        return Err(AppError::BadRequest);
+    }
+
+    let expected_payload = format!("{state_nonce}:{state_user_id}:{}", client_ip.ip());
+    let oauth_state_secret = derive_oauth_state_secret(jwt_secret)?;
+    let expected_mac = hmac_sha256(&oauth_state_secret, expected_payload.as_bytes())?;
+    let provided_mac = hex::decode(state_mac_hex).map_err(|_| AppError::BadRequest)?;
+    if expected_mac.as_slice().ct_eq(&provided_mac).unwrap_u8() != 1 {
+        return Err(AppError::BadRequest);
+    }
+
+    Ok(state_user_id.to_string())
+}
+
+fn oauth_link_state_cookie(_provider: &str, nonce: &str) -> String {
+    format!("oauth_link_state={nonce}; Path=/api/v1/auth/oauth; HttpOnly; SameSite=Lax; Max-Age=600")
+}
+
+fn clear_oauth_link_state_cookie(_provider: &str) -> String {
+    "oauth_link_state=; Path=/api/v1/auth/oauth; HttpOnly; SameSite=Lax; Max-Age=0".to_string()
+}
+/// Begins the OAuth account-linking flow for an already-authenticated user.
+/// Generates a link state that embeds the authenticated user's ID, HMAC-binds it
+/// to the client IP, stores the nonce in an HttpOnly cookie, and redirects to the provider.
+async fn oauth_link_start(
+    State(state): State<AppState>,
+    axum::extract::Path(provider): axum::extract::Path<String>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    ConnectInfo(connect_info): ConnectInfo<SocketAddr>,
+) -> Result<Response, AppError> {
+    let provider_config = provider_config(&state.config, &provider)?;
+    let client_ip = extract_client_ip(connect_info);
+
+    // Check if the provider is already linked for this user.
+    let linked = oauth_queries::find_by_user_id(&state.db, &auth_user.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if linked.iter().any(|acct| acct.provider == provider) {
+        return Err(AppError::Conflict);
+    }
+
+    let (nonce, state_token) =
+        generate_oauth_link_state(&state.config.auth.jwt_secret, &client_ip, &auth_user.user.id)?;
+    let redirect_uri = oauth_link_redirect_uri(&state.config.app.base_url, &provider);
+    let mut url =
+        reqwest::Url::parse(&provider_config.authorization_url).map_err(|_| AppError::Internal)?;
+    url.query_pairs_mut()
+        .append_pair("client_id", &provider_config.client_id)
+        .append_pair("redirect_uri", &redirect_uri)
+        .append_pair("response_type", "code")
+        .append_pair("scope", &provider_config.scope)
+        .append_pair("state", &state_token);
+
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::FOUND;
+    response.headers_mut().insert(
+        LOCATION,
+        HeaderValue::from_str(url.as_str()).map_err(|_| AppError::Internal)?,
+    );
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&oauth_link_state_cookie(&provider, &nonce))
+            .map_err(|_| AppError::Internal)?,
+    );
+    Ok(response)
+}
+
+/// Handles the OAuth link callback: validates the link state (extracting the authenticated
+/// user ID), exchanges the code, fetches user info, checks for conflicts, and links the
+/// provider account to the authenticated user.
+pub(crate) async fn oauth_link_callback(
+    State(state): State<AppState>,
+    axum::extract::Path(provider): axum::extract::Path<String>,
+    Query(query): Query<OAuthCallbackQuery>,
+    headers: HeaderMap,
+    ConnectInfo(connect_info): ConnectInfo<SocketAddr>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let provider_config = provider_config(&state.config, &provider)?;
+    let cookie_nonce = read_cookie(&headers, "oauth_link_state").ok_or(AppError::BadRequest)?;
+    let user_id = validate_oauth_link_state(
+        &state.config.auth.jwt_secret,
+        &cookie_nonce,
+        &query.state,
+        connect_info,
+    )?;
+
+    let token = exchange_oauth_code(
+        &provider_config,
+        &state.config.app.base_url,
+        &provider,
+        &query.code,
+    )
+    .await?;
+    let external_user = fetch_oauth_user(&provider_config, &token, &provider).await?;
+
+    // Check if the provider account is already linked to a different user.
+    if let Some(existing) =
+        oauth_queries::find_by_provider(&state.db, &provider, &external_user.provider_user_id)
+            .await
+            .map_err(|_| AppError::Internal)?
+    {
+        if existing.user_id != user_id {
+            return Err(AppError::Conflict);
+        }
+        // Already linked to this user — no-op.
+        return Ok(Json(json!({ "linked": true })));
+    }
+
+    // Link the provider account to the authenticated user.
+    oauth_queries::create_oauth_account(
+        &state.db,
+        &user_id,
+        &provider,
+        &external_user.provider_user_id,
+        &external_user.email,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    // Clear the link state cookie.
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&clear_oauth_link_state_cookie(&provider))
+            .map_err(|_| AppError::Internal)?,
+    );
+
+    Ok(Json(json!({ "linked": true })))
 }
 
 /// Derives a dedicated 32-byte HMAC key for OAuth state tokens using HKDF-SHA256,

@@ -60,6 +60,7 @@ async fn oauth_context(remote_ip: IpAddr, mock_server: &MockServer) -> TestConte
         db,
         storage,
         server,
+        last_user_id: std::cell::RefCell::new(None),
         state,
     }
 }

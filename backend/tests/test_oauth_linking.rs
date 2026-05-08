@@ -2,31 +2,84 @@
 
 mod common;
 
-use axum::http::header;
-use common::{auth_header, TestContext};
+use std::net::{IpAddr, SocketAddr};
+
+use axum::{
+    extract::{ConnectInfo, Request},
+    http::header,
+    middleware::Next,
+    Router,
+};
+use axum_test::TestServer;
+use backend::{app, config::AppConfig, AppState};
+use common::{auth_header, test_db, TestContext, TEST_JWT_SECRET};
 use serde_json::Value;
+use tempfile::TempDir;
 use wiremock::{
     matchers::{method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
-fn oauth_linking_config(mock: &MockServer) -> backend::config::AppConfig {
-    let mut cfg = backend::config::AppConfig::default();
-    // Set GitHub fields to mock URLs (makes provider "available").
+/// Wraps the app with a middleware that injects `ConnectInfo` for IP-bound OAuth state validation.
+fn app_with_connect_info(state: AppState, remote_ip: IpAddr) -> Router {
+    app(state).layer(axum::middleware::from_fn(
+        move |mut req: Request, next: Next| {
+            let connect_info = ConnectInfo(SocketAddr::new(remote_ip, 12_345));
+            async move {
+                req.extensions_mut().insert(connect_info);
+                next.run(req).await
+            }
+        },
+    ))
+}
+
+fn oauth_linking_config(mock: &MockServer) -> AppConfig {
+    let mut cfg = AppConfig::default();
     cfg.oauth.github.client_id = "test-client".to_string();
     cfg.oauth.github.client_secret = "test-secret".to_string();
     cfg.oauth.github.authorization_url = format!("{}/authorize", mock.uri());
     cfg.oauth.github.token_url = format!("{}/token", mock.uri());
     cfg.oauth.github.userinfo_url = format!("{}/userinfo", mock.uri());
-    // Set Google client_id/client_secret to enable it as a listed provider.
     cfg.oauth.google.client_id = "google-test".to_string();
     cfg.oauth.google.client_secret = "google-secret".to_string();
     cfg
 }
 
+/// Builds a `TestContext` wired to `app_with_connect_info` so OAuth link routes work.
+async fn oauth_linking_context(mock: &MockServer) -> TestContext {
+    let storage = TempDir::new().expect("tempdir");
+    let db = test_db().await;
+    std::env::set_var("XCS_DISABLE_METRICS", "1");
+    let mut config = oauth_linking_config(mock);
+    config.app.storage_path = storage.path().to_string_lossy().to_string();
+    if config.auth.jwt_secret.trim().is_empty() {
+        config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
+    }
+    config.limits.auth_rate_limit_per_minute = 1000;
+    config.limits.rate_limit_per_ip = 2000;
+    let state = AppState::new(db.clone(), config)
+        .await
+        .expect("initialize app state");
+    let server = TestServer::new(app_with_connect_info(state.clone(), "127.0.0.1".parse().expect("ip")))
+        .expect("build test server");
+    TestContext {
+        db,
+        storage,
+        server,
+        state,
+        last_user_id: std::cell::RefCell::new(None),
+    }
+}
+
+/// Extracts the nonce (first segment before '.') from a state token.
+fn nonce_from_state(state_token: &str) -> &str {
+    state_token.split('.').next().unwrap_or(state_token)
+}
+
 #[tokio::test]
 async fn test_me_oauth_providers_initially_all_available_none_linked() {
-    let ctx = TestContext::new().await;
+    let mock = MockServer::start().await;
+    let ctx = oauth_linking_context(&mock).await;
     let token = ctx.user_token().await;
 
     let resp = ctx
@@ -69,12 +122,12 @@ async fn test_oauth_link_flow_links_github_and_updates_provider_list() {
         .mount(&mock)
         .await;
 
-    let ctx = TestContext::new_with_config(oauth_linking_config(&mock)).await;
+    let ctx = oauth_linking_context(&mock).await;
     let token = ctx.user_token().await;
 
     let start = ctx
         .server
-        .get("/auth/oauth/github/link")
+        .get("/api/v1/auth/oauth/github/link")
         .add_header(header::AUTHORIZATION, auth_header(&token))
         .await;
     assert_status!(start, 302);
@@ -82,7 +135,7 @@ async fn test_oauth_link_flow_links_github_and_updates_provider_list() {
     let location = start.header("location").to_str().unwrap_or_default().to_string();
     assert!(location.contains("state="));
 
-    let state = location
+    let state_token = location
         .split("state=")
         .nth(1)
         .unwrap_or_default()
@@ -91,9 +144,18 @@ async fn test_oauth_link_flow_links_github_and_updates_provider_list() {
         .unwrap_or_default()
         .to_string();
 
+    let nonce = nonce_from_state(&state_token).to_string();
+
     let callback = ctx
         .server
-        .get(&format!("/auth/oauth/github/link/callback?code=test-code&state={state}"))
+        .get("/api/v1/auth/oauth/github/link/callback")
+        .add_query_param("code", "test-code")
+        .add_query_param("state", &state_token)
+        .add_header(
+            header::COOKIE,
+            axum::http::HeaderValue::from_str(&format!("oauth_link_state={nonce}"))
+                .expect("cookie header"),
+        )
         .await;
     assert_status!(callback, 200);
     let callback_body: Value = callback.json();
@@ -113,10 +175,9 @@ async fn test_oauth_link_flow_links_github_and_updates_provider_list() {
 #[tokio::test]
 async fn test_unlink_github_returns_200_when_user_has_password() {
     let mock = MockServer::start().await;
-    let ctx = TestContext::new_with_config(oauth_linking_config(&mock)).await;
+    let ctx = oauth_linking_context(&mock).await;
     let token = ctx.user_token().await;
 
-    // Assume helper links provider row for current user directly for test setup.
     ctx.link_oauth_for_current_user("github", "provider-account-1").await;
 
     let unlink = ctx
@@ -130,7 +191,7 @@ async fn test_unlink_github_returns_200_when_user_has_password() {
 #[tokio::test]
 async fn test_unlink_only_auth_method_returns_400() {
     let mock = MockServer::start().await;
-    let ctx = TestContext::new_with_config(oauth_linking_config(&mock)).await;
+    let ctx = oauth_linking_context(&mock).await;
 
     let token = ctx
         .create_oauth_only_user_and_token("oauth-only@example.com", "github", "gh-only-1")
@@ -168,21 +229,20 @@ async fn test_link_callback_conflict_when_provider_account_already_linked_to_oth
         .mount(&mock)
         .await;
 
-    let ctx = TestContext::new_with_config(oauth_linking_config(&mock)).await;
+    let ctx = oauth_linking_context(&mock).await;
     let token = ctx.user_token().await;
 
-    // Pre-link provider account to a different user.
     ctx.link_oauth_for_other_user("github", "424242").await;
 
     let start = ctx
         .server
-        .get("/auth/oauth/github/link")
+        .get("/api/v1/auth/oauth/github/link")
         .add_header(header::AUTHORIZATION, auth_header(&token))
         .await;
     assert_status!(start, 302);
 
     let location = start.header("location").to_str().unwrap_or_default().to_string();
-    let state = location
+    let state_token = location
         .split("state=")
         .nth(1)
         .unwrap_or_default()
@@ -191,9 +251,18 @@ async fn test_link_callback_conflict_when_provider_account_already_linked_to_oth
         .unwrap_or_default()
         .to_string();
 
+    let nonce = nonce_from_state(&state_token).to_string();
+
     let callback = ctx
         .server
-        .get(&format!("/auth/oauth/github/link/callback?code=test-code&state={state}"))
+        .get("/api/v1/auth/oauth/github/link/callback")
+        .add_query_param("code", "test-code")
+        .add_query_param("state", &state_token)
+        .add_header(
+            header::COOKIE,
+            axum::http::HeaderValue::from_str(&format!("oauth_link_state={nonce}"))
+                .expect("cookie header"),
+        )
         .await;
 
     assert_status!(callback, 409);

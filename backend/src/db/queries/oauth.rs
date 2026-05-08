@@ -37,6 +37,65 @@ pub async fn find_by_provider(
     Ok(row.map(row_to_oauth_account))
 }
 
+/// Returns all OAuth accounts linked to the given user.
+pub async fn find_by_user_id(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<Vec<OauthAccount>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, user_id, provider, provider_user_id, email, created_at
+        FROM oauth_accounts
+        WHERE user_id = ?
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows.into_iter().map(row_to_oauth_account).collect())
+}
+
+/// Deletes the OAuth account link for a given user and provider.
+/// Returns the number of rows affected (0 if no matching link existed).
+pub async fn delete_oauth_account(
+    db: &SqlitePool,
+    user_id: &str,
+    provider: &str,
+) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM oauth_accounts
+        WHERE user_id = ? AND provider = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(provider)
+    .execute(db)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
+/// Counts the number of OAuth accounts linked to the given user.
+pub async fn count_oauth_accounts_by_user(
+    db: &SqlitePool,
+    user_id: &str,
+) -> anyhow::Result<i64> {
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(*) AS count
+        FROM oauth_accounts
+        WHERE user_id = ?
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+
+    Ok(row.get("count"))
+}
+
 pub async fn create_oauth_account(
     db: &SqlitePool,
     user_id: &str,
