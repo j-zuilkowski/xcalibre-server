@@ -14,27 +14,45 @@
 //! include the correct MIME type for each format.
 
 use crate::{
+    api::opds_enhancements,
     db::queries::{books as book_queries, opds as opds_queries},
+    middleware::auth::require_auth,
     AppError, AppState,
 };
 use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderValue},
+    middleware,
     response::Response,
     routing::get,
     Router,
 };
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use serde::Deserialize;
 use std::fmt::Write as _;
 
 pub fn router(state: AppState) -> Router<AppState> {
+    // Auth-required routes
+    let auth = Router::new()
+        .route("/cover/{book_id}", get(opds_enhancements::opds_cover_handler))
+        .route("/cover/{book_id}/thumb", get(opds_enhancements::opds_cover_thumb))
+        .route("/cover/{book_id}/large", get(opds_enhancements::opds_cover_large))
+        .route("/osd", get(opds_enhancements::opds_osd_handler))
+        .route("/search/{query}", get(opds_enhancements::opds_search_path))
+        .route("/new", get(opds_enhancements::opds_new_handler))
+        .route("/hot", get(opds_enhancements::opds_hot_handler))
+        .route("/stats", get(opds_enhancements::opds_stats_handler))
+        .route("/discover", get(opds_enhancements::opds_discover_handler))
+        .route("/authors/letter/{ch}", get(opds_enhancements::opds_authors_letter_handler))
+        .route("/series/letter/{ch}", get(opds_enhancements::opds_series_letter_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
+        .with_state(state.clone());
+
     Router::new()
         .route("/", get(root_catalog))
         .route("/catalog", get(all_books))
         .route("/search", get(search))
-        .route("/new", get(recently_added))
         .route("/authors", get(authors_feed))
         .route("/authors/:id", get(author_books_feed))
         .route("/series", get(series_feed))
@@ -45,6 +63,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/languages/:lang_code", get(language_books_feed))
         .route("/ratings", get(ratings_feed))
         .route("/ratings/:rating", get(rating_books_feed))
+        .route("/public-cover/{book_id}", get(opds_enhancements::opds_cover_handler))
+        .merge(auth)
         .with_state(state)
 }
 
@@ -496,24 +516,7 @@ async fn search(
     Ok(xml_response(xml))
 }
 
-async fn recently_added(State(state): State<AppState>) -> Result<Response, AppError> {
-    let since = (Utc::now() - Duration::days(30)).to_rfc3339();
-    let params = book_queries::ListBooksParams {
-        since: Some(since.clone()),
-        sort: Some("added".to_string()),
-        order: Some("desc".to_string()),
-        page: 1,
-        page_size: 30,
-        publisher: None,
-        rating_bucket: None,
-        ..Default::default()
-    };
-    let extra_params = vec![("since", since)];
-    let xml = build_book_feed(&state, "Recently Added", "/opds/new", params, &extra_params).await?;
-    Ok(xml_response(xml))
-}
-
-async fn build_book_feed(
+pub(super) async fn build_book_feed(
     state: &AppState,
     title: &str,
     self_path: &str,
@@ -550,7 +553,7 @@ async fn build_book_feed(
 }
 
 /// Wraps an XML string in an Axum response with the correct OPDS/Atom content-type header.
-fn xml_response(xml: String) -> Response {
+pub(super) fn xml_response(xml: String) -> Response {
     let mut response = Response::new(Body::from(xml));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -559,7 +562,7 @@ fn xml_response(xml: String) -> Response {
     response
 }
 
-fn push_feed_header(xml: &mut String, title: &str, self_path: &str, kind: &str) {
+pub(super) fn push_feed_header(xml: &mut String, title: &str, self_path: &str, kind: &str) {
     let _ = write!(
         xml,
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -578,11 +581,11 @@ fn push_feed_header(xml: &mut String, title: &str, self_path: &str, kind: &str) 
     );
 }
 
-fn push_feed_footer(xml: &mut String) {
+pub(super) fn push_feed_footer(xml: &mut String) {
     xml.push_str("</feed>\n");
 }
 
-fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &str, kind: &str) {
+pub(super) fn push_navigation_entry(xml: &mut String, title: &str, href: &str, summary: &str, kind: &str) {
     let _ = write!(
         xml,
         r#"  <entry>
@@ -643,7 +646,7 @@ fn build_page_href(
     href
 }
 
-fn push_opensearch_stats(xml: &mut String, total_results: i64, items_per_page: i64) {
+pub(super) fn push_opensearch_stats(xml: &mut String, total_results: i64, items_per_page: i64) {
     let _ = writeln!(
         xml,
         "  <opensearch:totalResults>{total_results}</opensearch:totalResults>"
@@ -654,7 +657,7 @@ fn push_opensearch_stats(xml: &mut String, total_results: i64, items_per_page: i
     );
 }
 
-fn pluralize(word: &str, count: i64) -> String {
+pub(super) fn pluralize(word: &str, count: i64) -> String {
     if count == 1 {
         word.to_string()
     } else {
@@ -730,7 +733,7 @@ fn acquisition_type_for_format(format: &str) -> &'static str {
 
 /// Escapes the five XML special characters (`&`, `<`, `>`, `"`, `'`) to prevent
 /// malformed Atom output when book titles or descriptions contain them.
-fn xml_escape(value: &str) -> String {
+pub(super) fn xml_escape(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {

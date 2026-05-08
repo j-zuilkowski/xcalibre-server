@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+use axum::http::HeaderValue;
 use axum_test::TestServer;
 use backend::{
     app,
@@ -113,7 +114,10 @@ impl TestContext {
     }
 
     pub async fn admin_token(&self) -> String {
-        let (user, password) = self.create_admin().await;
+        let user_id = Uuid::new_v4().to_string();
+        let password = "Test1234!".to_string();
+        self.seed_role("admin").await;
+        let user = self.insert_user(&format!("admin-{user_id}"), &format!("admin-{user_id}@example.com"), "admin", &password).await;
         self.login(&user.username, &password).await.access_token
     }
 
@@ -123,6 +127,21 @@ impl TestContext {
         let unique = Uuid::new_v4().to_string().replace('-', "")[..12].to_string();
         let user = self.insert_user(&format!("user-{unique}"), &format!("user-{unique}@example.com"), "user", &password).await;
         self.login(&user.username, &password).await.access_token
+    }
+
+    /// Returns a JWT access token as a `HeaderValue` for OPDS Basic Auth.
+    pub async fn opds_basic_auth_header(&self) -> HeaderValue {
+        let token = self.admin_token().await;
+        HeaderValue::from_str(&format!("Bearer {token}")).expect("valid bearer header")
+    }
+
+    /// Returns the user ID of a freshly-created admin user.
+    pub async fn admin_user_id(&self) -> String {
+        let id = Uuid::new_v4().to_string();
+        let password = "Test1234!".to_string();
+        self.seed_role("admin").await;
+        let user = self.insert_user(&format!("admin-{id}"), &format!("admin-{id}@example.com"), "admin", &password).await;
+        user.id
     }
 
     pub fn jwt_secret(&self) -> &'static str {

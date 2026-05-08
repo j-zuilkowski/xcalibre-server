@@ -1,4 +1,5 @@
 use crate::{
+    api::opds_cover_cache::OpdsCoverCache,
     config::AppConfig,
     db::queries::libraries as library_queries,
     llm::{chat::ChatClient, embeddings::EmbeddingClient},
@@ -18,6 +19,7 @@ pub struct AppState {
     pub semantic_search: Option<Arc<crate::search::semantic::SemanticSearch>>,
     pub chat_client: Option<ChatClient>,
     pub http_client: reqwest::Client,
+    pub opds_cover_cache: OpdsCoverCache,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
             None
         };
         let chat_client = ChatClient::new(&config);
+        let opds_cover_cache = OpdsCoverCache::new(200);
 
         metrics::set_db_pool_size(db.size() as u64);
         if let Err(err) = metrics::refresh_database_size_metrics(&db).await {
@@ -76,6 +79,7 @@ impl AppState {
             semantic_search,
             chat_client,
             http_client,
+            opds_cover_cache,
         })
     }
 }

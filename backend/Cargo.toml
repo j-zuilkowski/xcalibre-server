@@ -35,6 +35,7 @@ libc = "0.2"
 image = { version = "0.25", features = ["jpeg", "png", "webp", "gif"] }
 jsonwebtoken = "9"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
+lru = "0.18.0"
 meilisearch-sdk = { version = "0.33.0", default-features = false, features = ["reqwest"], optional = true }
 mime = "0.3"
 mime_guess = "2"
@@ -44,7 +45,7 @@ ipnet = "2"
 rand = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "multipart", "rustls"] }
 aws-smithy-http-client = { version = "1.1.12", default-features = false, features = ["s2n-tls"] }
-sqlite-vec = { version = "0.1", optional = true } # SQLite extension, loaded at runtime
+sqlite-vec = { version = "0.1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
@@ -65,6 +66,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 ldap3 = { version = "0.12.1", default-features = false, features = ["tls-rustls-aws-lc-rs"] }
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
+unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4", "serde", "fast-rng"] }
 validator = { version = "0.20", features = ["derive"] }
 roxmltree = "0.20"

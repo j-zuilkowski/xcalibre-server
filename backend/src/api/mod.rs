@@ -35,6 +35,8 @@ pub mod llm;
 pub mod magic_link;
 pub mod memory;
 pub mod opds;
+pub mod opds_enhancements;
+pub mod opds_cover_cache;
 pub mod search;
 pub mod shelves;
 pub mod users;
