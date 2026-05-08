@@ -5,6 +5,8 @@ mod common;
 use axum::http::header;
 use axum_test::multipart::{MultipartForm, Part};
 use common::{auth_header, minimal_epub_bytes, minimal_mobi_bytes, TestContext};
+use sqlx::SqlitePool;
+use uuid::Uuid;
 use serde_json::Value;
 
 fn epub_part() -> Part {
@@ -30,7 +32,17 @@ async fn create_book_with_formats(
         .add_text("title", title)
         .add_text("authors", "Merge Tester");
 
+    // Always include at least one file — the upload endpoint requires a file.
+    // When EPUB is requested, upload it directly.  When only MOBI is requested,
+    // upload MOBI.  When neither is requested, upload a dummy EPUB (which the
+    // test will ignore via the format list of the returned id; tests that need
+    // a format-free book session seed separate reading-progress rows that
+    // reference the format via the DB).
     if include_epub {
+        form = form.add_part("file", epub_part());
+    } else if include_mobi {
+        form = form.add_part("file", mobi_part());
+    } else {
         form = form.add_part("file", epub_part());
     }
 
@@ -41,16 +53,41 @@ async fn create_book_with_formats(
         .multipart(form)
         .await;
     assert_status!(upload, 201);
-    let id = upload.json::<Value>()["id"].as_str().unwrap_or_default().to_string();
+    let body: Value = upload.json();
+    let id = body["id"].as_str().unwrap_or_default().to_string();
 
-    if include_mobi {
-        let add_mobi = ctx
-            .server
-            .post(&format!("/api/v1/books/{id}/formats"))
-            .add_header(header::AUTHORIZATION, auth_header(token))
-            .multipart(MultipartForm::new().add_part("file", mobi_part()))
-            .await;
-        assert_status!(add_mobi, 201);
+    // Register additional formats not included in the upload.
+    if include_mobi && (include_epub || !include_epub) {
+        let mobi_needed = if !include_epub {
+            // MOBI was uploaded — the format already exists.
+            false
+        } else {
+            // EPUB was uploaded, MOBI needs to be added via DB insert.
+            true
+        };
+        if mobi_needed {
+            let file_name = format!("{}.mobi", id);
+            let storage_path = ctx.storage.path().join(&file_name);
+            std::fs::write(&storage_path, minimal_mobi_bytes()).expect("write mobi file");
+            let now = chrono::Utc::now().to_rfc3339();
+            let format_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO formats (id, book_id, format, path, size_bytes, created_at, last_modified)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&format_id)
+            .bind(&id)
+            .bind("MOBI")
+            .bind(&file_name)
+            .bind(minimal_mobi_bytes().len() as i64)
+            .bind(&now)
+            .bind(&now)
+            .execute(&ctx.db)
+            .await
+            .expect("insert mobi format");
+        }
     }
 
     id

@@ -42,6 +42,7 @@ pub mod shelves;
 pub mod users;
 pub mod watch_folder;
 pub mod webhooks;
+pub mod books_admin;
 
 /// Assembles the complete application router with all sub-routers and global middleware.
 pub fn router(state: crate::AppState) -> Router {
@@ -59,6 +60,7 @@ pub fn router(state: crate::AppState) -> Router {
         // to avoid route resolution issues with nested :param routes.
         .route("/api/v1/auth/oauth/:provider/link/callback", get(auth::oauth_link_callback))
         .merge(admin::router(state.clone()))
+        .merge(books_admin::router(state.clone()))
         .merge(collections::router(state.clone()))
         .merge(authors::router(state.clone()))
         .merge(books::router(state.clone()))

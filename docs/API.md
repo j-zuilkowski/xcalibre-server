@@ -1186,25 +1186,59 @@ ApiError    // email not configured
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| POST | `/admin/books/merge` | Yes | Admin | Merge source book into target |
+| POST | `/admin/books/merge/preview` | Yes | Admin | Dry-run analysis of a merge — what would move, conflict, and relink |
+| POST | `/admin/books/merge` | Yes | Admin | Execute a merge of source book into target |
+
+#### `POST /admin/books/merge/preview`
+```typescript
+// Request
+{
+  source_id: string          // book to absorb
+  target_id: string          // book to keep
+}
+
+// Response 200
+{
+  formats_to_move: string[]      // formats only on source, will be reassigned to target
+  formats_conflict: string[]     // formats present on both books
+  annotations_to_move: number    // how many source annotations will be reparented
+  shelves_to_relink: string[]    // shelf names that contain the source book
+  reading_progress_strategy: string  // echoed from request, defaults to "keep_target"
+}
+
+// Response 400 — source_id == target_id
+// Response 404 — either book not found
+```
 
 #### `POST /admin/books/merge`
 ```typescript
 // Request
 {
-  target_id: string          // book to keep
-  source_id: string          // book to absorb and delete
-  fields?: {
-    title?: boolean          // overwrite target title from source?
-    description?: boolean
-    tags?: boolean           // merge tag sets
-    identifiers?: boolean    // merge identifiers
-  }
+  source_id: string                     // book to absorb and delete
+  target_id: string                     // book to keep
+  reading_progress_strategy?: string    // "keep_target" (default), "keep_source", or "merge_max"
+  force?: boolean                       // default false; when true, overwrites target's conflicting formats
 }
 
 // Response 200
-Book                         // updated target book
+{
+  merged: boolean
+  target_id: string
+  source_id: string
+}
+
+// Response 400 — source_id == target_id, or invalid strategy
+// Response 404 — either book not found
+// Response 409 — format conflict exists and force != true
 ```
+
+**Reading progress strategy behavior:**
+- `keep_target` — target's progress is preserved; source's is copied only if target has no progress for that user
+- `keep_source` — source's progress overwrites target's
+- `merge_max` — the higher percentage of the two is kept
+
+**`force` conflict behavior:**
+When both books have the same format (e.g. both have EPUB), merging without `force: true` returns 409. With `force: true`, the target's conflicting format is dropped and the source's format replaces it. Format files on disk are renamed accordingly. All other merge operations (annotations, shelves, reading progress) proceed normally.
 
 ---
 
