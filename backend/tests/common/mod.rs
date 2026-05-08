@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::{
+    cell::RefCell,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -32,6 +33,9 @@ pub struct TestContext {
     pub storage: TempDir,
     pub server: TestServer,
     pub state: AppState,
+    /// Tracks the most recently created user ID for provider-linking helpers.
+    /// Uses `RefCell` for interior mutability since helper methods take `&self`.
+    pub last_user_id: RefCell<Option<String>>,
 }
 
 pub async fn test_db() -> SqlitePool {
@@ -72,6 +76,7 @@ impl TestContext {
             storage,
             server,
             state,
+            last_user_id: RefCell::new(None),
         }
     }
 
@@ -116,11 +121,16 @@ impl TestContext {
         response.json::<LoginResult>()
     }
 
+    fn set_last_user_id(&self, id: String) {
+        *self.last_user_id.borrow_mut() = Some(id);
+    }
+
     pub async fn admin_token(&self) -> String {
         let user_id = Uuid::new_v4().to_string();
         let password = "Test1234!".to_string();
         self.seed_role("admin").await;
         let user = self.insert_user(&format!("admin-{user_id}"), &format!("admin-{user_id}@example.com"), "admin", &password).await;
+        self.set_last_user_id(user.id.clone());
         self.login(&user.username, &password).await.access_token
     }
 
@@ -129,12 +139,14 @@ impl TestContext {
         let password = "Test1234!".to_string();
         let unique = Uuid::new_v4().to_string().replace('-', "")[..12].to_string();
         let user = self.insert_user(&format!("user-{unique}"), &format!("user-{unique}@example.com"), "user", &password).await;
+        self.set_last_user_id(user.id.clone());
         self.login(&user.username, &password).await.access_token
     }
 
     /// Creates a new user with the given email and returns just the access token.
     pub async fn create_user_and_token(&self, email: &str) -> String {
-        let (_, password) = self.create_user_with_email(email).await;
+        let (user, password) = self.create_user_with_email(email).await;
+        self.set_last_user_id(user.id.clone());
         let username = email.split('@').next().unwrap_or("user").to_string();
         self.login(&username, &password).await.access_token
     }
@@ -151,11 +163,132 @@ impl TestContext {
         let password = "Test1234!".to_string();
         self.seed_role("admin").await;
         let user = self.insert_user(&format!("admin-{id}"), &format!("admin-{id}@example.com"), "admin", &password).await;
+        self.set_last_user_id(user.id.clone());
         user.id
     }
 
     pub fn jwt_secret(&self) -> &'static str {
         TEST_JWT_SECRET
+    }
+
+    /// Inserts an `oauth_accounts` row for the most recently created user.
+    pub async fn link_oauth_for_current_user(&self, provider: &str, provider_account_id: &str) {
+        let user_id = self.last_user_id.borrow().clone().expect("no user created yet — call user_token() or create_user first");
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(&user_id)
+        .bind(provider)
+        .bind(provider_account_id)
+        .bind("test@example.com")
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert oauth account");
+    }
+
+    /// Inserts an `oauth_accounts` row for a different user (not the current one).
+    pub async fn link_oauth_for_other_user(&self, provider: &str, provider_account_id: &str) {
+        let now = Utc::now().to_rfc3339();
+        let other_id = Uuid::new_v4().to_string();
+        let other_user_id = Uuid::new_v4().to_string();
+        let password_hash = hash_password("Other1234!");
+        self.seed_role("user").await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, email, password_hash, role_id, is_active, force_pw_reset, created_at, last_modified)
+            VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
+            "#,
+        )
+        .bind(&other_user_id)
+        .bind("other-user")
+        .bind("other@example.com")
+        .bind(&password_hash)
+        .bind("user")
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert other user");
+
+        sqlx::query(
+            r#"
+            INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&other_id)
+        .bind(&other_user_id)
+        .bind(provider)
+        .bind(provider_account_id)
+        .bind("other@example.com")
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert oauth account for other user");
+    }
+
+    /// Creates a user with an empty password hash (oauth-only) and links a provider.
+    /// Returns the access token for this user.
+    pub async fn create_oauth_only_user_and_token(
+        &self,
+        email: &str,
+        provider: &str,
+        provider_account_id: &str,
+    ) -> String {
+        let now = Utc::now().to_rfc3339();
+        let user_id = Uuid::new_v4().to_string();
+        let oauth_id = Uuid::new_v4().to_string();
+        let username = email.split('@').next().unwrap_or("oauth-user");
+        self.seed_role("user").await;
+
+        // Insert user with empty password hash — indicates oauth-only user.
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, username, email, password_hash, role_id, is_active, force_pw_reset, created_at, last_modified)
+            VALUES (?, ?, ?, '', ?, 1, 0, ?, ?)
+            "#,
+        )
+        .bind(&user_id)
+        .bind(username)
+        .bind(email)
+        .bind("user")
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert oauth-only user");
+
+        // Link the provider account.
+        sqlx::query(
+            r#"
+            INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&oauth_id)
+        .bind(&user_id)
+        .bind(provider)
+        .bind(provider_account_id)
+        .bind(email)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert oauth account");
+
+        // Track this as the last user for subsequent helpers.
+        self.set_last_user_id(user_id.clone());
+
+        // Issue a JWT directly using the test secret.
+        backend::middleware::auth::issue_access_token(&user_id, TEST_JWT_SECRET, 15)
+            .expect("issue test token")
     }
 
     pub async fn create_book(&self, title: &str, author: &str) -> Book {
