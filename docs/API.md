@@ -1009,6 +1009,30 @@ Mounted at `/kobo/:token/` where `:token` is a long-lived API token. All paths m
 
 Kobo reading state is synced to `reading_progress.percentage`. `format_id` on the canonical progress record is never overwritten by a Kobo sync.
 
+#### Mock Store Endpoints
+These endpoints return minimal static JSON responses for Kobo firmware compatibility during store handshake. They do not interact with a real store.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/kobo/:token/v1/products/books/prices` | Returns `{"Result":"Success","Data":[]}` |
+| GET | `/kobo/:token/v1/products/books/recommendations` | Returns `{"Result":"Success","Data":[]}` |
+| GET | `/kobo/:token/v1/products/dailydeal` | Returns `{"Result":"Success","Data":[]}` |
+| POST | `/kobo/:token/v1/analytics/gettests` | Returns `{"Result":"Success"}` |
+| GET | `/kobo/:token/v1/deals` | Returns `{"Result":"Success","Data":[]}` |
+| POST | `/kobo/:token/v1/affiliate` | Returns `{"Result":"Success"}` |
+| GET | `/kobo/:token/v1/user/loyalty/benefits` | Returns `{"Result":"Success","Data":[]}` |
+| GET | `/kobo/:token/v1/user/recommendations` | Returns `{"Result":"Success","Data":[]}` |
+| GET | `/kobo/:token/v1/user/wishlist` | Returns `{"Result":"Success","Data":[]}` |
+| POST | `/kobo/:token/v1/user/wishlist/items` | Returns `{"Result":"Success"}` |
+| DELETE | `/kobo/:token/v1/user/wishlist/items/:item_id` | Returns `{"Result":"Success"}` |
+| GET | `/kobo/:token/v1/products/books/:product_id` | Returns `{"Result":"Success","Data":[]}` |
+
+#### Image Route
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/kobo/:token/v1/images/:book_uuid/:width/:height/:quality/:greyscale/image.jpg` | Serves book cover resized to requested dimensions, or 1×1 white JPEG placeholder when UUID is unknown or cover is missing. |
+
 ---
 
 ### OPDS Catalog
