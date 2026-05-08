@@ -73,6 +73,25 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
+/// Controls the Content-Disposition header value for file serving.
+enum ContentDispositionMode {
+    Attachment,
+    Inline,
+}
+
+impl ContentDispositionMode {
+    fn header_value(&self, file_name: &str) -> String {
+        match self {
+            ContentDispositionMode::Attachment => {
+                format!("attachment; filename=\"{file_name}\"")
+            }
+            ContentDispositionMode::Inline => {
+                format!("inline; filename=\"{file_name}\"")
+            }
+        }
+    }
+}
+
 /// Assembles the books sub-router and attaches the JWT auth middleware to all routes.
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_layer =
@@ -153,6 +172,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/books/:id/formats/:format/to-epub",
             get(mobi_to_epub),
+        )
+        .route(
+            "/api/v1/books/:id/view/:format",
+            get(view_format),
         )
         .route_layer(auth_layer)
 }
@@ -264,7 +287,7 @@ pub(crate) struct ApplyMetadataBody {
     cover_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Default)]
 pub(crate) struct GetChunksQuery {
     #[serde(default)]
     size: Option<usize>,
@@ -2049,6 +2072,48 @@ pub(crate) async fn delete_book(
     ))
 }
 
+/// Shared file streaming logic for both download (attachment) and view (inline) routes.
+/// Requires `can_download` permission and validates the format exists for the book.
+async fn stream_book_format(
+    state: &AppState,
+    auth: &AuthenticatedUser,
+    book_id: &str,
+    format: &str,
+    request: Request<Body>,
+    disposition: ContentDispositionMode,
+) -> Result<axum::response::Response, AppError> {
+    ensure_download_permission(state, &auth.user.id).await?;
+    let _ = load_book_or_not_found(
+        &state.db,
+        book_id,
+        accessible_library_id(&auth.user),
+        Some(auth.user.id.as_str()),
+    )
+    .await?;
+
+    let format_file = book_queries::find_format_file(&state.db, book_id, format)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+    let file_extension = validated_download_format_extension(&format_file.format)?;
+    let content_type = mime_guess::from_ext(&file_extension)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
+
+    let file_name = format!("{}.{}", book_id, file_extension);
+    let disposition_value = disposition.header_value(&file_name);
+
+    serve_storage_file(
+        state,
+        request,
+        &format_file.path,
+        Some(content_type.as_str()),
+        Some(disposition_value.as_str()),
+    )
+    .await
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/books/{id}/formats/{format}/download",
@@ -2076,35 +2141,21 @@ pub(crate) async fn download_format(
     Path((book_id, format)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Result<axum::response::Response, AppError> {
-    ensure_download_permission(&state, &auth_user.user.id).await?;
-    let _ = load_book_or_not_found(
-        &state.db,
+    let response = stream_book_format(
+        &state,
+        &auth_user,
         &book_id,
-        accessible_library_id(&auth_user.user),
-        Some(auth_user.user.id.as_str()),
+        &format,
+        request,
+        ContentDispositionMode::Attachment,
     )
     .await?;
 
+    // Record download history
     let format_file = book_queries::find_format_file(&state.db, &book_id, &format)
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::NotFound)?;
-    let file_extension = validated_download_format_extension(&format_file.format)?;
-    let download_content_type = mime_guess::from_ext(&file_extension)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string();
-
-    let file_name = format!("{}.{}", book_id, file_extension);
-    let disposition = format!("attachment; filename=\"{file_name}\"");
-    let response = serve_storage_file(
-        &state,
-        request,
-        &format_file.path,
-        Some(download_content_type.as_str()),
-        Some(disposition.as_str()),
-    )
-    .await?;
 
     let db = state.db.clone();
     let history_user_id = auth_user.user.id.clone();
@@ -2130,6 +2181,25 @@ pub(crate) async fn download_format(
     });
 
     Ok(response)
+}
+
+/// Serves a book format file inline (for browser reading/streaming); requires `can_download` permission.
+/// Uses `Content-Disposition: inline` so browsers render the file directly rather than downloading it.
+pub(crate) async fn view_format(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((book_id, format)): Path<(String, String)>,
+    request: Request<Body>,
+) -> Result<axum::response::Response, AppError> {
+    stream_book_format(
+        &state,
+        &auth_user,
+        &book_id,
+        &format,
+        request,
+        ContentDispositionMode::Inline,
+    )
+    .await
 }
 
 /// Serves a book format for inline streaming (e.g. audio/ebook reader); requires `can_download`.

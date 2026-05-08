@@ -302,3 +302,51 @@ fn row_to_shelf_record(row: sqlx::sqlite::SqliteRow) -> anyhow::Result<ShelfReco
         book_count: 0,
     })
 }
+
+/// Reorders books on a shelf by updating `display_order` for each book_id in the given order.
+/// Runs inside a transaction so that all updates are applied atomically.
+pub async fn reorder_shelf_books(
+    db: &SqlitePool,
+    shelf_id: &str,
+    book_ids: &[String],
+) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+    for (idx, book_id) in book_ids.iter().enumerate() {
+        let order = idx as i64;
+        sqlx::query(
+            r#"
+            UPDATE shelf_books
+            SET display_order = ?
+            WHERE shelf_id = ? AND book_id = ?
+            "#,
+        )
+        .bind(order)
+        .bind(shelf_id)
+        .bind(book_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Returns the list of book_ids currently on the shelf, ordered by display_order.
+pub async fn get_shelf_book_ids(
+    db: &SqlitePool,
+    shelf_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT book_id
+        FROM shelf_books
+        WHERE shelf_id = ?
+        ORDER BY display_order ASC, added_at ASC, book_id ASC
+        "#,
+    )
+    .bind(shelf_id)
+    .fetch_all(db)
+    .await?;
+
+    let ids: Vec<String> = rows.into_iter().map(|row| row.get("book_id")).collect();
+    Ok(ids)
+}

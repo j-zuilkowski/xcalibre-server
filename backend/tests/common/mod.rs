@@ -132,6 +132,13 @@ impl TestContext {
         self.login(&user.username, &password).await.access_token
     }
 
+    /// Creates a new user with the given email and returns just the access token.
+    pub async fn create_user_and_token(&self, email: &str) -> String {
+        let (_, password) = self.create_user_with_email(email).await;
+        let username = email.split('@').next().unwrap_or("user").to_string();
+        self.login(&username, &password).await.access_token
+    }
+
     /// Returns a JWT access token as a `HeaderValue` for OPDS Basic Auth.
     pub async fn opds_basic_auth_header(&self) -> HeaderValue {
         let token = self.admin_token().await;

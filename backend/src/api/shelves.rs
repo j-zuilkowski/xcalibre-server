@@ -5,8 +5,8 @@
 //! A shelf is owned by one user. Read operations (`get_shelf`, `list_shelf_books`) use
 //! `ensure_visible` — public shelves are readable by any authenticated user, while private
 //! shelves return 404 for non-owners (not 403, to avoid leaking existence). Write operations
-//! (`delete_shelf`, `add_book_to_shelf`, `remove_book_from_shelf`) use `ensure_owner`
-//! which strictly enforces ownership.
+//! (`delete_shelf`, `add_book_to_shelf`, `remove_book_from_shelf`, `put_shelf_order`) use
+//! `ensure_owner` which strictly enforces ownership.
 //!
 //! Adding a book to a shelf validates that the book is accessible in the caller's library
 //! before insertion; duplicate inserts return 409 Conflict.
@@ -19,10 +19,10 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     middleware,
-    routing::{delete, get},
+    routing::{get, post, put},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -33,12 +33,16 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/shelves", get(list_shelves).post(create_shelf))
         .route("/api/v1/shelves/:id", get(get_shelf).delete(delete_shelf))
         .route(
+            "/api/v1/shelves/:id/order",
+            put(put_shelf_order),
+        )
+        .route(
             "/api/v1/shelves/:id/books",
             get(list_shelf_books).post(add_book_to_shelf),
         )
         .route(
             "/api/v1/shelves/:id/books/:book_id",
-            delete(remove_book_from_shelf),
+            post(add_book_to_shelf_by_path).delete(remove_book_from_shelf),
         )
         .route_layer(auth_layer)
 }
@@ -59,6 +63,18 @@ pub(crate) struct CreateShelfRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct AddBookRequest {
     book_id: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ReorderRequest {
+    book_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ShelfDetail {
+    #[serde(flatten)]
+    shelf: crate::db::models::Shelf,
+    books: Vec<crate::db::queries::books::BookSummary>,
 }
 
 #[derive(Debug, serde::Serialize, ToSchema)]
@@ -135,7 +151,7 @@ pub(crate) async fn create_shelf(
         ("id" = String, Path, description = "Shelf id")
     ),
     responses(
-        (status = 200, description = "Shelf details", body = crate::db::models::Shelf),
+        (status = 200, description = "Shelf details with books"),
         (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
         (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
@@ -148,7 +164,7 @@ pub(crate) async fn get_shelf(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthenticatedUser>,
     Path(shelf_id): Path<String>,
-) -> Result<Json<crate::db::models::Shelf>, AppError> {
+) -> Result<Json<ShelfDetail>, AppError> {
     ensure_visible(&state, &auth_user.user.id, &shelf_id).await?;
 
     let shelves = shelf_queries::list_shelves(&state.db, &auth_user.user.id)
@@ -159,7 +175,87 @@ pub(crate) async fn get_shelf(
         .find(|item| item.id == shelf_id)
         .ok_or(AppError::NotFound)?;
 
-    Ok(Json(shelf))
+    let book_ids = shelf_queries::get_shelf_book_ids(&state.db, &shelf_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let books = if book_ids.is_empty() {
+        Vec::new()
+    } else {
+        crate::db::queries::books::list_book_summaries_by_ids(
+            &state.db,
+            &book_ids,
+            Some(auth_user.user.default_library_id.as_str()),
+            Some(auth_user.user.id.as_str()),
+        )
+        .await
+        .map_err(|_| AppError::Internal)?
+    };
+
+    Ok(Json(ShelfDetail { shelf, books }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/v1/shelves/{id}/order",
+    tag = "shelves",
+    security(("bearer_auth" = [])),
+    params(
+        ("id" = String, Path, description = "Shelf id")
+    ),
+    request_body = ReorderRequest,
+    responses(
+        (status = 200, description = "Books reordered"),
+        (status = 400, description = "Bad request", body = crate::error::AppErrorResponse),
+        (status = 401, description = "Unauthorized", body = crate::error::AppErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::error::AppErrorResponse),
+        (status = 404, description = "Not found", body = crate::error::AppErrorResponse),
+        (status = 422, description = "Unprocessable", body = crate::error::AppErrorResponse),
+        (status = 429, description = "Rate limited", body = crate::error::AppErrorResponse)
+    )
+)]
+pub(crate) async fn put_shelf_order(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(shelf_id): Path<String>,
+    Json(payload): Json<ReorderRequest>,
+) -> Result<StatusCode, AppError> {
+    ensure_owner(&state, &auth_user.user.id, &shelf_id).await?;
+
+    // Validate that all book_ids in the request belong to the shelf and that
+    // every shelf member is included in the request.
+    let current_ids = shelf_queries::get_shelf_book_ids(&state.db, &shelf_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    if current_ids.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+
+    // Check for unknown ids (ids in request that are not on shelf)
+    for bid in &payload.book_ids {
+        if !current_ids.contains(bid) {
+            return Err(AppError::BadRequest);
+        }
+    }
+
+    // Check for missing ids (ids on shelf not in request)
+    for cid in &current_ids {
+        if !payload.book_ids.contains(cid) {
+            return Err(AppError::BadRequest);
+        }
+    }
+
+    // Ensure lengths match (extra safety)
+    if payload.book_ids.len() != current_ids.len() {
+        return Err(AppError::BadRequest);
+    }
+
+    shelf_queries::reorder_shelf_books(&state.db, &shelf_id, &payload.book_ids)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn delete_shelf(
@@ -211,6 +307,30 @@ pub(crate) async fn add_book_to_shelf(
     )
     .await?;
     let added = shelf_queries::add_book_to_shelf(&state.db, &shelf_id, &payload.book_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !added {
+        return Err(AppError::Conflict);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Adds a book to a shelf via path params instead of JSON body.
+/// Route: POST /api/v1/shelves/:shelf_id/books/:book_id
+async fn add_book_to_shelf_by_path(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path((shelf_id, book_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    ensure_owner(&state, &auth_user.user.id, &shelf_id).await?;
+    let _ = crate::api::books::load_book_or_not_found(
+        &state.db,
+        &book_id,
+        accessible_library_id(&auth_user.user),
+        Some(auth_user.user.id.as_str()),
+    )
+    .await?;
+    let added = shelf_queries::add_book_to_shelf(&state.db, &shelf_id, &book_id)
         .await
         .map_err(|_| AppError::Internal)?;
     if !added {
