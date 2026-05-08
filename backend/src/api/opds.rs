@@ -16,14 +16,12 @@
 use crate::{
     api::opds_enhancements,
     db::queries::{books as book_queries, opds as opds_queries},
-    middleware::auth::require_auth,
     AppError, AppState,
 };
 use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderValue},
-    middleware,
     response::Response,
     routing::get,
     Router,
@@ -33,22 +31,6 @@ use serde::Deserialize;
 use std::fmt::Write as _;
 
 pub fn router(state: AppState) -> Router<AppState> {
-    // Auth-required routes
-    let auth = Router::new()
-        .route("/cover/{book_id}", get(opds_enhancements::opds_cover_handler))
-        .route("/cover/{book_id}/thumb", get(opds_enhancements::opds_cover_thumb))
-        .route("/cover/{book_id}/large", get(opds_enhancements::opds_cover_large))
-        .route("/osd", get(opds_enhancements::opds_osd_handler))
-        .route("/search/{query}", get(opds_enhancements::opds_search_path))
-        .route("/new", get(opds_enhancements::opds_new_handler))
-        .route("/hot", get(opds_enhancements::opds_hot_handler))
-        .route("/stats", get(opds_enhancements::opds_stats_handler))
-        .route("/discover", get(opds_enhancements::opds_discover_handler))
-        .route("/authors/letter/{ch}", get(opds_enhancements::opds_authors_letter_handler))
-        .route("/series/letter/{ch}", get(opds_enhancements::opds_series_letter_handler))
-        .layer(middleware::from_fn_with_state(state.clone(), require_auth))
-        .with_state(state.clone());
-
     Router::new()
         .route("/", get(root_catalog))
         .route("/catalog", get(all_books))
@@ -63,8 +45,19 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/languages/:lang_code", get(language_books_feed))
         .route("/ratings", get(ratings_feed))
         .route("/ratings/:rating", get(rating_books_feed))
-        .route("/public-cover/{book_id}", get(opds_enhancements::opds_cover_handler))
-        .merge(auth)
+        .route("/public-cover/:book_id", get(opds_enhancements::opds_cover_handler))
+        // Phase 23b enhancement routes (auth validated in handlers)
+        .route("/cover/:book_id", get(opds_enhancements::opds_cover_handler))
+        .route("/cover/:book_id/thumb", get(opds_enhancements::opds_cover_thumb))
+        .route("/cover/:book_id/large", get(opds_enhancements::opds_cover_large))
+        .route("/osd", get(opds_enhancements::opds_osd_handler))
+        .route("/search/:query", get(opds_enhancements::opds_search_path))
+        .route("/new", get(opds_enhancements::opds_new_handler))
+        .route("/hot", get(opds_enhancements::opds_hot_handler))
+        .route("/stats", get(opds_enhancements::opds_stats_handler))
+        .route("/discover", get(opds_enhancements::opds_discover_handler))
+        .route("/authors/letter/:ch", get(opds_enhancements::opds_authors_letter_handler))
+        .route("/series/letter/:ch", get(opds_enhancements::opds_series_letter_handler))
         .with_state(state)
 }
 

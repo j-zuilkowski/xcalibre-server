@@ -3,12 +3,11 @@
 use crate::{
     api::opds_cover_cache::{CoverCacheKey, CoverVariant},
     db::queries::{books as book_queries},
-    middleware::auth::AuthenticatedUser,
     AppError, AppState,
 };
 use axum::{
     body::Body,
-    extract::{Extension, Path, State},
+    extract::{Path, State},
     http::{header, HeaderMap, HeaderValue},
     response::Response,
 };
@@ -18,6 +17,14 @@ use serde_json;
 use sqlx::Row;
 use std::fmt::Write as _;
 use unicode_normalization::UnicodeNormalization;
+
+/// Validates a Bearer token from the request headers.
+fn validate_opds_auth(headers: &HeaderMap, state: &AppState) -> Result<(), AppError> {
+    use crate::middleware::auth::{bearer_token, validate_access_token};
+    let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
+    let _claims = validate_access_token(token, &state.config.auth.jwt_secret)?;
+    Ok(())
+}
 
 fn wants_webp(headers: &HeaderMap) -> bool {
     headers
@@ -98,8 +105,8 @@ pub(super) async fn opds_cover_handler(
     State(state): State<AppState>,
     Path(book_id): Path<String>,
     headers: HeaderMap,
-    _user: Extension<AuthenticatedUser>,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     serve_cover(&state, &book_id, CoverVariant::Original, wants_webp(&headers)).await
 }
 
@@ -107,8 +114,8 @@ pub(super) async fn opds_cover_thumb(
     State(state): State<AppState>,
     Path(book_id): Path<String>,
     headers: HeaderMap,
-    _user: Extension<AuthenticatedUser>,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     serve_cover(&state, &book_id, CoverVariant::Thumb240, wants_webp(&headers)).await
 }
 
@@ -116,12 +123,16 @@ pub(super) async fn opds_cover_large(
     State(state): State<AppState>,
     Path(book_id): Path<String>,
     headers: HeaderMap,
-    _user: Extension<AuthenticatedUser>,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     serve_cover(&state, &book_id, CoverVariant::Large600, wants_webp(&headers)).await
 }
 
-pub(super) async fn opds_osd_handler(_user: Extension<AuthenticatedUser>) -> Result<Response, AppError> {
+pub(super) async fn opds_osd_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
   <ShortName>xcalibre OPDS</ShortName>
@@ -141,8 +152,9 @@ pub(super) async fn opds_osd_handler(_user: Extension<AuthenticatedUser>) -> Res
 pub(super) async fn opds_search_path(
     State(state): State<AppState>,
     Path(query): Path<String>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let q = query.trim().to_string();
     if q.is_empty() {
         return Err(AppError::BadRequest);
@@ -168,8 +180,9 @@ pub(super) async fn opds_search_path(
 
 pub(super) async fn opds_new_handler(
     State(state): State<AppState>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let params = crate::db::queries::books::ListBooksParams {
         sort: Some("added".to_string()),
         order: Some("desc".to_string()),
@@ -185,10 +198,11 @@ pub(super) async fn opds_new_handler(
 
 pub(super) async fn opds_hot_handler(
     State(state): State<AppState>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let books = sqlx::query(
-        "SELECT b.id, b.title, b.created_at FROM books b LEFT JOIN download_history dh ON dh.book_id = b.id GROUP BY b.id ORDER BY COUNT(dh.book_id) DESC, b.created_at DESC LIMIT 30",
+        "SELECT b.id, b.title, MAX(b.created_at) AS created_at FROM books b LEFT JOIN download_history dh ON dh.book_id = b.id GROUP BY b.id ORDER BY COUNT(dh.book_id) DESC, MAX(b.created_at) DESC LIMIT 30",
     )
     .fetch_all(&state.db)
     .await
@@ -216,8 +230,9 @@ pub(super) async fn opds_hot_handler(
 
 pub(super) async fn opds_stats_handler(
     State(state): State<AppState>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let row = sqlx::query(
         "SELECT (SELECT COUNT(*) FROM books) AS total_books, (SELECT COUNT(DISTINCT ba.author_id) FROM book_authors ba) AS total_authors, (SELECT COUNT(DISTINCT COALESCE(series_id, '')) FROM books WHERE series_id IS NOT NULL) AS total_series, (SELECT COUNT(DISTINCT bt.tag_id) FROM book_tags bt) AS total_tags, (SELECT COUNT(DISTINCT format) FROM formats) AS total_formats",
     )
@@ -243,8 +258,9 @@ pub(super) async fn opds_stats_handler(
 
 pub(super) async fn opds_discover_handler(
     State(state): State<AppState>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let shelves = sqlx::query("SELECT id, name FROM shelves WHERE is_public = 1 ORDER BY name ASC")
         .fetch_all(&state.db)
         .await
@@ -273,8 +289,9 @@ pub(super) async fn opds_discover_handler(
 pub(super) async fn opds_authors_letter_handler(
     State(state): State<AppState>,
     Path(ch): Path<String>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let letter = normalized_letter(&ch).unwrap_or_default();
     if letter.is_empty() {
         return Err(AppError::BadRequest);
@@ -313,8 +330,9 @@ pub(super) async fn opds_authors_letter_handler(
 pub(super) async fn opds_series_letter_handler(
     State(state): State<AppState>,
     Path(ch): Path<String>,
-    _user: Extension<AuthenticatedUser>,
+    headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    validate_opds_auth(&headers, &state)?;
     let letter = ch.to_ascii_uppercase();
     if letter.is_empty() {
         return Err(AppError::BadRequest);

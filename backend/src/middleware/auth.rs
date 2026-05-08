@@ -378,7 +378,7 @@ async fn authenticate_api_token(
     }))
 }
 
-fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+pub(crate) fn bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
     let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
     let (prefix, token) = value.split_once(' ')?;
     if prefix.eq_ignore_ascii_case("bearer") && !token.trim().is_empty() {
