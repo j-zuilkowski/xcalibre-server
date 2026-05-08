@@ -455,6 +455,131 @@ impl TestContext {
             last_modified: now,
         }
     }
+
+    /// Seeds a `book_annotations` row for the most recently created user and book.
+    pub async fn seed_annotation(&self, book_id: &str) {
+        let user_id = self
+            .last_user_id
+            .borrow()
+            .clone()
+            .expect("no user created yet");
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO book_annotations (id, user_id, book_id, type, cfi_range, highlighted_text, note, color, created_at, updated_at)
+            VALUES (?, ?, ?, 'highlight', 'epubcfi(/6/2[chap01]!/4/1:0)', 'some highlighted text', 'a test note', 'yellow', ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(&user_id)
+        .bind(book_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert annotation");
+    }
+
+    /// Seeds a shelf named `shelf_name` (owned by the most recently created user)
+    /// with `book_id` as a member.
+    pub async fn seed_shelf_membership(&self, shelf_name: &str, book_id: &str) {
+        let user_id = self
+            .last_user_id
+            .borrow()
+            .clone()
+            .expect("no user created yet");
+        let now = Utc::now().to_rfc3339();
+        let shelf_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO shelves (id, user_id, name, is_public, created_at, last_modified)
+            VALUES (?, ?, ?, 0, ?, ?)
+            "#,
+        )
+        .bind(&shelf_id)
+        .bind(&user_id)
+        .bind(shelf_name)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert shelf");
+
+        sqlx::query(
+            r#"
+            INSERT INTO shelf_books (shelf_id, book_id, display_order, added_at)
+            VALUES (?, ?, 0, ?)
+            "#,
+        )
+        .bind(&shelf_id)
+        .bind(book_id)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert shelf book");
+    }
+
+    /// Seeds a `reading_progress` row for the most recently created user and book.
+    /// Uses the book's first format row as the `format_id`.
+    pub async fn seed_reading_progress(&self, book_id: &str, percentage: i64) {
+        let user_id = self
+            .last_user_id
+            .borrow()
+            .clone()
+            .expect("no user created yet");
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4().to_string();
+
+        let format_id: String = sqlx::query_scalar(
+            "SELECT id FROM formats WHERE book_id = ? LIMIT 1",
+        )
+        .bind(book_id)
+        .fetch_one(&self.db)
+        .await
+        .expect("book has at least one format");
+
+        sqlx::query(
+            r#"
+            INSERT INTO reading_progress (id, user_id, book_id, format_id, cfi, page, percentage, updated_at, last_modified)
+            VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+            ON CONFLICT(user_id, book_id) DO UPDATE SET
+                percentage = excluded.percentage,
+                format_id = excluded.format_id,
+                updated_at = excluded.updated_at,
+                last_modified = excluded.last_modified
+            "#,
+        )
+        .bind(&id)
+        .bind(&user_id)
+        .bind(book_id)
+        .bind(&format_id)
+        .bind(percentage as f64)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("insert reading progress");
+    }
+
+    /// Reads the current `percentage` from `reading_progress` for the most
+    /// recently created user and the given book.
+    pub async fn read_reading_progress_percent(&self, book_id: &str) -> i64 {
+        let user_id = self
+            .last_user_id
+            .borrow()
+            .clone()
+            .expect("no user created yet");
+        let pct: f64 = sqlx::query_scalar(
+            "SELECT percentage FROM reading_progress WHERE user_id = ? AND book_id = ?",
+        )
+        .bind(&user_id)
+        .bind(book_id)
+        .fetch_one(&self.db)
+        .await
+        .expect("read reading progress");
+        pct as i64
+    }
 }
 
 pub fn auth_header(access_token: &str) -> axum::http::HeaderValue {
