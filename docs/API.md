@@ -799,6 +799,69 @@ PaginatedResponse<{
 
 ---
 
+
+### Admin — Logs, Backup, Covers, Tasks, Domains
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/admin/logs` | Yes | Admin | View structured JSON log file. Query params: `lines` (default 100, max 500), `level` (`info`, `warn`, `error`). Returns 400 for invalid level. Returns 404 when `log.file` is not configured. |
+| POST | `/admin/backup` | Yes | Admin | Create a metadata backup via `VACUUM INTO`. Config `[backup] dir` controls output directory. Returns 409 if another backup is in progress. |
+| POST | `/admin/covers/regenerate` | Yes | Admin | Enqueue cover regeneration jobs. Body: `{ "book_ids": [1, 2, 3] }`. Empty array means all books. Returns 202 `{ "queued": <count> }`. |
+| DELETE | `/admin/tasks/:task_id` | Yes | Admin | Cancel a background task. Returns 404 if task missing. Returns 409 if task is already completed/failed/cancelled. Sets status to `cancelled` otherwise. |
+| GET | `/admin/domains` | Yes | Admin | List email domain rules. Query param: `allow` (optional bool filter). |
+| POST | `/admin/domains` | Yes | Admin | Add email domain rule. Body: `{ "domain": "...", "allow": true }`. Returns 201 with `{ "id", "domain", "allow", "created_at" }`. |
+| DELETE | `/admin/domains/:id` | Yes | Admin | Delete an email domain rule by integer id. Returns 204. |
+
+#### Registration domain enforcement
+When `email_domains` rows exist, the `/auth/register` endpoint enforces domain policy:
+- Allowlist mode (rows with `allow=true` exist): only those domains may register.
+- Blocklist mode (rows with `allow=false` exist): those domains are denied.
+- No domain rules: allow all (default).
+- Returns 400 `{ "error": "bad_request" }` on blocked domain.
+
+#### GET /admin/logs
+```typescript
+// Query params
+{ lines?: number; level?: 'info' | 'warn' | 'error' }
+
+// Response 200
+Array<{
+  level: string
+  msg: string
+  // ... any other fields in the JSON log line
+}>
+
+// Response 400 — invalid level value
+// Response 404 — file logging not configured
+```
+
+#### POST /admin/backup
+```typescript
+// Response 200
+{ path: string }    // filename e.g. "xcalibre-20260508-120000.db"
+
+// Response 409 — backup already in progress
+```
+
+#### POST /admin/covers/regenerate
+```typescript
+// Request
+{ book_ids: number[] }   // empty = all books
+
+// Response 202
+{ queued: number }
+```
+
+#### DELETE /admin/tasks/:task_id
+```typescript
+// Response 200
+{ ok: true }
+
+// Response 404 — task not found
+// Response 409 — task already in terminal state
+```
+
+
 ### Admin — System
 
 | Method | Path | Auth | Role | Description |
@@ -1141,6 +1204,69 @@ ApiError    // email not configured
 ```
 
 ---
+
+
+### Admin — Logs, Backup, Covers, Tasks, Domains
+
+| Method | Path | Auth | Role | Description |
+|---|---|---|---|---|
+| GET | `/admin/logs` | Yes | Admin | View structured JSON log file. Query params: `lines` (default 100, max 500), `level` (`info`, `warn`, `error`). Returns 400 for invalid level. Returns 404 when `log.file` is not configured. |
+| POST | `/admin/backup` | Yes | Admin | Create a metadata backup via `VACUUM INTO`. Config `[backup] dir` controls output directory. Returns 409 if another backup is in progress. |
+| POST | `/admin/covers/regenerate` | Yes | Admin | Enqueue cover regeneration jobs. Body: `{ "book_ids": [1, 2, 3] }`. Empty array means all books. Returns 202 `{ "queued": <count> }`. |
+| DELETE | `/admin/tasks/:task_id` | Yes | Admin | Cancel a background task. Returns 404 if task missing. Returns 409 if task is already completed/failed/cancelled. Sets status to `cancelled` otherwise. |
+| GET | `/admin/domains` | Yes | Admin | List email domain rules. Query param: `allow` (optional bool filter). |
+| POST | `/admin/domains` | Yes | Admin | Add email domain rule. Body: `{ "domain": "...", "allow": true }`. Returns 201 with `{ "id", "domain", "allow", "created_at" }`. |
+| DELETE | `/admin/domains/:id` | Yes | Admin | Delete an email domain rule by integer id. Returns 204. |
+
+#### Registration domain enforcement
+When `email_domains` rows exist, the `/auth/register` endpoint enforces domain policy:
+- Allowlist mode (rows with `allow=true` exist): only those domains may register.
+- Blocklist mode (rows with `allow=false` exist): those domains are denied.
+- No domain rules: allow all (default).
+- Returns 400 `{ "error": "bad_request" }` on blocked domain.
+
+#### GET /admin/logs
+```typescript
+// Query params
+{ lines?: number; level?: 'info' | 'warn' | 'error' }
+
+// Response 200
+Array<{
+  level: string
+  msg: string
+  // ... any other fields in the JSON log line
+}>
+
+// Response 400 — invalid level value
+// Response 404 — file logging not configured
+```
+
+#### POST /admin/backup
+```typescript
+// Response 200
+{ path: string }    // filename e.g. "xcalibre-20260508-120000.db"
+
+// Response 409 — backup already in progress
+```
+
+#### POST /admin/covers/regenerate
+```typescript
+// Request
+{ book_ids: number[] }   // empty = all books
+
+// Response 202
+{ queued: number }
+```
+
+#### DELETE /admin/tasks/:task_id
+```typescript
+// Response 200
+{ ok: true }
+
+// Response 404 — task not found
+// Response 409 — task already in terminal state
+```
+
 
 ### Admin — System (Extended)
 

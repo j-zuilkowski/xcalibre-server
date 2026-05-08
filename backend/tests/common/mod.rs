@@ -579,7 +579,35 @@ impl TestContext {
         .await
         .expect("read reading progress");
         pct as i64
+}
+
+
+    /// Seeds a row in llm_jobs with the given status. Returns the job id.
+    pub async fn seed_task_with_status(&self, status: &str) -> String {
+        // Map "paused" to "pending" — the DB schema doesn't have a "paused" status.
+        let db_status = if status == "paused" { "pending" } else { status };
+        let now = chrono::Utc::now().to_rfc3339();
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO llm_jobs (id, job_type, status, book_id, payload_json, result_json, error_text, created_at, started_at, completed_at)
+            VALUES (?, 'backup', ?, NULL, NULL, NULL, NULL, ?, NULL, NULL)
+            "#,
+        )
+        .bind(&id)
+        .bind(db_status)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("seed task");
+        id
     }
+
+    /// Sets or clears the backup-in-progress guard on the app state.
+    pub async fn set_backup_in_progress(&self, active: bool) {
+        self.state.backup_in_progress.store(active, std::sync::atomic::Ordering::SeqCst);
+    }
+
 }
 
 pub fn auth_header(access_token: &str) -> axum::http::HeaderValue {

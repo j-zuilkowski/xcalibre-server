@@ -64,6 +64,8 @@ pub struct AppConfig {
     pub limits: LimitsSection,
     pub watch_folder: WatchFolderSection,
     pub updater: UpdaterSection,
+    pub log: LogSection,
+    pub backup: BackupSection,
 
 }
 
@@ -473,6 +475,24 @@ pub struct LlmRoleSection {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
+pub struct LogSection {
+    pub file: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupSection {
+    pub dir: String,
+}
+
+impl Default for BackupSection {
+    fn default() -> Self {
+        Self { dir: "./backups".to_string() }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LimitsSection {
     pub upload_max_bytes: u64,
     pub rate_limit_per_ip: u32,
@@ -507,6 +527,8 @@ impl Default for AppConfig {
             },
             watch_folder: WatchFolderSection::default(),
             updater: UpdaterSection::default(),
+            log: LogSection::default(),
+            backup: BackupSection::default(),
 
         }
     }

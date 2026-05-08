@@ -8,6 +8,7 @@ use crate::{
     storage_s3::S3Storage,
 };
 use sqlx::SqlitePool;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -20,6 +21,8 @@ pub struct AppState {
     pub chat_client: Option<ChatClient>,
     pub http_client: reqwest::Client,
     pub opds_cover_cache: OpdsCoverCache,
+    /// Guards against concurrent metadata backups.
+    pub backup_in_progress: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -80,6 +83,7 @@ impl AppState {
             chat_client,
             http_client,
             opds_cover_cache,
+            backup_in_progress: Arc::new(AtomicBool::new(false)),
         })
     }
 }

@@ -96,6 +96,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct RegisterRequest {
+    #[serde(default)]
     username: String,
     email: String,
     password: String,
@@ -210,19 +211,94 @@ async fn register(
     let user_count = auth_queries::count_users(&state.db)
         .await
         .map_err(|_| AppError::Internal)?;
+
+    // Extract domain from email for enforcement.
+    let email_domain = payload.email.split('@').nth(1).unwrap_or("").trim().to_lowercase();
+
     if user_count > 0 {
-        return Err(AppError::Conflict);
+        // Enforce domain allowlist/blocklist for subsequent registrations.
+        let allowlist_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM email_domains WHERE allow = 1"
+        )
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+        let blocklist_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM email_domains WHERE allow = 0"
+        )
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+        if allowlist_count > 0 {
+            // Allowlist mode: domain must be explicitly allowed.
+            let allowed: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(1) FROM email_domains WHERE domain = ? AND allow = 1"
+            )
+            .bind(&email_domain)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?
+            != 0;
+
+            if !allowed {
+                return Err(AppError::BadRequest);
+            }
+        } else if blocklist_count > 0 {
+            // Blocklist mode: domain must not be blocked.
+            let blocked: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(1) FROM email_domains WHERE domain = ? AND allow = 0"
+            )
+            .bind(&email_domain)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?
+            != 0;
+
+            if blocked {
+                return Err(AppError::BadRequest);
+            }
+        }
+        // No domain rules: allow all.
     }
 
     let password_hash = hash_password(&payload.password, &state.config.auth)?;
-    let user = auth_queries::create_first_admin_user(
-        &state.db,
-        payload.username.trim(),
-        payload.email.trim(),
-        &password_hash,
-    )
-    .await
-    .map_err(|_| AppError::Internal)?;
+    let username = if payload.username.trim().is_empty() {
+        email_domain.split('.').next().unwrap_or("user")
+    } else {
+        payload.username.trim()
+    };
+
+    let user = if user_count == 0 {
+        // First registration creates admin.
+        auth_queries::create_first_admin_user(
+            &state.db,
+            username,
+            payload.email.trim(),
+            &password_hash,
+        )
+        .await
+        .map_err(|_| AppError::Internal)?
+    } else {
+        // Subsequent registrations create regular user.
+        auth_queries::create_user(
+            &state.db,
+            username,
+            payload.email.trim(),
+            "user",
+            &password_hash,
+        )
+        .await
+        .map_err(|err| {
+            let err_text = err.to_string();
+            if err_text.contains("UNIQUE constraint failed") || err_text.contains("duplicate") {
+                AppError::Conflict
+            } else {
+                AppError::Internal
+            }
+        })?
+    };
 
     let _ = webhook_engine::enqueue_event(
         &state.db,
