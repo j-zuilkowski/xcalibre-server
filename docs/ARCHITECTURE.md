@@ -1,6 +1,6 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phases 1–28 Complete (v2.4.0); Phase 22 (KAG) Planned_
+_Status: Active — Phases 1–28 Complete (v2.4.0); Phase 30 (OPDS Parity II + Kobo Tag Sync + Shelf Edit) Planned; Phase 22 (KAG) Planned_
 _Last updated: 2026-05-09_
 
 ---
@@ -1080,6 +1080,23 @@ All cover responses set `Content-Disposition: inline`.
 
 `GET /opds/osd` returns an OpenSearch descriptor XML document (`application/opensearchdescription+xml`). Required by Stanza, Kybook, and several other OPDS clients for search discovery. Contains a `<Url type="application/atom+xml;profile=opds-catalog">` template pointing to `/opds/search?q={searchTerms}`.
 
+### Planned OPDS Routes (Phase 30)
+
+The following routes are present in calibre-web but absent from `opds.rs`. They were incorrectly recorded as implemented — Phase 30 corrects this:
+
+| Route | Description |
+|---|---|
+| `GET /opds/category` | Tag/category navigation feed (all tags) |
+| `GET /opds/category/:id` | Books with a specific tag (acquisition feed) |
+| `GET /opds/category/letter/:char` | Tags beginning with letter (NFKD) |
+| `GET /opds/formats` | Format navigation feed (all formats) |
+| `GET /opds/formats/:fmt` | Books available in a specific format |
+| `GET /opds/shelf` | Shelf navigation index (public shelves) |
+| `GET /opds/shelf/:id` | Books on a specific shelf (acquisition feed) |
+| `GET /opds/readbooks` | Books marked read by current user |
+| `GET /opds/unreadbooks` | Books marked unread by current user |
+| `GET /opds/ajax/book/:uuid` | Single-book OPDS entry by UUID (client compat) |
+
 ---
 
 ## Background Tasks
@@ -1536,6 +1553,74 @@ Indexes and search support:
 - [x] `GET /api/v1/search/chunks` supports `source=books|memory|all`
 - [x] `ChunkSearchItem.source` distinguishes `books` vs `memory` results
 - [x] Integration tests cover ingest, delete, auth, source filtering, and embedding fallback
+
+### Phase 30 — OPDS Parity II + Kobo Tag Sync + Shelf Edit [Planned — v2.5.0]
+
+Closes gaps identified in post-Phase 28 parity audit. Three categories of work: false-positive corrections (routes claimed implemented but absent), new undocumented gaps, and one shelf-management gap.
+
+#### Stage 1 — Kobo Tag Sync (High — False Positive)
+
+calibre-web's `kobo.py` exposes a full tag/collection-mutation surface that Kobo devices call during sync to create and manage collections on the server. These routes are absent from `kobo.rs` — without them, shelves can only be read by the device but never written from it.
+
+Routes to add under `GET /kobo/:token/v1/`:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/library/tags` | Create a new shelf/collection (returns `{ TagId }`) |
+| DELETE | `/library/tags/:tag_id` | Delete a shelf/collection |
+| PUT | `/library/tags/:tag_id` | Rename a shelf/collection |
+| POST | `/library/tags/:tag_id/items` | Add books to collection (`{ Items: [{ RevisionId }] }`) |
+| DELETE | `/library/tags/:tag_id/items/delete` | Remove books from collection |
+
+Each `RevisionId` maps to a Kobo book identifier, which maps back to `book_formats.kobo_id` in xcalibre-server.
+
+#### Stage 2 — OPDS Category / Read / Unread / Shelf / Formats Feeds (High + Medium — False Positives + New)
+
+Routes missing from `opds.rs`:
+
+| Route | Type | Atom Feed |
+|-------|------|-----------|
+| `GET /opds/category` | Navigation | All tags as navigation entries |
+| `GET /opds/category/:id` | Acquisition | Books with tag `:id` |
+| `GET /opds/category/letter/:char` | Navigation | Tags starting with letter (NFKD) |
+| `GET /opds/readbooks` | Acquisition | Books with `book_user_state.is_read = true` (auth required) |
+| `GET /opds/unreadbooks` | Acquisition | Books with `book_user_state.is_read = false` (auth required) |
+| `GET /opds/shelf` | Navigation | Public shelves as navigation entries |
+| `GET /opds/shelf/:id` | Acquisition | Books on shelf `:id` |
+| `GET /opds/formats` | Navigation | Distinct formats as navigation entries |
+| `GET /opds/formats/:fmt` | Acquisition | Books available in format `:fmt` (e.g. `EPUB`) |
+| `GET /opds/ajax/book/:uuid` | Acquisition | Single-book entry by UUID (client compat) |
+
+All follow OPDS-PS 1.2 — Atom XML with `application/atom+xml;profile=opds-catalog` content type. Auth for read/unread feeds via API token query param (same as download links).
+
+#### Stage 3 — Shelf Edit (Medium)
+
+`shelves.rs` currently has no `PATCH /api/v1/shelves/:id` handler. Users cannot rename a shelf or toggle its public/private status without deleting and recreating it.
+
+Add:
+```
+PATCH /api/v1/shelves/:id
+Body: { "name"?: string, "public"?: bool }
+Auth: Owner or Admin
+Returns: 200 Shelf | 404 | 403
+```
+
+Validates uniqueness of new name per user. Partial update (one or both fields). Wraps in transaction.
+
+#### Phase 30 Checklist
+
+- [ ] `backend/tests/test_kobo_tags.rs` — 5 integration tests for tag CRUD
+- [ ] `backend/tests/test_opds_parity.rs` — 10 integration tests for category/read/unread/shelf/formats/UUID feeds
+- [ ] `backend/tests/test_shelf_edit.rs` — 3 integration tests for PATCH shelves
+- [ ] `backend/src/api/kobo.rs` — 5 Kobo tag sync routes
+- [ ] `backend/src/api/opds.rs` — 10 new OPDS feed routes
+- [ ] `backend/src/api/shelves.rs` — `patch_shelf` handler
+- [ ] `GAP.md` — false positives corrected, gaps marked ✅
+- [ ] `docs/API.md` — new routes documented
+- [ ] `docs/STATE.md` — Phase 30 complete
+- [ ] Version bump → `2.5.0`, tag `v2.5.0`
+
+---
 
 ### Phase 22 — KAG Knowledge Graph Layer [Planned]
 

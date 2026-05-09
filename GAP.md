@@ -2,7 +2,7 @@
 
 > Compares **xcalibre-server** (Rust/Axum) against **calibre-web** (Python/Flask) as a web-based e-book server.
 >
-> Last updated: 2026-05-07
+> Last updated: 2026-05-09 (Phase 30 gaps identified — false positives corrected)
 > Reference: `archive/calibre-web` · calibre-web v0.6.x · xcalibre-server HEAD
 
 ---
@@ -218,7 +218,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | List shelves | ✅ | ✅ | ✅ |
 | Add/remove book to shelf | ✅ | ✅ | ✅ |
 | Delete shelf | ✅ | ✅ | ✅ |
-| Edit shelf settings | ✅ `/shelf/edit/<id>` | ❌ | ❌ |
+| Edit shelf settings (rename, toggle public) | ✅ `/shelf/edit/<id>` | ❌ | ❌ **Phase 30** |
 | Reorder books in shelf | ✅ `GET+POST /shelf/order/<id>` | ✅ `PUT /api/v1/shelves/:id/order` | ✅ Phase 25 |
 | Simple/read-only shelf view | ✅ `/simpleshelf/<id>` | ❌ | ❌ |
 | Public shelves | ✅ | ✅ | ✅ |
@@ -234,12 +234,17 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | Root catalog | ✅ | ✅ | ✅ |
 | Browse by author / series / language / publisher | ✅ | ✅ | ✅ |
 | Browse by rating | ✅ | ✅ | ✅ |
-| Browse by tag/category | ✅ | ✅ | ✅ |
+| Browse by tag/category (`/opds/category`, `/opds/category/:id`) | ✅ | ❌ | ❌ **False positive** |
+| Category/tag letter browse (`/opds/category/letter/:id`) | ✅ | ❌ | ❌ |
 | Letter-based browsing — authors | ✅ | ✅ `/opds/authors/letter/:char` (NFKD) | ✅ Phase 23 |
 | Letter-based browsing — series | ✅ | ✅ `/opds/series/letter/:char` | ✅ Phase 23 |
+| Browse by format (`/opds/formats`, `/opds/formats/:id`) | ✅ | ❌ | ❌ |
+| Shelf feed (`/opds/shelfindex`, `/opds/shelf/:id`) | ✅ | ❌ | ❌ |
 | Hot / trending feed | ✅ | ✅ `/opds/hot` (by download count) | ✅ Phase 23 |
 | New releases feed | ✅ | ✅ `/opds/new` | ✅ Phase 23 |
-| Read / unread feeds | ✅ | ✅ | ✅ |
+| Read books feed (`/opds/readbooks`) | ✅ | ❌ | ❌ **False positive** |
+| Unread books feed (`/opds/unreadbooks`) | ✅ | ❌ | ❌ **False positive** |
+| Book UUID lookup (`/ajax/book/:uuid/:library`) | ✅ | ❌ | ❌ |
 | Cover serving via OPDS | ✅ `/opds/cover/<id>` | ✅ `/opds/cover/:id` (JPEG/WebP) | ✅ Phase 23 |
 | Cover at multiple resolutions | ✅ 240×240, thumb | ✅ `/thumb` (240×240) + `/large` (600×600) | ✅ Phase 23 |
 | Cover LRU cache | ❌ | ✅ 200-entry in-memory LRU | ✅ Unique |
@@ -249,7 +254,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | OPDS stats | ✅ `/opds/stats` | ✅ `/opds/stats` (JSON) | ✅ Phase 23 |
 | OPDS discover | ✅ `/opds/discover` | ✅ `/opds/discover` (shelf nav entries) | ✅ Phase 23 |
 
-**Gap (closed):** All major OPDS compatibility gaps closed in Phase 23. xcalibre-server now serves ~26 OPDS routes, matching or exceeding calibre-web's e-reader client compatibility. Cover serving with LRU caching, OSD, letter-based browsing, hot/trending feeds, stats, and discover are all implemented.
+**Gap (Phase 30 target):** Post-audit verification revealed three false positives. OPDS category/tag feeds, read/unread feeds, and book UUID lookup are absent from `opds.rs` — they were incorrectly marked ✅. Additionally, OPDS formats feed and per-shelf OPDS feeds have no routes. These are planned for Phase 30.
 
 ---
 
@@ -261,14 +266,14 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | Library sync | ✅ | ✅ | ✅ |
 | Book state sync (reading progress) | ✅ | ✅ | ✅ |
 | Bookmark sync | ✅ | ✅ | ✅ |
-| Tag sync | ✅ | ✅ | ✅ |
+| Tag sync (`/v1/library/tags` POST/DELETE/PUT) | ✅ | ❌ | ❌ **False positive** |
 | Kobo store product endpoints (mocked) | ✅ ~27 routes | ✅ 14 mock endpoints | ✅ Phase 24 |
 | Kobo deals / affiliate endpoints | ✅ mocked | ✅ mocked | ✅ Phase 24 |
 | Kobo analytics (mocked) | ✅ | ✅ mocked | ✅ Phase 24 |
 | Kobo user loyalty / recommendations / wishlist | ✅ mocked | ✅ mocked (GET/POST/DELETE) | ✅ Phase 24 |
 | Kobo image serving (`/<uuid>/<w>/<h>/…/image.jpg`) | ✅ | ✅ cover proxy + 1×1 placeholder | ✅ Phase 24 |
 
-**Gap (closed):** All Kobo firmware compatibility endpoints are now implemented (Phase 24). xcalibre-server serves 14 mock store endpoints returning calibre-web-shaped JSON, plus cover image proxying. Older Kobo firmware (< 4.20) will no longer abort sync on missing store endpoints.
+**Gap (Phase 30 target):** A post-Phase 24 audit revealed that Kobo tag sync was incorrectly marked ✅. The routes `POST /v1/library/tags`, `DELETE /v1/library/tags/:tag_id`, `PUT /v1/library/tags/:tag_id`, `POST /v1/library/tags/:tag_id/items`, and `DELETE /v1/library/tags/:tag_id/items` are absent from `kobo.rs`. Without these routes, Kobo shelves/collections cannot be created or modified from the device — only read during sync. Planned for Phase 30.
 
 ---
 
@@ -347,18 +352,36 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 15. ✅ ~~**Task cancellation endpoint**~~ — Closed Phase 28. `DELETE /api/v1/admin/tasks/:id`.
 16. ✅ ~~**OPDS stats + discover**~~ — Closed Phase 23. `/opds/stats` + `/opds/discover`.
 
-### Remaining Open Gaps (Post Phase 28)
+### Remaining Open Gaps (Post Phase 28) — Phase 30 Targets
+
+**High — False Positives (were incorrectly marked ✅)**
+
+| # | Gap | calibre-web Routes | Priority |
+|---|-----|--------------------|----------|
+| 1 | **Kobo tag sync** | `POST /v1/library/tags`, `DELETE/PUT /v1/library/tags/:id`, `POST/DELETE /v1/library/tags/:id/items` | 🔴 High — Kobo shelves can't be created from device |
+| 2 | **OPDS category/tag feeds** | `GET /opds/category`, `/opds/category/:id`, `/opds/category/letter/:id` | 🔴 High — e-reader genre browse returns empty |
+| 3 | **OPDS read/unread feeds** | `GET /opds/readbooks`, `GET /opds/unreadbooks` | 🔴 High — "Read" shortcut broken on OPDS clients |
+
+**Medium — Undocumented Gaps Found in Audit**
+
+| # | Gap | calibre-web Routes | Priority |
+|---|-----|--------------------|----------|
+| 4 | **Shelf edit** (rename / toggle public) | `GET+POST /shelf/edit/:id` | 🟡 Medium — users can't rename shelves |
+| 5 | **OPDS shelf feed** | `GET /opds/shelfindex`, `/opds/shelf/:id` | 🟡 Medium — shelf browsing from e-reader impossible |
+| 6 | **OPDS formats feed** | `GET /opds/formats`, `/opds/formats/:id` | 🟡 Medium — format-based browsing not available |
+| 7 | **OPDS book UUID lookup** | `GET /ajax/book/:uuid/:library` | 🟡 Medium — some clients use UUID-based single-book fetch |
+
+**Low — Pre-existing Polish Items**
 
 | # | Gap | Notes |
 |---|-----|-------|
-| 1 | Inline metadata provider config (runtime switching) | config.toml only; low priority for self-hosted |
-| 2 | Log download (file export) | `/admin/logdownload/*` — stream log as file attachment |
-| 3 | Admin HTML UI | Intentional — API-only by design |
-| 4 | Shelf edit settings | Edit shelf name/visibility; currently delete + re-create |
-| 5 | Domain edit-in-place | Delete + re-add workaround works |
-| 6 | Scheduled tasks HTML form | API exists; no HTML UI |
-| 7 | Bulk display-status toggle | `/ajax/displayselectedbooks` has no API equivalent |
-| 8 | Calibre format conversion | Requires Calibre binary; out of scope |
+| 8 | Inline metadata provider config (runtime switching) | config.toml only; low priority for self-hosted |
+| 9 | Log download (file export) | `/admin/logdownload/*` — stream log as file attachment |
+| 10 | Admin HTML UI | Intentional — API-only by design |
+| 11 | Domain edit-in-place | Delete + re-add workaround works |
+| 12 | Scheduled tasks HTML form | API exists; no HTML UI |
+| 13 | Bulk display-status toggle | `/ajax/displayselectedbooks` has no API equivalent |
+| 14 | Calibre format conversion | Requires Calibre binary; out of scope |
 
 ---
 
