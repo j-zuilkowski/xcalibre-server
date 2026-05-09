@@ -12,7 +12,7 @@ use axum::{
 };
 use axum_test::TestServer;
 use backend::{app, config::AppConfig, AppState};
-use common::{auth_header, test_db, TestContext, TEST_JWT_SECRET};
+use common::{auth_header, test_db, CompatTestServer, TestContext, TEST_JWT_SECRET};
 use serde_json::Value;
 use tempfile::TempDir;
 use wiremock::{
@@ -60,8 +60,10 @@ async fn oauth_linking_context(mock: &MockServer) -> TestContext {
     let state = AppState::new(db.clone(), config)
         .await
         .expect("initialize app state");
-    let server = TestServer::new(app_with_connect_info(state.clone(), "127.0.0.1".parse().expect("ip")))
-        .expect("build test server");
+    let server = CompatTestServer::new(
+        TestServer::new(app_with_connect_info(state.clone(), "127.0.0.1".parse().expect("ip")))
+            .expect("build test server"),
+    );
     TestContext {
         db,
         storage,
