@@ -140,9 +140,9 @@ async fn kobo_mock_wishlist() -> Json<serde_json::Value> {
 /// If the `book_uuid` resolves to a book with an existing cover, the cover is
 /// served at the requested dimensions.  Otherwise a 1×1 white JPEG is returned.
 async fn kobo_image(
-    State(_state): State<AppState>,
-    Path((_, _book_uuid, _width, _height, _quality, _greyscale)): Path<(
-        String, // placeholder for kobo_token — captured by outer route
+    State(state): State<AppState>,
+    Path((_, book_uuid, _width, _height, _quality, _greyscale)): Path<(
+        String, // kobo_token — consumed by outer route
         String, // book_uuid
         String, // width
         String, // height
@@ -150,14 +150,34 @@ async fn kobo_image(
         String, // greyscale
     )>,
 ) -> Result<Response<Body>, AppError> {
-    // Try to resolve book_uuid to a book via identifier lookup.
-    // If found and cover exists, serve the cover.
-    // For now, return the 1×1 white JPEG placeholder.
-    let response = Response::builder()
+    // 1. Resolve UUID → internal book_id via identifiers table.
+    if let Some(book_id) = sqlx::query_scalar::<_, String>(
+        "SELECT book_id FROM identifiers WHERE id_type = 'uuid' AND value = ? LIMIT 1",
+    )
+    .bind(&book_uuid)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None)
+    {
+        // 2. Look up the cover path (only returned when has_cover = 1).
+        if let Ok(Some(cover_path)) =
+            book_queries::find_book_cover_path(&state.db, &book_id).await
+        {
+            // 3. Read cover bytes through the storage backend (works for local and S3).
+            if let Ok(bytes) = state.storage.get_bytes(&cover_path).await {
+                return Response::builder()
+                    .header(header::CONTENT_TYPE, "image/jpeg")
+                    .body(Body::from(bytes))
+                    .map_err(|_| AppError::Internal);
+            }
+        }
+    }
+
+    // 4. Fallback: 1×1 white JPEG placeholder.
+    Response::builder()
         .header(header::CONTENT_TYPE, "image/jpeg")
         .body(Body::from(WHITE_JPEG_1X1.to_vec()))
-        .map_err(|_| AppError::Internal)?;
-    Ok(response)
+        .map_err(|_| AppError::Internal)
 }
 
 // ---------------------------------------------------------------------------

@@ -352,36 +352,19 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 15. ✅ ~~**Task cancellation endpoint**~~ — Closed Phase 28. `DELETE /api/v1/admin/tasks/:id`.
 16. ✅ ~~**OPDS stats + discover**~~ — Closed Phase 23. `/opds/stats` + `/opds/discover`.
 
-### Remaining Open Gaps (Post Phase 30)
+**All previously open gaps closed by Phase 30 + Phase 32**
 
-**High — False Positives (were incorrectly marked ✅)**
-
-| # | Gap | calibre-web Routes | Priority |
-|---|-----|--------------------|----------|
-| 1 | **Kobo tag sync** | `POST /v1/library/tags`, `DELETE/PUT /v1/library/tags/:id`, `POST/DELETE /v1/library/tags/:id/items` | 🔴 High — Kobo shelves can't be created from device |
-| 2 | **OPDS category/tag feeds** | `GET /opds/category`, `/opds/category/:id`, `/opds/category/letter/:id` | 🔴 High — e-reader genre browse returns empty |
-| 3 | **OPDS read/unread feeds** | `GET /opds/readbooks`, `GET /opds/unreadbooks` | 🔴 High — "Read" shortcut broken on OPDS clients |
-
-**Medium — Undocumented Gaps Found in Audit**
-
-| # | Gap | calibre-web Routes | Priority |
-|---|-----|--------------------|----------|
-| 4 | **Shelf edit** (rename / toggle public) | `GET+POST /shelf/edit/:id` | 🟡 Medium — users can't rename shelves |
-| 5 | **OPDS shelf feed** | `GET /opds/shelfindex`, `/opds/shelf/:id` | 🟡 Medium — shelf browsing from e-reader impossible |
-| 6 | **OPDS formats feed** | `GET /opds/formats`, `/opds/formats/:id` | 🟡 Medium — format-based browsing not available |
-| 7 | **OPDS book UUID lookup** | `GET /ajax/book/:uuid/:library` | 🟡 Medium — some clients use UUID-based single-book fetch |
-
-**Low — Pre-existing Polish Items**
-
-| # | Gap | Notes |
-|---|-----|-------|
-| 8 | Inline metadata provider config (runtime switching) | config.toml only; low priority for self-hosted |
-| 9 | Log download (file export) | `/admin/logdownload/*` — stream log as file attachment |
-| 10 | Admin HTML UI | Intentional — API-only by design |
-| 11 | Domain edit-in-place | Delete + re-add workaround works |
-| 12 | Scheduled tasks HTML form | API exists; no HTML UI |
-| 13 | Bulk display-status toggle | `/ajax/displayselectedbooks` has no API equivalent |
-| 14 | Calibre format conversion | Requires Calibre binary; out of scope |
+| # | Gap | Closed |
+|---|-----|--------|
+| 1 | Kobo tag sync | ✅ Phase 30 |
+| 2 | OPDS category/tag feeds | ✅ Phase 30 |
+| 3 | OPDS read/unread feeds | ✅ Phase 30 |
+| 4 | Shelf edit (rename / toggle public) | ✅ Phase 30 |
+| 5 | OPDS shelf feed | ✅ Phase 30 |
+| 6 | OPDS formats feed | ✅ Phase 30 |
+| 7 | OPDS book UUID lookup | ✅ Phase 30 |
+| 8 | Kobo cover serving (UUID → book cover) | ✅ Phase 32 |
+| 9 | Backup produces valid SQLite file | ✅ Phase 31 |
 
 ---
 
