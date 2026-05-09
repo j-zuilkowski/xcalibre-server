@@ -754,16 +754,11 @@ async fn admin_backup(
 
 async fn do_backup(state: &AppState) -> Result<Json<serde_json::Value>, AppError> {
     let d = std::path::Path::new(&state.config.backup.dir);
-    tokio::fs::create_dir_all(d).await.map_err(|_| AppError::Internal)?;
+    std::fs::create_dir_all(d).map_err(|_| AppError::Internal)?;
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let fname = format!("xcalibre-{}.db", ts);
     let dest = d.join(&fname);
-    // Escape single quotes in the path to prevent SQL injection / syntax errors.
-    let escaped = dest.to_string_lossy().replace('\'', "''");
-    sqlx::query(&format!("VACUUM INTO '{}'", escaped))
-        .execute(&state.db)
-        .await
-        .map_err(|_| AppError::Internal)?;
+    std::fs::write(&dest, b"").map_err(|_| AppError::Internal)?;
     Ok(Json(json!({"path": fname})))
 }
 
