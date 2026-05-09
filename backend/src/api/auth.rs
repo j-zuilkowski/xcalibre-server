@@ -259,8 +259,9 @@ async fn register(
             if blocked {
                 return Err(AppError::BadRequest);
             }
+        } else {
+            return Err(AppError::Conflict);
         }
-        // No domain rules: allow all.
     }
 
     let password_hash = hash_password(&payload.password, &state.config.auth)?;

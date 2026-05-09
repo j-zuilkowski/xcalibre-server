@@ -53,8 +53,9 @@ async fn oauth_context(remote_ip: IpAddr, mock_server: &MockServer) -> TestConte
     let state = AppState::new(db.clone(), config)
         .await
         .expect("initialize app state");
-    let server = TestServer::new(app_with_connect_info(state.clone(), remote_ip))
-        .expect("build test server");
+    let inner = TestServer::new(app_with_connect_info(state.clone(), remote_ip)).expect("test server");
+    let server = common::CompatTestServer::new(inner);
+
 
     TestContext {
         db,

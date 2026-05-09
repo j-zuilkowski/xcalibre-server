@@ -117,7 +117,7 @@ async fn custom_context(http_client: reqwest::Client) -> TestContext {
         .await
         .expect("initialize app state");
     state.http_client = http_client;
-    let server = axum_test::TestServer::new(app(state.clone())).expect("build test server");
+    let server = common::CompatTestServer::new(axum_test::TestServer::new(app(state.clone())).expect("build test server"));
 
     TestContext {
         db,

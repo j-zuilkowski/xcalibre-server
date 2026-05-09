@@ -28,6 +28,8 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
+use sha2::Digest;
+use sqlx::Row;
 use std::fmt::Write as _;
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -58,6 +60,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/discover", get(opds_enhancements::opds_discover_handler))
         .route("/authors/letter/:ch", get(opds_enhancements::opds_authors_letter_handler))
         .route("/series/letter/:ch", get(opds_enhancements::opds_series_letter_handler))
+        // Phase 30: OPDS parity routes
+        .route("/category", get(category_feed))
+        .route("/category/letter/:ch", get(category_letter_feed))
+        .route("/category/:id", get(category_books_feed))
+        .route("/formats", get(formats_feed))
+        .route("/formats/:fmt", get(format_books_feed))
+        .route("/shelf", get(shelf_index_feed))
+        .route("/shelf/:id", get(shelf_books_feed))
+        .route("/readbooks", get(readbooks_feed))
+        .route("/unreadbooks", get(unreadbooks_feed))
+        .route("/ajax/book/:uuid", get(book_uuid_feed))
         .with_state(state)
 }
 
@@ -508,6 +521,333 @@ async fn search(
     .await?;
     Ok(xml_response(xml))
 }
+
+
+
+// ---------------------------------------------------------------------------
+// Phase 30: OPDS parity feeds (category, formats, shelf, read/unread, UUID lookup)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct TokenQuery {
+    token: Option<String>,
+}
+
+/// GET /opds/category — navigation feed listing all tags with book counts
+async fn category_feed(State(state): State<AppState>) -> Result<Response, AppError> {
+    let tags = sqlx::query(
+        "SELECT t.id, t.name, COUNT(bt.book_id) AS cnt
+         FROM tags t
+         LEFT JOIN book_tags bt ON bt.tag_id = t.id
+         GROUP BY t.id
+         ORDER BY t.name"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Categories", "/opds/category", "navigation");
+    for row in &tags {
+        let tag_id: String = row.get("id");
+        let tag_name: String = row.get("name");
+        let cnt: i64 = row.get("cnt");
+        push_navigation_entry(
+            &mut xml,
+            &tag_name,
+            &format!("/opds/category/{}", tag_id),
+            &format!("{} {}", cnt, pluralize("book", cnt)),
+            "navigation",
+        );
+    }
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/category/letter/:ch — navigation feed filtered by first letter
+async fn category_letter_feed(
+    State(state): State<AppState>,
+    Path(ch): Path<String>,
+) -> Result<Response, AppError> {
+    use unicode_normalization::UnicodeNormalization;
+    let prefix = ch.nfkd().collect::<String>().to_lowercase();
+
+    let tags = sqlx::query(
+        "SELECT t.id, t.name, COUNT(bt.book_id) AS cnt
+         FROM tags t
+         LEFT JOIN book_tags bt ON bt.tag_id = t.id
+         GROUP BY t.id"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(
+        &mut xml,
+        &format!("Categories — {}", ch.to_uppercase()),
+        &format!("/opds/category/letter/{ch}"),
+        "navigation",
+    );
+    for row in &tags {
+        let tag_name: String = row.get("name");
+        if !tag_name.nfkd().collect::<String>().to_lowercase().starts_with(&prefix) {
+            continue;
+        }
+        let tag_id: String = row.get("id");
+        let cnt: i64 = row.get("cnt");
+        push_navigation_entry(
+            &mut xml,
+            &tag_name,
+            &format!("/opds/category/{}", tag_id),
+            &format!("{} {}", cnt, pluralize("book", cnt)),
+            "navigation",
+        );
+    }
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/category/:id — acquisition feed for books in a category
+async fn category_books_feed(
+    State(state): State<AppState>,
+    Path(tag_id): Path<String>,
+    Query(q): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+
+    let tag_name = sqlx::query_scalar::<_, String>("SELECT name FROM tags WHERE id = ?")
+        .bind(&tag_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .unwrap_or_default();
+
+    let params = book_queries::ListBooksParams {
+        tags: vec![tag_name.clone()],
+        page,
+        page_size,
+        ..Default::default()
+    };
+
+    let xml = build_book_feed(
+        &state,
+        &format!("Category: {tag_name}"),
+        &format!("/opds/category/{tag_id}"),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/formats — navigation feed listing formats with book counts
+async fn formats_feed(State(state): State<AppState>) -> Result<Response, AppError> {
+    let formats = sqlx::query(
+        "SELECT UPPER(format) AS fmt, COUNT(*) AS cnt
+         FROM formats
+         GROUP BY UPPER(format)
+         ORDER BY fmt"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Formats", "/opds/formats", "navigation");
+    for row in &formats {
+        let fmt: Option<String> = row.get("fmt");
+        let fmt = fmt.as_deref().unwrap_or("UNKNOWN");
+        let cnt: i64 = row.get("cnt");
+        push_navigation_entry(
+            &mut xml,
+            fmt,
+            &format!("/opds/formats/{}", fmt.to_lowercase()),
+            &format!("{} {}", cnt, pluralize("book", cnt)),
+            "navigation",
+        );
+    }
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/formats/:fmt — acquisition feed for books in a specific format
+async fn format_books_feed(
+    State(state): State<AppState>,
+    Path(fmt): Path<String>,
+    Query(q): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+    let fmt_upper = fmt.to_uppercase();
+
+    let params = book_queries::ListBooksParams {
+        format: Some(fmt_upper.clone()),
+        page,
+        page_size,
+        ..Default::default()
+    };
+
+    let xml = build_book_feed(
+        &state,
+        &format!("Format: {}", fmt.to_uppercase()),
+        &format!("/opds/formats/{fmt}"),
+        params,
+        &[],
+    )
+    .await?;
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/shelf — navigation feed listing public shelves
+async fn shelf_index_feed(State(state): State<AppState>) -> Result<Response, AppError> {
+    let shelves = sqlx::query(
+        "SELECT id, name FROM shelves WHERE is_public = 1 ORDER BY name"
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Shelves", "/opds/shelf", "navigation");
+    for row in &shelves {
+        let shelf_id: String = row.get("id");
+        let shelf_name: String = row.get("name");
+        push_navigation_entry(
+            &mut xml,
+            &shelf_name,
+            &format!("/opds/shelf/{}", shelf_id),
+            "",
+            "navigation",
+        );
+    }
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/shelf/:id — acquisition feed for books in a public shelf
+async fn shelf_books_feed(
+    State(state): State<AppState>,
+    Path(shelf_id): Path<String>,
+    Query(q): Query<FeedQuery>,
+) -> Result<Response, AppError> {
+    let shelf = sqlx::query(
+        "SELECT id, name, is_public FROM shelves WHERE id = ?"
+    )
+    .bind(&shelf_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?
+    .ok_or(AppError::NotFound)?;
+
+    let is_public: i64 = shelf.get("is_public");
+    if is_public == 0 {
+        return Err(AppError::NotFound);
+    }
+    let shelf_name: String = shelf.get("name");
+
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+
+    let book_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT book_id FROM shelf_books WHERE shelf_id = ? ORDER BY display_order, added_at"
+    )
+    .bind(&shelf_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    let offset = ((page - 1) * page_size) as usize;
+    let paged: Vec<String> = book_ids.into_iter().skip(offset).take(page_size as usize).collect();
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, &shelf_name, &format!("/opds/shelf/{shelf_id}"), "acquisition");
+    push_opensearch_stats(&mut xml, paged.len() as i64, page_size);
+
+    for bid in &paged {
+        if let Some(book) = book_queries::get_book_by_id(&state.db, bid, None, None)
+            .await
+            .map_err(|_| AppError::Internal)?
+        {
+            push_book_entry(&mut xml, &book);
+        }
+    }
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/readbooks?token=<api_token> — acquisition feed for read books
+async fn readbooks_feed(
+    State(state): State<AppState>,
+    Query(q): Query<TokenQuery>,
+) -> Result<Response, AppError> {
+    let user_id = resolve_opds_user(&state, &q.token).await?;
+    let params = book_queries::ListBooksParams {
+        only_read: Some(true),
+        user_id: Some(user_id),
+        page: 1,
+        page_size: 200,
+        ..Default::default()
+    };
+    let xml = build_book_feed(&state, "Read Books", "/opds/readbooks", params, &[]).await?;
+    Ok(xml_response(xml))
+}
+
+/// GET /opds/unreadbooks?token=<api_token> — acquisition feed for unread books
+async fn unreadbooks_feed(
+    State(state): State<AppState>,
+    Query(q): Query<TokenQuery>,
+) -> Result<Response, AppError> {
+    let user_id = resolve_opds_user(&state, &q.token).await?;
+    let params = book_queries::ListBooksParams {
+        only_read: Some(false),
+        user_id: Some(user_id),
+        page: 1,
+        page_size: 200,
+        ..Default::default()
+    };
+    let xml = build_book_feed(&state, "Unread Books", "/opds/unreadbooks", params, &[]).await?;
+    Ok(xml_response(xml))
+}
+
+/// Resolve ?token=<api_token> to a user_id. Returns 401 if absent or invalid.
+async fn resolve_opds_user(
+    state: &AppState,
+    token_opt: &Option<String>,
+) -> Result<String, AppError> {
+    let token = token_opt.as_deref().ok_or(AppError::Unauthorized)?;
+    let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
+    let user_id = sqlx::query_scalar::<_, String>(
+        "SELECT created_by FROM api_tokens
+         WHERE token_hash = ?
+           AND (expires_at IS NULL OR expires_at > strftime('%s','now'))"
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?
+    .ok_or(AppError::Unauthorized)?;
+    Ok(user_id)
+}
+
+/// GET /opds/ajax/book/:uuid — acquisition feed for a single book by UUID
+async fn book_uuid_feed(
+    State(state): State<AppState>,
+    Path(uuid): Path<String>,
+) -> Result<Response, AppError> {
+    let book = book_queries::get_book_by_id(&state.db, &uuid, None, None)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
+    let mut xml = String::new();
+    push_feed_header(&mut xml, "Book", &format!("/opds/ajax/book/{uuid}"), "acquisition");
+    push_book_entry(&mut xml, &book);
+    push_feed_footer(&mut xml);
+    Ok(xml_response(xml))
+}
+
 
 pub(super) async fn build_book_feed(
     state: &AppState,

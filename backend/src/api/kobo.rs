@@ -95,6 +95,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/user/wishlist/items/:item_id", delete(kobo_mock_ok_empty))
         .route("/products/books/:product_id", get(kobo_mock_ok))
         // Image route: serve cover or 1×1 white JPEG placeholder
+        // Phase 30: Kobo tag (shelf) sync routes
+        .route("/library/tags", post(create_kobo_tag))
+        .route("/library/tags/:tag_id", delete(delete_kobo_tag).put(rename_kobo_tag))
+        .route("/library/tags/:tag_id/items", post(add_kobo_tag_items))
+        .route("/library/tags/:tag_id/items/delete", delete(remove_kobo_tag_items))
         .route(
             "/images/:book_uuid/:width/:height/:quality/:greyscale/image.jpg",
             get(kobo_image),
@@ -153,6 +158,172 @@ async fn kobo_image(
         .body(Body::from(WHITE_JPEG_1X1.to_vec()))
         .map_err(|_| AppError::Internal)?;
     Ok(response)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 30: Kobo tag (shelf) sync handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateTagBody {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Items", default)]
+    items: Vec<KoboTagItem>,
+}
+
+#[derive(Deserialize)]
+struct RenameTagBody {
+    #[serde(rename = "Name")]
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct TagItemsBody {
+    #[serde(rename = "Items")]
+    items: Vec<KoboTagItem>,
+}
+
+#[derive(Deserialize)]
+struct KoboTagItem {
+    #[serde(rename = "RevisionId")]
+    revision_id: String,
+}
+
+/// POST /kobo/:token/v1/library/tags
+async fn create_kobo_tag(
+    State(state): State<AppState>,
+    Extension(context): Extension<KoboAuthContext>,
+    Json(body): Json<CreateTagBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let shelf = shelf_queries::create_shelf(
+        &state.db,
+        &context.user.id,
+        &body.name,
+        false,
+    )
+    .await
+    .map_err(|_| AppError::Internal)?;
+
+    if !body.items.is_empty() {
+        for item in &body.items {
+            if let Ok(book_id) = resolve_revision_id(&state, &item.revision_id).await {
+                let _ = shelf_queries::add_book_to_shelf(&state.db, &shelf.id, &book_id).await;
+            }
+        }
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "TagId": shelf.id })),
+    ))
+}
+
+/// DELETE /kobo/:token/v1/library/tags/:tag_id
+async fn delete_kobo_tag(
+    State(state): State<AppState>,
+    Extension(context): Extension<KoboAuthContext>,
+    Path((_, tag_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let shelf_rec = shelf_queries::get_shelf(&state.db, &tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    match shelf_rec {
+        None => return Err(AppError::NotFound),
+        Some(s) if s.user_id != context.user.id => return Err(AppError::Forbidden("forbidden".into())),
+        _ => {}
+    }
+    let deleted = shelf_queries::delete_shelf(&state.db, &tag_id, &context.user.id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    if !deleted {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::OK)
+}
+
+/// PUT /kobo/:token/v1/library/tags/:tag_id
+async fn rename_kobo_tag(
+    State(state): State<AppState>,
+    Extension(context): Extension<KoboAuthContext>,
+    Path((_, tag_id)): Path<(String, String)>,
+    Json(body): Json<RenameTagBody>,
+) -> Result<StatusCode, AppError> {
+    let shelf_rec = shelf_queries::get_shelf(&state.db, &tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    match shelf_rec {
+        None => return Err(AppError::NotFound),
+        Some(s) if s.user_id != context.user.id => return Err(AppError::Forbidden("forbidden".into())),
+        _ => {}
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "UPDATE shelves SET name = ?, last_modified = ? WHERE id = ?"
+    )
+    .bind(&body.name)
+    .bind(&now)
+    .bind(&tag_id)
+    .execute(&state.db)
+    .await
+    .map_err(|_| AppError::Internal)?;
+    Ok(StatusCode::OK)
+}
+
+/// POST /kobo/:token/v1/library/tags/:tag_id/items
+async fn add_kobo_tag_items(
+    State(state): State<AppState>,
+    Extension(context): Extension<KoboAuthContext>,
+    Path((_, tag_id)): Path<(String, String)>,
+    Json(body): Json<TagItemsBody>,
+) -> Result<StatusCode, AppError> {
+    let shelf_rec = shelf_queries::get_shelf(&state.db, &tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    match shelf_rec {
+        None => return Err(AppError::NotFound),
+        Some(s) if s.user_id != context.user.id => return Err(AppError::Forbidden("forbidden".into())),
+        _ => {}
+    }
+    for item in &body.items {
+        if let Ok(book_id) = resolve_revision_id(&state, &item.revision_id).await {
+            let _ = shelf_queries::add_book_to_shelf(&state.db, &tag_id, &book_id).await;
+        }
+    }
+    Ok(StatusCode::CREATED)
+}
+
+/// DELETE /kobo/:token/v1/library/tags/:tag_id/items/delete
+async fn remove_kobo_tag_items(
+    State(state): State<AppState>,
+    Extension(context): Extension<KoboAuthContext>,
+    Path((_, tag_id)): Path<(String, String)>,
+    Json(body): Json<TagItemsBody>,
+) -> Result<StatusCode, AppError> {
+    let shelf_rec = shelf_queries::get_shelf(&state.db, &tag_id)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    match shelf_rec {
+        None => return Err(AppError::NotFound),
+        Some(s) if s.user_id != context.user.id => return Err(AppError::Forbidden("forbidden".into())),
+        _ => {}
+    }
+    for item in &body.items {
+        if let Ok(book_id) = resolve_revision_id(&state, &item.revision_id).await {
+            let _ = shelf_queries::remove_book_from_shelf(&state.db, &tag_id, &book_id).await;
+        }
+    }
+    Ok(StatusCode::OK)
+}
+
+/// Resolve a Kobo RevisionId (UUID) to a book_id.
+async fn resolve_revision_id(state: &AppState, revision_id: &str) -> Result<String, AppError> {
+    sqlx::query_scalar::<_, String>("SELECT id FROM books WHERE id = ?1")
+        .bind(revision_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)
 }
 
 // ---------------------------------------------------------------------------

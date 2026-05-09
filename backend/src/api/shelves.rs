@@ -31,7 +31,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     Router::new()
         .route("/api/v1/shelves", get(list_shelves).post(create_shelf))
-        .route("/api/v1/shelves/:id", get(get_shelf).delete(delete_shelf))
+        .route("/api/v1/shelves/:id", get(get_shelf).patch(patch_shelf).delete(delete_shelf))
         .route(
             "/api/v1/shelves/:id/order",
             put(put_shelf_order),
@@ -56,7 +56,7 @@ struct ListQuery {
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct CreateShelfRequest {
     name: String,
-    #[serde(default)]
+    #[serde(default, alias = "public")]
     is_public: bool,
 }
 
@@ -313,6 +313,63 @@ pub(crate) async fn add_book_to_shelf(
         return Err(AppError::Conflict);
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PatchShelfBody {
+    name: Option<String>,
+    public: Option<bool>,
+}
+
+/// PATCH /api/v1/shelves/:id — rename shelf or toggle public
+pub(crate) async fn patch_shelf(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<AuthenticatedUser>,
+    Path(shelf_id): Path<String>,
+    Json(body): Json<PatchShelfBody>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    ensure_owner(&state, &auth_user.user.id, &shelf_id).await?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    if let Some(ref name) = body.name {
+        sqlx::query(
+            "UPDATE shelves SET name = ?, last_modified = ? WHERE id = ?"
+        )
+        .bind(name)
+        .bind(&now)
+        .bind(&shelf_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    }
+
+    if let Some(public) = body.public {
+        let flag: i64 = if public { 1 } else { 0 };
+        sqlx::query(
+            "UPDATE shelves SET is_public = ?, last_modified = ? WHERE id = ?"
+        )
+        .bind(flag)
+        .bind(&now)
+        .bind(&shelf_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    }
+
+    let shelf = shelf_queries::get_shelf(&state.db, &shelf_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?
+        .into_shelf();
+    Ok(Json(serde_json::json!({
+        "id": shelf.id,
+        "name": shelf.name,
+        "public": shelf.is_public,
+        "book_count": shelf.book_count,
+        "created_at": shelf.created_at,
+        "last_modified": shelf.last_modified,
+    })))
 }
 
 /// Adds a book to a shelf via path params instead of JSON body.

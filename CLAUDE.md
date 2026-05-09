@@ -9,7 +9,7 @@ Design spec: docs/DESIGN.md
 Skills reference: docs/SKILLS.md
 
 ## Status
-Phases 1–28 complete. 44 tables, 28 migrations. Current release: v2.4.0.
+Phases 1–30 complete. Current release: v2.5.0.
 
 ## Stack
 - Backend: Rust, Axum 0.7, sqlx 0.7, SQLite default / MariaDB optional
@@ -66,7 +66,7 @@ Exposes: `search_books`, `get_book_metadata`, `list_chapters`, `get_book_text`, 
 Full versioning policy (sources of truth, increment rules, release procedure) is in
 `docs/ARCHITECTURE.md` → **Versioning Policy** section. Follow that document exactly.
 
-**Current version: 2.4.0** (tag `v2.4.0`)
+**Current version: 2.5.0** (tag `v2.5.0`)
 
 ---
 

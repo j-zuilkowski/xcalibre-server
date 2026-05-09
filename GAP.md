@@ -2,7 +2,7 @@
 
 > Compares **xcalibre-server** (Rust/Axum) against **calibre-web** (Python/Flask) as a web-based e-book server.
 >
-> Last updated: 2026-05-09 (Phase 30 gaps identified — false positives corrected)
+> Last updated: 2026-05-09 (Phase 30 complete ✅ — OPDS parity II, Kobo tag sync, shelf edit)
 > Reference: `archive/calibre-web` · calibre-web v0.6.x · xcalibre-server HEAD
 
 ---
@@ -218,7 +218,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | List shelves | ✅ | ✅ | ✅ |
 | Add/remove book to shelf | ✅ | ✅ | ✅ |
 | Delete shelf | ✅ | ✅ | ✅ |
-| Edit shelf settings (rename, toggle public) | ✅ `/shelf/edit/<id>` | ❌ | ❌ **Phase 30** |
+| Edit shelf settings (rename, toggle public) | ✅ `PATCH /api/v1/shelves/:id` | ✅ | ✅ **Phase 30** |
 | Reorder books in shelf | ✅ `GET+POST /shelf/order/<id>` | ✅ `PUT /api/v1/shelves/:id/order` | ✅ Phase 25 |
 | Simple/read-only shelf view | ✅ `/simpleshelf/<id>` | ❌ | ❌ |
 | Public shelves | ✅ | ✅ | ✅ |
@@ -254,7 +254,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | OPDS stats | ✅ `/opds/stats` | ✅ `/opds/stats` (JSON) | ✅ Phase 23 |
 | OPDS discover | ✅ `/opds/discover` | ✅ `/opds/discover` (shelf nav entries) | ✅ Phase 23 |
 
-**Gap (Phase 30 target):** Post-audit verification revealed three false positives. OPDS category/tag feeds, read/unread feeds, and book UUID lookup are absent from `opds.rs` — they were incorrectly marked ✅. Additionally, OPDS formats feed and per-shelf OPDS feeds have no routes. These are planned for Phase 30.
+**Resolved (Phase 30):** ✅ OPDS parity II implemented. All missing feeds added: category navigation/acquisition, category letter, formats navigation/acquisition, shelf index/per-shelf, readbooks/unreadbooks (token-authenticated), and `/ajax/book/:uuid` lookup.
 
 ---
 
@@ -273,7 +273,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 | Kobo user loyalty / recommendations / wishlist | ✅ mocked | ✅ mocked (GET/POST/DELETE) | ✅ Phase 24 |
 | Kobo image serving (`/<uuid>/<w>/<h>/…/image.jpg`) | ✅ | ✅ cover proxy + 1×1 placeholder | ✅ Phase 24 |
 
-**Gap (Phase 30 target):** A post-Phase 24 audit revealed that Kobo tag sync was incorrectly marked ✅. The routes `POST /v1/library/tags`, `DELETE /v1/library/tags/:tag_id`, `PUT /v1/library/tags/:tag_id`, `POST /v1/library/tags/:tag_id/items`, and `DELETE /v1/library/tags/:tag_id/items` are absent from `kobo.rs`. Without these routes, Kobo shelves/collections cannot be created or modified from the device — only read during sync. Planned for Phase 30.
+**Resolved (Phase 30):** ✅ Kobo tag sync implemented. Routes added: `POST /v1/library/tags`, `DELETE/PUT /v1/library/tags/:tag_id`, `POST /v1/library/tags/:tag_id/items`, `DELETE /v1/library/tags/:tag_id/items/delete`.
 
 ---
 
@@ -352,7 +352,7 @@ calibre-web has a full whitelist/blacklist system for email domains and per-user
 15. ✅ ~~**Task cancellation endpoint**~~ — Closed Phase 28. `DELETE /api/v1/admin/tasks/:id`.
 16. ✅ ~~**OPDS stats + discover**~~ — Closed Phase 23. `/opds/stats` + `/opds/discover`.
 
-### Remaining Open Gaps (Post Phase 28) — Phase 30 Targets
+### Remaining Open Gaps (Post Phase 30)
 
 **High — False Positives (were incorrectly marked ✅)**
 

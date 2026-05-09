@@ -170,8 +170,9 @@ async fn test_opds_ajax_book_uuid_lookup() {
 
 // Helper: extract first /opds/category/<id> href from Atom XML body.
 fn extract_category_id(xml: &str) -> Option<String> {
-    let prefix = "/opds/category/";
-    xml.split(prefix)
+    // Look for href="/opds/category/..." in link elements (not id elements)
+    let link_marker = r#"rel="subsection" href="/opds/category/"#;
+    xml.split(link_marker)
         .nth(1)
         .and_then(|s| s.split('"').next())
         .map(|s| s.to_string())

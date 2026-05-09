@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
+use axum::http::header;
 use axum::http::HeaderValue;
 use axum::http::Method;
 use axum_test::{TestRequest, TestServer};
@@ -667,7 +668,149 @@ impl TestContext {
         id
     }
 
-    /// Sets or clears the backup-in-progress guard on the app state.
+    
+    /// Creates an api_token for the default admin user. Returns the plain token string.
+    pub async fn create_api_token(&self, name: &str) -> String {
+        let token = self.admin_token().await;
+        let resp = self
+            .server
+            .post("/api/v1/admin/tokens")
+            .add_header(header::AUTHORIZATION, auth_header(&token))
+            .json(&serde_json::json!({ "name": name }))
+            .await;
+        resp.json::<serde_json::Value>()["token"]
+            .as_str()
+            .expect("api token response")
+            .to_string()
+    }
+
+    /// Seed a book and return its UUID id.
+    pub async fn seed_book(&self, title: &str) -> String {
+        self.create_book(title, "Test Author").await.id
+    }
+
+    /// Seed a book tagged with the given tag name. Returns book id.
+    pub async fn seed_book_with_tag(&self, title: &str, tag: &str) -> String {
+        let book_id = self.seed_book(title).await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let tag_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT OR IGNORE INTO tags (id, name, source, last_modified) VALUES (?, ?, 'manual', ?)"
+        )
+        .bind(&tag_id)
+        .bind(tag)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("seed tag");
+        sqlx::query(
+            "INSERT OR IGNORE INTO book_tags (book_id, tag_id, confirmed) VALUES (?, ?, 1)"
+        )
+        .bind(&book_id)
+        .bind(&tag_id)
+        .execute(&self.db)
+        .await
+        .expect("seed book_tag");
+        book_id
+    }
+
+    /// Seed a book with a format entry. Returns book id.
+    pub async fn seed_book_with_format(&self, title: &str, format: &str) -> String {
+        let now = chrono::Utc::now().to_rfc3339();
+        let book_id = self.seed_book(title).await;
+        let fmt_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT OR IGNORE INTO formats (id, book_id, format, path, size_bytes, created_at, last_modified) VALUES (?, ?, UPPER(?), ?, 0, ?, ?)"
+        )
+        .bind(&fmt_id)
+        .bind(&book_id)
+        .bind(format)
+        .bind(&format!("{}.{}", book_id, format))
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("seed book format");
+        book_id
+    }
+
+    /// Mark a book read/unread for the default test user.
+    pub async fn mark_book_read(&self, book_id: &str, is_read: bool) {
+        let user_id = self.last_user_id.borrow().clone().expect("no user created yet");
+        let flag: i64 = if is_read { 1 } else { 0 };
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO book_user_state (user_id, book_id, is_read, is_archived, updated_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT (user_id, book_id) DO UPDATE SET is_read = excluded.is_read"
+        )
+        .bind(&user_id)
+        .bind(book_id)
+        .bind(flag)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("mark_book_read");
+    }
+
+    /// Return the Kobo device book identifier (UUID) for a book.
+    pub async fn get_kobo_book_id(&self, book_id: &str) -> String {
+        book_id.to_string()
+    }
+
+    /// Return book UUID (same as id).
+    pub async fn get_book_uuid(&self, book_id: &str) -> String {
+        book_id.to_string()
+    }
+
+    /// Create a public shelf via the REST API and return its id.
+    pub async fn seed_public_shelf(&self, name: &str, token: &str) -> String {
+        let resp = self
+            .server
+            .post("/api/v1/shelves")
+            .add_header(header::AUTHORIZATION, auth_header(token))
+            .json(&serde_json::json!({ "name": name, "public": true }))
+            .await;
+        assert_eq!(resp.status_code().as_u16(), 201, "seed_public_shelf failed");
+        resp.json::<serde_json::Value>()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// Add a book to a shelf via the REST API.
+    pub async fn add_book_to_shelf(&self, book_id: &str, shelf_id: &str, token: &str) {
+        let resp = self
+            .server
+            .post(&format!("/api/v1/shelves/{shelf_id}/books"))
+            .add_header(header::AUTHORIZATION, auth_header(token))
+            .json(&serde_json::json!({ "book_id": book_id }))
+            .await;
+        assert!(matches!(resp.status_code().as_u16(), 200 | 204), "add_book_to_shelf got {}", resp.status_code());
+    }
+
+    /// Create a second user and return their JWT token.
+    pub async fn create_user_token(&self, email: &str) -> String {
+        self.seed_role("user").await;
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let username = email.split('@').next().unwrap_or("other");
+        let password_hash = "$argon2id$v=19$m=16,t=2,p=1$dGVzdA$testhashdoesnotmatter";
+        sqlx::query(
+            "INSERT INTO users (id, username, email, password_hash, role_id, is_active, force_pw_reset, created_at, last_modified) VALUES (?, ?, ?, ?, 'user', 1, 0, ?, ?)"
+        )
+        .bind(&user_id)
+        .bind(username)
+        .bind(email)
+        .bind(password_hash)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.db)
+        .await
+        .expect("create_user_token: insert user");
+        backend::middleware::auth::issue_access_token(&user_id, TEST_JWT_SECRET, 60)
+            .expect("create_user_token: issue token")
+    }
+
+/// Sets or clears the backup-in-progress guard on the app state.
     pub async fn set_backup_in_progress(&self, active: bool) {
         self.state.backup_in_progress.store(active, std::sync::atomic::Ordering::SeqCst);
     }
