@@ -779,6 +779,60 @@ External IDs are stored in the existing `identifiers` table with `id_type = "goo
 
 Frontend: `IdentifyModal` (`apps/web/src/features/library/IdentifyModal.tsx`) — search form + candidate picker, opened from the BookDetailPage action area (admin/can_edit only).
 
+### Phase 22 — Self-Update
+
+In-place binary replacement. Endpoint: `POST /api/v1/admin/system/update/apply`. Downloads the release binary from GitHub, verifies SHA-256 checksum against the `.sha256` sidecar file, runs an optional pre-update shell hook, then replaces the binary via rename. `dry_run: true` stops after checksum verification without replacing. `GET /api/v1/admin/system/update/status` returns updater config and last apply result. Config under `[updater]`: `enabled`, `auto_update`, `channel`, `pre_update_hook`, `block_if_hook_fails`.
+
+### Phase 23 — OPDS Enhancements
+
+Closed the OPDS compatibility gap for Stanza, Kybook, Chunky, Moon+, and other e-reader clients. New routes in `backend/src/api/opds.rs`:
+
+- **Cover serving**: `GET /opds/cover/:id` (JPEG/WebP), `/thumb` (240×240), `/large` (600×600). Backed by a 200-entry in-memory LRU cache keyed by `(book_id, variant)`. Content-Disposition: inline.
+- **OpenSearch descriptor**: `GET /opds/osd` — required by several OPDS clients for search discovery.
+- **Feeds**: `/opds/new` (30 most recent), `/opds/hot` (30 most downloaded via download_history JOIN), `/opds/stats` (JSON counts), `/opds/discover` (shelf navigation entries).
+- **Letter browsing**: `/opds/authors/letter/:char` and `/opds/series/letter/:char` — NFKD-normalized via `unicode-normalization` crate, case-insensitive.
+- **Path search**: `/opds/search/<path:query>` for calibre-web client compatibility.
+
+### Phase 24 — Kobo Mock Store Endpoints
+
+Older Kobo firmware (< 4.20) hits fake Kobo store endpoints during sync handshake. All 14 endpoints return hardcoded calibre-web-shaped JSON (`{ "Result": "Success", "Data": [] }` or equivalent). Image serving route `GET /kobo/:token/v1/images/:uuid/:w/:h/:q/:grey/image.jpg` resolves the book UUID, proxies the cover resized to the requested dimensions, or returns a 1×1 white JPEG placeholder. All routes registered in `backend/src/api/kobo.rs`.
+
+### Phase 25 — Shelf Reordering + Inline Serve
+
+**Shelf reordering**: `PUT /api/v1/shelves/:id/order` — body: `{ "book_ids": [...] }`. Runs in a transaction: validates all IDs are present and all shelf members are accounted for, then updates `position` on each `shelf_books` row. `GET /api/v1/shelves/:id` now returns books `ORDER BY position ASC`. Returns 400 if IDs are mismatched, 403 for non-owners (non-admin), 404 if shelf missing.
+
+**Inline serve**: `GET /api/v1/books/:id/view/:format` — identical to the download endpoint but sets `Content-Disposition: inline` instead of `attachment`. Used by browser epub extensions and web-based reading apps that rely on inline content-type serving.
+
+### Phase 26 — OAuth Account Linking
+
+Allows users registered with email+password to link a GitHub or Google OAuth account post-login, and to unlink it later.
+
+- `GET /api/v1/me/oauth/providers` — lists linked providers and available (unlinked) providers.
+- `GET /auth/oauth/:provider/link` — initiates OAuth flow; state token is `HMAC(user_id + nonce + timestamp, HKDF("xcalibre-server-oauth-link-v1"))`. Requires Bearer token or session cookie.
+- `GET /auth/oauth/:provider/link/callback` — verifies state, links provider account to user. Returns 409 if the provider account is already owned by a different user.
+- `DELETE /api/v1/me/oauth/:provider` — unlinks provider. Returns 400 if the user has no password hash and no remaining linked provider (lockout guard).
+
+### Phase 27 — Book Merge
+
+Deduplicates two book records into one. Admin-only.
+
+- `POST /api/v1/admin/books/merge/preview` — dry-run returning `{ formats_to_move, formats_conflict, annotations_to_move, shelves_to_relink, reading_progress_strategy }`. Returns 400 if source == target, 403 if not admin, 404 if either book missing.
+- `POST /api/v1/admin/books/merge` — executes in a single transaction: moves formats (file rename + DB update), moves annotations, relinks shelf_books (skips duplicate keys), merges reading progress by strategy (`keep_target` | `keep_source` | `merge_max`), deletes source record. Returns 409 on format conflict unless `force: true`.
+
+### Phase 28 — Admin API Gaps
+
+Seven admin endpoints closed from the calibre-web gap analysis. All require `is_admin = true`.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /api/v1/admin/logs?lines=N&level=` | Reads last N lines from `log.file`; parses as JSON; skips unparseable lines silently. 404 if file logging not configured. |
+| `POST /api/v1/admin/backup` | `VACUUM INTO '<backup.dir>/xcalibre-<timestamp>.db'`. AtomicBool prevents concurrent runs (409). |
+| `POST /api/v1/admin/covers/regenerate` | Enqueues `TaskKind::CoverRegenerate(book_id)` per book (empty array = all). Returns 202 immediately. |
+| `DELETE /api/v1/admin/tasks/:id` | Sets `tasks.status = 'cancelled'`; workers poll before each iteration. 404 if missing, 409 if complete. |
+| `GET /api/v1/admin/domains?allow=` | List domain allowlist/blocklist rules. |
+| `POST /api/v1/admin/domains` | Add rule `{ domain, allow }`. Enforced at registration. |
+| `DELETE /api/v1/admin/domains/:id` | Remove rule. |
+
 ---
 
 ## 11. Kobo Sync Protocol

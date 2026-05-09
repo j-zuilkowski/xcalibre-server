@@ -1,14 +1,14 @@
 # Project State — xcalibre-server (Rust Rewrite)
 
-_Last updated: 2026-04-28_
+_Last updated: 2026-05-09_
 
 > **Note:** Earlier versions of this file described the calibre-web Python predecessor project (audit results, dependency upgrades, flake8/bandit findings). That content is no longer relevant. The Rust rewrite is the active project.
 
 ---
 
-## Overall Status: Phase 21 Complete
+## Overall Status: Phase 28 Complete — v2.4.0
 
-Phase 21 delivered metadata enrichment with Google Books and Open Library Identify support. The codebase remains clean against the full post-Phase 16 review (two independent audit passes). No open findings.
+Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover serving, OSD, letter browsing, hot/trending, stats, discover), Kobo mock-store firmware compatibility, shelf reordering, inline book serve, OAuth account linking/unlinking, book merge with preview, and admin API gaps (log viewer, backup, cover regeneration, task cancellation, domain management). Full gap analysis in `GAP.md`. The codebase is clean — zero clippy warnings, zero audit CVEs.
 
 ---
 
@@ -37,6 +37,13 @@ Phase 21 delivered metadata enrichment with Google Books and Open Library Identi
 | Phase 19 | CI/CD pipeline, Playwright E2E, SECURITY.md, xs-migrate tests, v2.0 | ✅ Complete |
 | Phase 20 | Emby-style UI redesign (home dashboard, browse pages, alpha sidebar, MediaCard) | ✅ Complete |
 | Phase 21 | Metadata enrichment — Google Books + Open Library Identify feature | ✅ Complete |
+| Phase 22 | Self-update (in-place binary replacement, pre-update hook, auto-update) | ✅ Complete |
+| Phase 23 | OPDS enhancements (cover serving, OSD, letter browsing, hot/new/stats/discover) | ✅ Complete |
+| Phase 24 | Kobo mock store endpoints (firmware compat — 14 endpoints + image proxy) | ✅ Complete |
+| Phase 25 | Shelf reordering + inline book serve (`/view/:format`) | ✅ Complete |
+| Phase 26 | OAuth account linking/unlinking (post-login link flow, lockout guard) | ✅ Complete |
+| Phase 27 | Book merge with preview (format conflict detection, reading progress strategies) | ✅ Complete |
+| Phase 28 | Admin API gaps (log viewer, backup, cover regen, task cancel, domain CRUD) | ✅ Complete |
 
 ---
 
@@ -76,6 +83,8 @@ Phase 21 delivered metadata enrichment with Google Books and Open Library Identi
 
 Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
 
+> Phases 23–28 introduced no new migrations — all new features used existing schema tables (`tasks`, `shelves`, `book_formats`, `oauth_accounts`, `download_history`, `books`) or added columns handled in application logic.
+
 ---
 
 ## Quality Gates (last verified: 2026-04-28)
@@ -90,7 +99,7 @@ Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
 | Multi-arch Docker build (amd64/arm64/armv7) | ✅ Passing in CI |
 | Criterion benchmarks | Non-blocking CI job |
 
-_Last verified: 2026-04-28 (Phase 21 complete)_
+_Last verified: 2026-05-09 (Phase 28 complete — v2.4.0)_
 
 ---
 
