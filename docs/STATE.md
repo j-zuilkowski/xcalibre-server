@@ -6,13 +6,11 @@ _Last updated: 2026-05-09_
 
 ---
 
-## Overall Status: Phase 30 Complete — v2.5.0
+## Overall Status: Phase 22-KAG Complete — v2.6.0
 
-Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover serving, OSD, letter browsing, hot/trending, stats, discover), Kobo mock-store firmware compatibility, shelf reordering, inline book serve, OAuth account linking/unlinking, book merge with preview, and admin API gaps (log viewer, backup, cover regeneration, task cancellation, domain management). Full gap analysis in `GAP.md`. The codebase is clean — zero clippy warnings, zero audit CVEs.
+Phases 23–28 + 22-KAG closed the calibre-web parity gap: OPDS enhancements (cover serving, OSD, letter browsing, hot/trending, stats, discover), Kobo mock-store firmware compatibility, shelf reordering, inline book serve, OAuth account linking/unlinking, book merge with preview, and admin API gaps (log viewer, backup, cover regeneration, task cancellation, domain management). Full gap analysis in `GAP.md`. The codebase is clean — zero clippy warnings, zero audit CVEs.
 
-**Next planned:**
 - Phase 30 (v2.5.0) — OPDS parity II + Kobo tag sync + shelf edit (false-positive corrections from parity audit)
-- Phase 22-KAG (v2.6.0) — Knowledge-Augmented Generation graph layer (migration 0034, `graph/` module, 3 new API endpoints, MCP tool)
 
 ---
 
@@ -49,7 +47,7 @@ Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover servi
 | Phase 27 | Book merge with preview (format conflict detection, reading progress strategies) | ✅ Complete |
 | Phase 28 | Admin API gaps (log viewer, backup, cover regen, task cancel, domain CRUD) | ✅ Complete |
 | Phase 30 | OPDS parity II + Kobo tag sync + shelf edit (false-positive corrections) | 🟦 Planned — v2.5.0 |
-| Phase 22-KAG | KAG graph layer (knowledge_graph table, graph/ module, 3 endpoints, MCP tool) | 🟦 Planned — v2.6.0 |
+| Phase 22-KAG | KAG graph layer (knowledge_graph table, graph/ module, 3 endpoints, MCP tool) | ✅ Complete — v2.6.0 |
 
 ---
 
@@ -86,8 +84,9 @@ Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover servi
 | `0026_api_token_scope.sql` | `scope` column on `api_tokens` | ✅ Applied |
 | `0027_book_user_state_book_id_idx.sql` | `idx_book_user_state_book_id` index | ✅ Applied |
 | `0028_memory_chunks.sql` | `memory_chunks` table + FTS5 + indexes | ✅ Applied |
+| `0034_knowledge_graph.sql` | `knowledge_graph` table + 4 indexes + FTS5 + triggers | ✅ Applied |
 
-Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
+Total: **45 tables, 29 migrations** across SQLite and MariaDB migration sets.
 
 > Phases 23–28 introduced no new migrations — all new features used existing schema tables (`tasks`, `shelves`, `book_formats`, `oauth_accounts`, `download_history`, `books`) or added columns handled in application logic.
 

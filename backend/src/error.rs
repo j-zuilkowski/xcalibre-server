@@ -12,6 +12,8 @@ use utoipa::ToSchema;
 pub enum AppError {
     #[error("bad request")]
     BadRequest,
+    #[error("{0}")]
+    BadRequestMessage(String),
     #[error("unauthorized")]
     Unauthorized,
     #[error("{0}")]
@@ -54,6 +56,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             AppError::BadRequest => (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request"}))).into_response(),
+            AppError::BadRequestMessage(msg) => (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response(),
             AppError::Unauthorized | AppError::UnauthorizedMessage(_) => {
                 (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response()
             }

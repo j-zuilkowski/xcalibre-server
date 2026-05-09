@@ -154,6 +154,21 @@ pub struct SemanticSearchResult {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct GraphTraverseRequest {
+    /// Starting entity name (e.g. "U4", "FnA", "turmeric")
+    pub anchor: String,
+    /// BFS depth — server clamps to its configured max (default 3)
+    #[serde(default = "default_graph_hops")]
+    pub hops: u8,
+    /// Optional domain filter (e.g. "electronics", "software")
+    pub domain_id: Option<String>,
+}
+
+fn default_graph_hops() -> u8 {
+    2
+}
+
 #[tool_router(router = tool_router)]
 impl CalibreMcpServer {
     pub fn new(db: SqlitePool, config: AppConfig) -> anyhow::Result<Self> {
@@ -465,6 +480,52 @@ impl CalibreMcpServer {
 
         let value = serde_json::to_value(result).map_err(internal_error)?;
         Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(
+        name = "graph_traverse",
+        description = "BFS-traverse the knowledge graph from an anchor entity. Returns typed entity-relationship triples reachable within the specified hop count. Filter by domain_id to restrict results to a subject area."
+    )]
+    pub async fn graph_traverse(
+        &self,
+        Parameters(params): Parameters<GraphTraverseRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let anchor = params.anchor.trim();
+        if anchor.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "anchor is required",
+                Some(serde_json::json!({ "field": "anchor" })),
+            ));
+        }
+
+        let Some(token) = self.api_token.as_deref() else {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "graph_traverse_unavailable: configure XCS_API_TOKEN or APP_API_TOKEN.",
+            )]));
+        };
+
+        let mut query = vec![
+            ("anchor".to_string(), anchor.to_string()),
+            ("hops".to_string(), params.hops.to_string()),
+        ];
+        if let Some(domain) = params.domain_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            query.push(("domain_id".to_string(), domain.to_string()));
+        }
+
+        let url = format!("{}/api/v1/graph/traverse", self.api_base_url);
+        let response = self
+            .api_client
+            .get(url)
+            .bearer_auth(token)
+            .query(&query)
+            .send()
+            .await
+            .map_err(internal_error)?
+            .error_for_status()
+            .map_err(internal_error)?;
+
+        let body: serde_json::Value = response.json().await.map_err(internal_error)?;
+        Ok(CallToolResult::structured(body))
     }
 }
 

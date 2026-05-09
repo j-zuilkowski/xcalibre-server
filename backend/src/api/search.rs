@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/search/semantic", get(search_semantic))
         .route("/api/v1/search/chunks", get(search_chunks))
         .route("/api/v1/search/suggestions", get(search_suggestions))
+        .route("/api/v1/search/enriched", get(enriched_search))
         .route("/api/v1/system/search-status", get(search_status))
         .route_layer(auth_layer)
 }
@@ -119,7 +120,7 @@ pub(crate) struct ChunkSearchResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ChunkSearchItem {
+pub struct ChunkSearchItem {
     chunk_id: String,
     source: String,
     book_id: Option<String>,
@@ -1117,4 +1118,101 @@ fn parse_truthy_bool(value: Option<&str>) -> bool {
         value.map(|value| value.trim().to_ascii_lowercase()),
         Some(value) if matches!(value.as_str(), "true" | "1" | "yes" | "on")
     )
+}
+
+// ── Enriched search ──────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct EnrichedSearchQuery {
+    pub q: Option<String>,
+    #[serde(default = "default_enriched_hops")]
+    pub hops: u8,
+    pub domain_id: Option<String>,
+    pub limit: Option<u32>,
+}
+
+fn default_enriched_hops() -> u8 {
+    1
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EnrichedSearchResponse {
+    pub chunks: Vec<ChunkSearchItem>,
+    pub graph: crate::api::graph::TraverseResponse,
+}
+
+/// Runs a simplified book-chunk search without per-user auth filtering.
+/// Used by the enriched search endpoint.
+pub async fn run_simple_chunk_search(
+    state: &AppState,
+    query: &str,
+    limit: Option<u32>,
+) -> Result<Vec<ChunkSearchItem>, AppError> {
+    let normalized_query =
+        normalize_fts_query(Some(query)).ok_or(AppError::BadRequest)?;
+    let chunk_limit = clamp_chunk_limit(limit.unwrap_or(10));
+
+    let filters = chunk_queries::ChunkSearchFilters {
+        book_ids: &[],
+        collection_id: None,
+        chunk_type: None,
+    };
+
+    let bm25_hits = chunk_queries::search_chunks_bm25(&state.db, &normalized_query, &filters, chunk_limit as i64)
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut chunks: Vec<ChunkSearchItem> = Vec::new();
+    for hit in bm25_hits {
+        chunks.push(ChunkSearchItem {
+            chunk_id: hit.id.clone(),
+            source: "books".to_string(),
+            book_id: Some(hit.book_id.clone()),
+            book_title: None,
+            heading_path: hit.heading_path.clone(),
+            chunk_type: hit.chunk_type.as_str().to_string(),
+            text: hit.text.clone(),
+            word_count: Some(hit.word_count),
+            bm25_score: hit.bm25_score,
+            cosine_score: hit.cosine_score,
+            rrf_score: 0.0,
+            rerank_score: None,
+        });
+        if chunks.len() >= chunk_limit {
+            break;
+        }
+    }
+
+    Ok(chunks)
+}
+
+pub(crate) async fn enriched_search(
+    State(state): State<AppState>,
+    Query(q): Query<EnrichedSearchQuery>,
+) -> Result<Json<EnrichedSearchResponse>, AppError> {
+    let query_text = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| {
+        AppError::BadRequestMessage("q parameter is required".to_string())
+    })?;
+
+    // Run chunk search and graph traversal concurrently.
+    let (chunks_result, graph_result) = tokio::join!(
+        run_simple_chunk_search(&state, query_text, q.limit),
+        crate::graph::traverse::bfs_traverse(
+            &state.db,
+            crate::graph::traverse::TraverseParams {
+                anchor: query_text,
+                hops: q.hops,
+                max_hops: state.config.kag.max_hops,
+                domain_id: q.domain_id.as_deref(),
+            },
+        )
+    );
+
+    let chunks = chunks_result.unwrap_or_default();
+    let triples = graph_result.unwrap_or_default();
+
+    Ok(Json(EnrichedSearchResponse {
+        chunks,
+        graph: crate::api::graph::TraverseResponse { triples },
+    }))
 }

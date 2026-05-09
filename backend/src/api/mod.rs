@@ -43,6 +43,7 @@ pub mod users;
 pub mod watch_folder;
 pub mod webhooks;
 pub mod books_admin;
+pub mod graph;
 
 /// Assembles the complete application router with all sub-routers and global middleware.
 pub fn router(state: crate::AppState) -> Router {
@@ -69,6 +70,7 @@ pub fn router(state: crate::AppState) -> Router {
         .nest("/kobo/:kobo_token/v1", kobo::router(state.clone()))
         .merge(llm::router(state.clone()))
         .merge(memory::router(state.clone()))
+        .merge(graph::router(state.clone()))
         .nest("/opds", opds::router(state.clone()))
         .merge(shelves::router(state.clone()))
         .merge(search::router(state.clone()))

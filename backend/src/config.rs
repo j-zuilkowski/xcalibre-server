@@ -59,6 +59,7 @@ pub struct AppConfig {
     pub ldap: LdapSection,
     pub metadata: MetadataLookupSection,
     pub meilisearch: MeilisearchSection,
+    pub kag: KagSection,
     pub network: NetworkSection,
     pub llm: LlmSection,
     pub limits: LimitsSection,
@@ -464,6 +465,19 @@ impl Default for MeilisearchSection {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KagSection {
+    /// Maximum BFS hops for graph traversal; values above this are clamped.
+    pub max_hops: u8,
+}
+
+impl Default for KagSection {
+    fn default() -> Self {
+        Self { max_hops: 3 }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmRoleSection {
@@ -518,6 +532,7 @@ impl Default for AppConfig {
             ldap: LdapSection::default(),
             metadata: MetadataLookupSection::default(),
             meilisearch: MeilisearchSection::default(),
+            kag: KagSection::default(),
             network: NetworkSection::default(),
             llm: LlmSection::default(),
             limits: LimitsSection {
