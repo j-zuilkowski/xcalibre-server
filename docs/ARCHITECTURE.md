@@ -1,7 +1,7 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phases 1–21 Complete (v1.0.0); Phases 19–22 (gap closures) In Progress; Phase 23 (KAG) Planned_
-_Last updated: 2026-05-06_
+_Status: Active — Phases 1–28 Complete (v2.4.0); Phase 22 (KAG) Planned_
+_Last updated: 2026-05-09_
 
 ---
 
@@ -261,8 +261,9 @@ The `Secure` cookie flag is set automatically when `APP_BASE_URL` starts with `h
 - Mobile: Expo SecureStore
 - Roles: Admin, User
 - **OAuth/SSO**: Google + GitHub (`oauth2` crate); callback at `/auth/oauth/:provider/callback`; auto-creates local user on first login (email as username, random password); requires `[oauth.google]` / `[oauth.github]` in `config.toml`
+- **OAuth account linking** (Phase 26): authenticated users can link additional OAuth providers post-registration via `GET /auth/oauth/:provider/link`. State token is HMAC-signed over `user_id + nonce + timestamp` (HKDF salt `b"xcalibre-server-oauth-link-v1"`). Callback at `/auth/oauth/:provider/link/callback` verifies state, checks for provider-account conflicts (409 if already linked to another user), and inserts into `oauth_accounts`. `GET /api/v1/me/oauth/providers` lists linked vs available providers. `DELETE /api/v1/me/oauth/:provider` unlinks — guarded against lockout: 400 if the user has no password hash and no remaining linked provider.
 - **LDAP**: `ldap3` crate; bind DN + filter configurable in `config.toml`; tried after local auth fails; LDAP connection failure logs warning and falls through to local auth
-- **API tokens**: long-lived tokens for MCP and Kobo device auth; SHA256-hashed in DB
+- **API tokens**: long-lived tokens for MCP and Kobo device auth; SHA256-hashed in DB; scoped (`read`/`write`/`admin`); expiry enforced; revoked on user delete
 - Upload permission is configurable per role — Admin always can; User upload is toggled in role config
 - **Account lockout** after N failed logins (default 10, configurable) — resets after 15 min
 - **Session list** in user profile — view and revoke active sessions
@@ -331,6 +332,20 @@ Lives at `/admin/*` in the same SPA. All routes server-side guarded by `Admin` r
 | Migration | Run `xs-migrate`, view import log, re-run failed records |
 | Jobs | LLM job queue — pending, running, failed, completed |
 | System | App version, DB stats, storage usage, Meilisearch status |
+
+### Admin API Endpoints (Phase 28)
+
+The following admin REST endpoints are available under `/api/v1/admin/` (all require `is_admin = true`):
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/admin/logs?lines=N&level=info\|warn\|error` | Return last N lines (default 100, max 500) of the structured JSON log file as a JSON array. Requires `log.file` to be configured in `config.toml`; returns 404 if file logging is not configured. |
+| `POST /api/v1/admin/backup` | Trigger `VACUUM INTO '<backup_dir>/xcalibre-<timestamp>.db'`. Backup directory is set by `[backup] dir` in `config.toml` (default `./backups`). AtomicBool prevents concurrent backups — returns 409 if one is already running. Response: `{ "path": "<filename>" }`. |
+| `POST /api/v1/admin/covers/regenerate` | Body: `{ "book_ids": [...] }`. Empty array regenerates all covers. Enqueues a `TaskKind::CoverRegenerate(book_id)` per book. Returns 202 `{ "queued": N }` immediately. |
+| `DELETE /api/v1/admin/tasks/:task_id` | Cancel a background task. Sets `tasks.status = 'cancelled'`; workers poll this flag before each unit of work. Returns 200 if cancelled, 404 if not found, 409 if already complete. |
+| `GET /api/v1/admin/domains?allow=true\|false` | List email domain rules for the allowlist or blocklist. |
+| `POST /api/v1/admin/domains` | Add a domain rule: `{ "domain": "example.com", "allow": true }`. Enforced at registration — when any `allow=true` rule exists, only matching domains may register; `allow=false` rules blacklist specific domains. |
+| `DELETE /api/v1/admin/domains/:id` | Remove a domain rule. |
 
 ---
 
@@ -1023,6 +1038,80 @@ semantic_search_relevance  │ ✅ PASS    │ ✅ PASS   │ ❌ FAIL │
 | Derived works | `GET /api/v1/books/:id/derive` | Yes |
 | **Chapter listing** | `GET /api/v1/books/:id/chapters` | **No — content API** |
 | **Text extraction** | `GET /api/v1/books/:id/text?chapter=N` | **No — content API** |
+
+---
+
+## OPDS Catalog
+
+xcalibre-server serves a full OPDS-PS 1.2 catalog. All browse endpoints use HTTP Basic Auth. Download links are token-gated.
+
+### Browse Feeds
+
+| Route | Description |
+|---|---|
+| `GET /opds` | Root catalog — navigation entries to all browse feeds |
+| `GET /opds/new` | 30 most recently added books (sorted by `created_at DESC`) |
+| `GET /opds/hot` | 30 most-downloaded books (ranked by `download_history` count) |
+| `GET /opds/search?q=` | Full-text search results as an OPDS acquisition feed |
+| `GET /opds/search/<path:query>` | Path-based query variant for calibre-web–compatible clients |
+| `GET /opds/authors` | Author navigation feed |
+| `GET /opds/authors/letter/:char` | Books whose author sort starts with `:char` — NFKD-normalized, case-insensitive; handles non-ASCII |
+| `GET /opds/series` | Series navigation feed |
+| `GET /opds/series/letter/:char` | Books in series starting with `:char` |
+| `GET /opds/publishers` | Publisher navigation feed |
+| `GET /opds/languages` | Language navigation feed |
+| `GET /opds/ratings/:rating/books` | Books at a specific rating |
+| `GET /opds/stats` | JSON library statistics: `{ total_books, total_authors, total_series, total_tags, total_formats }` |
+| `GET /opds/discover` | Navigation feed listing all shelf names |
+
+### Cover Serving
+
+Covers are served directly from the OPDS namespace with in-memory LRU caching (200 entries, keyed by `book_id + variant`):
+
+| Route | Description |
+|---|---|
+| `GET /opds/cover/:book_id` | Original cover — JPEG or WebP based on `Accept` header; 404 if no cover |
+| `GET /opds/cover/:book_id/thumb` | 240×240 thumbnail |
+| `GET /opds/cover/:book_id/large` | 600×600 large variant |
+
+All cover responses set `Content-Disposition: inline`.
+
+### OpenSearch Descriptor
+
+`GET /opds/osd` returns an OpenSearch descriptor XML document (`application/opensearchdescription+xml`). Required by Stanza, Kybook, and several other OPDS clients for search discovery. Contains a `<Url type="application/atom+xml;profile=opds-catalog">` template pointing to `/opds/search?q={searchTerms}`.
+
+---
+
+## Background Tasks
+
+Long-running work is dispatched to a SQLite-backed task queue. Workers poll `tasks.status` before each unit of work and exit early if `status = 'cancelled'`.
+
+### Task Kinds
+
+| TaskKind | Trigger | Notes |
+|---|---|---|
+| `ClassifyBook(book_id)` | Post-ingest, or admin bulk classify | LLM-gated |
+| `SemanticIndex(book_id)` | Post-ingest or reindex | Embeds chunks via `llm.embedding_model` |
+| `CoverRegenerate(book_id)` | `POST /api/v1/admin/covers/regenerate` | Extracts and resizes cover from source file |
+| `ScheduledClassify` | Cron-scheduled | Classifies all unclassified books |
+| `ScheduledReindex` | Cron-scheduled | Re-embeds all chunks |
+| `ScheduledBackup` | Cron-scheduled | Runs `VACUUM INTO` to backup directory |
+
+### Task Cancellation Protocol
+
+1. Client calls `DELETE /api/v1/admin/tasks/:task_id`.
+2. Handler sets `tasks.status = 'cancelled'` in the DB.
+3. Worker checks `status` at the start of each book-level iteration.
+4. If `cancelled`, worker exits the loop and marks the task complete.
+5. Returns 200 if the task was running, 404 if not found, 409 if already complete or failed.
+
+### Task Status Lifecycle
+
+```
+queued → running → complete
+                 → failed
+                 → cancelled   (via DELETE /admin/tasks/:id)
+```
 
 ---
 

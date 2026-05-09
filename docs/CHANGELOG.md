@@ -8,6 +8,65 @@ All notable changes to the xcalibre-server Rust rewrite. Format: `[YYYY-MM-DD] �
 
 ---
 
+## [2.4.0] — 2026-05-09
+
+### Added
+
+**OPDS Enhancements (Phase 23)**
+- `GET /opds/cover/:book_id` — inline cover serving (JPEG or WebP via Accept header); 404 when no cover
+- `GET /opds/cover/:book_id/thumb` — 240×240 thumbnail variant (LRU-cached, 200 entries)
+- `GET /opds/cover/:book_id/large` — 600×600 variant
+- `GET /opds/osd` — OpenSearch descriptor XML for e-reader client search discovery
+- `GET /opds/search/<path:query>` — path-based query variant for calibre-web client compatibility
+- `GET /opds/new` — 30 most-recently-added books feed
+- `GET /opds/hot` — 30 most-downloaded books feed (ranked via download_history)
+- `GET /opds/stats` — library statistics JSON (books, authors, series, tags, formats)
+- `GET /opds/discover` — OPDS navigation feed listing all shelf names
+- `GET /opds/authors/letter/:char` — letter-based author browsing (NFKD-normalized, case-insensitive)
+- `GET /opds/series/letter/:char` — letter-based series browsing
+
+**Kobo Mock Store Compatibility (Phase 24)**
+- 14 fake Kobo store endpoints required by older Kobo firmware during sync handshake:
+  products/books/prices, products/books/recommendations, products/dailydeal, analytics/gettests,
+  deals, affiliate, user/loyalty/benefits, user/recommendations, user/wishlist (GET/POST/DELETE),
+  user/profile, products/books/:id
+- `GET /kobo/:token/v1/images/:uuid/:w/:h/:q/:grey/image.jpg` — cover image proxy for Kobo device UI
+
+**Shelf Reordering + Inline Serve (Phase 25)**
+- `PUT /api/v1/shelves/:id/order` — reorder books within a shelf by providing an ordered `book_ids` list; transactional, validates completeness
+- `GET /api/v1/books/:id/view/:format` — serve book inline (`Content-Disposition: inline`) for browser extensions and web reader apps; mirrors `/download` without forcing save dialog
+
+**OAuth Account Linking (Phase 26)**
+- `GET /api/v1/me/oauth/providers` — list linked and available OAuth providers per user
+- `GET /auth/oauth/:provider/link` — initiate post-login OAuth link flow; state HMAC-signed with `user_id + nonce + timestamp`
+- `GET /auth/oauth/:provider/link/callback` — complete link; 409 if provider account already owned by another user
+- `DELETE /api/v1/me/oauth/:provider` — unlink provider; 400 guard prevents lockout when no other auth method exists
+
+**Book Merge (Phase 27)**
+- `POST /api/v1/admin/books/merge/preview` — dry-run showing formats to move, conflicts, annotation count, shelves to relink, reading progress strategy
+- `POST /api/v1/admin/books/merge` — execute merge in a single transaction: move formats, annotations, shelf links; merge reading progress with configurable strategy (`keep_target` | `keep_source` | `merge_max`); 409 on format conflict without `force: true`
+
+**Admin API Gaps (Phase 28)**
+- `GET /api/v1/admin/logs?lines=&level=` — stream last N structured log lines from configured log file
+- `POST /api/v1/admin/backup` — trigger `VACUUM INTO` backup; 409 guard prevents concurrent backups
+- `POST /api/v1/admin/covers/regenerate` — enqueue cover regeneration for specified books (or all); returns 202 with queued count
+- `DELETE /api/v1/admin/tasks/:task_id` — cancel a running background task by ID
+- `GET /api/v1/admin/domains` — list email domain allowlist/blocklist entries
+- `POST /api/v1/admin/domains` — add domain rule; enforced at registration
+- `DELETE /api/v1/admin/domains/:id` — remove domain rule
+
+**Documentation (Phase 29)**
+- `GAP.md` added to repo root — detailed calibre-web vs xcalibre-server route and feature gap analysis
+- All Phase 23–28 closures reflected in `GAP.md` status columns and priority lists
+- `ARCHITECTURE.md` updated: OPDS, OAuth linking flow, admin endpoints, background task cancellation protocol
+- `TEST_PHASES.md` updated with all Phase 23–28 backend integration test files
+- `REQUIREMENTS.md` updated with calibre-web parity checklist
+
+### Fixed
+- `test_oauth_linking.rs` — `oauth_linking_context` helper now wraps `TestServer` in `CompatTestServer` (Phase 26a fix)
+
+---
+
 ## [2.0.0] — 2026-04-28
 
 ### Added

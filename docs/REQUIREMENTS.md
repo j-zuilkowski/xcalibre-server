@@ -100,3 +100,86 @@
 6. Page order / OCR artifact detection (Med)
 7. Extensive semantic search (High)
 8. Derived works (High)
+
+---
+
+## calibre-web Parity Checklist
+
+Tracks feature parity between xcalibre-server and calibre-web (Python/Flask). Full gap analysis in `GAP.md`.
+
+### Auth & User Management
+- [x] Username + password login (Argon2id + JWT)
+- [x] Persistent session (refresh token)
+- [x] Magic link login (Phase 19)
+- [x] TOTP 2FA + backup codes (Phase 17)
+- [x] OAuth — Google + GitHub (Phase 9)
+- [x] OAuth account linking/unlinking (Phase 26)
+- [x] LDAP authentication (Phase 9)
+- [x] API tokens — scoped + expiring (Phase 17)
+- [x] Account lockout + brute-force protection (Phase 1)
+- [x] Per-user roles (admin/user) (Phase 1)
+- [ ] LDAP bulk user import
+- [ ] Remote login token flow (replaced by magic links — intentional)
+
+### Library Browsing
+- [x] Browse by author, publisher, series, rating, format, language, tag (Phases 9–10)
+- [x] Search (FTS5, semantic, hybrid) (Phase 4/15)
+- [x] Advanced search with query params (Phase 1)
+- [x] Download history (Phase 10)
+- [x] Read/unread state per user (Phase 10)
+- [x] Reading statistics + streaks (Phase 11)
+- [ ] Table view + column preferences
+- [ ] Hot/trending browse (non-OPDS)
+
+### Book Management
+- [x] Upload (single + bulk) (Phase 1/9)
+- [x] Cover upload + auto-extract (Phase 1)
+- [x] Metadata editing (single + bulk) (Phase 1/9)
+- [x] Delete book / delete specific format (Phase 1)
+- [x] Multiple formats per book (Phase 9)
+- [x] Book merge + simulation/preview (Phase 27)
+- [x] Inline serve without download (Phase 25)
+- [ ] Format conversion (requires Calibre binary — out of scope)
+- [ ] Sort-value endpoint
+- [ ] Bulk display-status toggle
+
+### Shelves
+- [x] Create, list, add/remove, delete shelf (Phase 9)
+- [x] Public shelves (Phase 9)
+- [x] Shelf reordering (Phase 25)
+- [ ] Shelf configuration/edit
+- [ ] Simple/read-only shelf view
+
+### OPDS
+- [x] Root catalog + author/series/publisher/language/rating/tag feeds (Phases 9–10)
+- [x] Cover serving (original + thumb + large) with LRU cache (Phase 23)
+- [x] OpenSearch descriptor (Phase 23)
+- [x] Letter-based browsing — authors + series (Phase 23)
+- [x] Hot/trending feed (Phase 23)
+- [x] New releases feed (Phase 23)
+- [x] Stats + discover feeds (Phase 23)
+- [x] Path-based search variant (Phase 23)
+
+### Kobo Sync
+- [x] Device registration, library sync, reading state, bookmarks, tags (Phase 9)
+- [x] Mock store endpoints — firmware compatibility (Phase 24)
+- [x] Kobo image proxy (Phase 24)
+
+### Admin
+- [x] User management API (Phase 1)
+- [x] Scheduled tasks (Phase 10)
+- [x] In-app update checker + apply (Phase 22)
+- [x] Admin log viewer API (Phase 28)
+- [x] Metadata backup (Phase 28)
+- [x] Cover regeneration queue (Phase 28)
+- [x] Task cancellation (Phase 28)
+- [x] Domain allowlist/blocklist (Phase 28)
+- [ ] Admin HTML UI (intentional — API-only)
+- [ ] Log file download
+- [ ] Scheduled task HTML form
+
+### Metadata
+- [x] Open Library + Google Books enrichment (Phase 9)
+- [x] Enrichment result cache (Phase 9)
+- [x] LLM-assisted classification + tagging (Phase 5)
+- [ ] Runtime metadata provider switching (config.toml only)
