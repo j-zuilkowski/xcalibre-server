@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "backend"
-version = "1.0.0"
+version = "2.4.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "calibre-mcp"
-version = "1.0.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -6788,7 +6788,7 @@ checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 
 [[package]]
 name = "xs-migrate"
-version = "1.0.0"
+version = "2.4.0"
 dependencies = [
  "anyhow",
  "chrono",
