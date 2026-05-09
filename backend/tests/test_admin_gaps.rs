@@ -27,7 +27,7 @@ async fn test_admin_logs_happy_path_and_level_validation() {
 
     let ok = ctx
         .server
-        .get("/api/v1/admin/logs").add_query_param("lines", "50").add_query_param("level", "error")
+        .get("/api/v1/admin/logs?lines=50&level=error")
         .add_header(header::AUTHORIZATION, auth_header(&admin))
         .await;
     assert_status!(ok, 200);
@@ -36,7 +36,7 @@ async fn test_admin_logs_happy_path_and_level_validation() {
 
     let bad = ctx
         .server
-        .get("/api/v1/admin/logs").add_query_param("level", "nope")
+        .get("/api/v1/admin/logs?level=nope")
         .add_header(header::AUTHORIZATION, auth_header(&admin))
         .await;
     assert_status!(bad, 400);
@@ -153,7 +153,7 @@ async fn test_admin_domains_crud_and_registration_enforcement() {
 
     let list_allow = ctx
         .server
-        .get("/api/v1/admin/domains").add_query_param("allow", "true")
+        .get("/api/v1/admin/domains?allow=true")
         .add_header(header::AUTHORIZATION, auth_header(&admin))
         .await;
     assert_status!(list_allow, 200);
@@ -167,7 +167,7 @@ async fn test_admin_domains_crud_and_registration_enforcement() {
 
     let forbidden = ctx
         .server
-        .get("/api/v1/admin/domains").add_query_param("allow", "true")
+        .get("/api/v1/admin/domains?allow=true")
         .add_header(header::AUTHORIZATION, auth_header(&user))
         .await;
     assert_status!(forbidden, 403);

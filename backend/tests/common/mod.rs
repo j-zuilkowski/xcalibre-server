@@ -1,7 +1,8 @@
 #![allow(dead_code, unused_imports)]
 
 use axum::http::HeaderValue;
-use axum_test::TestServer;
+use axum::http::Method;
+use axum_test::{TestRequest, TestServer};
 use backend::{
     app,
     config::AppConfig,
@@ -31,11 +32,74 @@ pub struct LoginResult {
 pub struct TestContext {
     pub db: SqlitePool,
     pub storage: TempDir,
-    pub server: TestServer,
+    pub server: CompatTestServer,
     pub state: AppState,
     /// Tracks the most recently created user ID for provider-linking helpers.
     /// Uses `RefCell` for interior mutability since helper methods take `&self`.
     pub last_user_id: RefCell<Option<String>>,
+}
+
+pub struct CompatTestServer {
+    inner: TestServer,
+}
+
+impl CompatTestServer {
+    pub fn new(inner: TestServer) -> Self {
+        Self { inner }
+    }
+
+    pub fn get(&self, path: &str) -> TestRequest {
+        self.method(Method::GET, path)
+    }
+
+    pub fn post(&self, path: &str) -> TestRequest {
+        self.method(Method::POST, path)
+    }
+
+    pub fn put(&self, path: &str) -> TestRequest {
+        self.method(Method::PUT, path)
+    }
+
+    pub fn patch(&self, path: &str) -> TestRequest {
+        self.method(Method::PATCH, path)
+    }
+
+    pub fn delete(&self, path: &str) -> TestRequest {
+        self.method(Method::DELETE, path)
+    }
+
+    fn method(&self, method: Method, path: &str) -> TestRequest {
+        let (base, query) = split_path_and_query(path);
+        let req = self.inner.method(method, base);
+        apply_inline_query(req, query)
+    }
+}
+
+impl std::ops::Deref for CompatTestServer {
+    type Target = TestServer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+fn split_path_and_query(path: &str) -> (&str, Option<&str>) {
+    match path.split_once('?') {
+        Some((base, query)) if !base.is_empty() => (base, Some(query)),
+        Some((_base, query)) => ("/", Some(query)),
+        None => (path, None),
+    }
+}
+
+fn apply_inline_query(mut request: TestRequest, query: Option<&str>) -> TestRequest {
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if !pair.is_empty() {
+                request = request.add_raw_query_param(pair);
+            }
+        }
+    }
+    request
 }
 
 pub async fn test_db() -> SqlitePool {
@@ -69,7 +133,7 @@ impl TestContext {
         let state = AppState::new(db.clone(), config)
             .await
             .expect("initialize app state");
-        let server = TestServer::new(app(state.clone())).expect("build test server");
+        let server = CompatTestServer::new(TestServer::new(app(state.clone())).expect("build test server"));
 
         Self {
             db,
