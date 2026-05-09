@@ -1,6 +1,6 @@
 # calibre-web Rewrite — Architecture Document
 
-_Status: Active — Phases 1–28 Complete (v2.4.0); Phase 30 (OPDS Parity II + Kobo Tag Sync + Shelf Edit) Planned; Phase 22 (KAG) Planned_
+_Status: Active — Phases 1–30 Complete (v2.5.0); Phase 30 (OPDS Parity II + Kobo Tag Sync + Shelf Edit) Planned → v2.5.0; Phase 22-KAG (Knowledge-Augmented Generation) Planned → v2.6.0_
 _Last updated: 2026-05-09_
 
 ---
@@ -1622,19 +1622,25 @@ Validates uniqueness of new name per user. Partial update (one or both fields). 
 
 ---
 
-### Phase 22 — KAG Knowledge Graph Layer [Planned]
+### Phase 22-KAG — Knowledge Graph Layer [Planned → v2.6.0]
 
-Implements the KAG layer described in the [KAG — Knowledge Graph Layer](#kag--knowledge-graph-layer-planned-phase-22) section above.
+Implements the KAG layer described in the [KAG — Knowledge Graph Layer](#kag--knowledge-graph-layer-planned-phase-22) section above. Scheduled after Phase 30 (v2.5.0) ships.
 
-- [ ] Migration `0029_knowledge_graph.sql` + FTS5 virtual table
-- [ ] `graph/extract.rs` — LLM triple extraction job (gated behind `llm.enabled`)
-- [ ] `graph/traverse.rs` — BFS traversal with domain + source filters
-- [ ] `POST /api/v1/graph/triples` — Merlin session triple ingest
-- [ ] `GET /api/v1/graph/traverse` — BFS query endpoint
-- [ ] `GET /api/v1/search/enriched` — fused chunk + graph response
-- [ ] Ingestion pipeline extended: triple extraction queued after embed
-- [ ] `graph_traverse` MCP tool in `calibre-mcp`
-- [ ] Integration tests + eval fixtures per domain
+Phase files: `docs/phase-22a-kag-tests.md` (failing tests) + `docs/phase-22b-kag-impl.md` (implementation).
+
+- [ ] Migration `0034_knowledge_graph.sql` (SQLite + MariaDB) + FTS5 virtual table + 4 indexes
+- [ ] `[kag]` config section in `AppConfig` (`enabled`, `extraction_confidence`, `max_hops`)
+- [ ] `backend/src/graph/mod.rs` — module root
+- [ ] `backend/src/graph/traverse.rs` — iterative BFS (indexed SQL loop, not recursive CTE)
+- [ ] `backend/src/graph/extract.rs` — `ExtractTriples(book_id)` job, LLM-gated, queued after embed
+- [ ] `POST /api/v1/graph/triples` — Merlin session triple ingest (auth required; ignores `kag.enabled`)
+- [ ] `GET /api/v1/graph/traverse` — BFS query (`anchor`, `hops`, `domain_id`, `source` params)
+- [ ] `GET /api/v1/search/enriched` — fused hybrid chunk search + graph traversal in one response
+- [ ] Ingestion pipeline extended: `ExtractTriples` job queued after `embed_chunk`
+- [ ] `graph_traverse(anchor, hops, domain_id?)` MCP tool in `xs-mcp`
+- [ ] Integration tests: triple write, BFS traversal, enriched search, empty graph fallback, source filtering
+- [ ] Eval fixtures: triple extraction quality for electronics, culinary, technical domains
+- [ ] Version bump → 2.6.0, tag `v2.6.0`
 
 ---
 

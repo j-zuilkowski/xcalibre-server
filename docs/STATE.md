@@ -6,9 +6,13 @@ _Last updated: 2026-05-09_
 
 ---
 
-## Overall Status: Phase 28 Complete — v2.4.0
+## Overall Status: Phase 30 Complete — v2.5.0
 
 Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover serving, OSD, letter browsing, hot/trending, stats, discover), Kobo mock-store firmware compatibility, shelf reordering, inline book serve, OAuth account linking/unlinking, book merge with preview, and admin API gaps (log viewer, backup, cover regeneration, task cancellation, domain management). Full gap analysis in `GAP.md`. The codebase is clean — zero clippy warnings, zero audit CVEs.
+
+**Next planned:**
+- Phase 30 (v2.5.0) — OPDS parity II + Kobo tag sync + shelf edit (false-positive corrections from parity audit)
+- Phase 22-KAG (v2.6.0) — Knowledge-Augmented Generation graph layer (migration 0034, `graph/` module, 3 new API endpoints, MCP tool)
 
 ---
 
@@ -44,6 +48,8 @@ Phases 23–28 closed the calibre-web parity gap: OPDS enhancements (cover servi
 | Phase 26 | OAuth account linking/unlinking (post-login link flow, lockout guard) | ✅ Complete |
 | Phase 27 | Book merge with preview (format conflict detection, reading progress strategies) | ✅ Complete |
 | Phase 28 | Admin API gaps (log viewer, backup, cover regen, task cancel, domain CRUD) | ✅ Complete |
+| Phase 30 | OPDS parity II + Kobo tag sync + shelf edit (false-positive corrections) | 🟦 Planned — v2.5.0 |
+| Phase 22-KAG | KAG graph layer (knowledge_graph table, graph/ module, 3 endpoints, MCP tool) | 🟦 Planned — v2.6.0 |
 
 ---
 
@@ -99,7 +105,7 @@ Total: **44 tables, 28 migrations** across SQLite and MariaDB migration sets.
 | Multi-arch Docker build (amd64/arm64/armv7) | ✅ Passing in CI |
 | Criterion benchmarks | Non-blocking CI job |
 
-_Last verified: 2026-05-09 (Phase 28 complete — v2.4.0)_
+_Last verified: 2026-05-09 (Phase 28 complete — v2.5.0)_
 
 ---
 
