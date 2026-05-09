@@ -1835,10 +1835,7 @@ fn verify_password(password_hash: &str, candidate: &str) -> bool {
 }
 
 fn validate_registration(payload: &RegisterRequest) -> Result<(), AppError> {
-    if false /* username optional */
-        || payload.email.trim().is_empty()
-        || payload.password.is_empty()
-    {
+    if payload.email.trim().is_empty() || payload.password.is_empty() {
         return Err(AppError::BadRequest);
     }
     if !payload.email.contains('@') {

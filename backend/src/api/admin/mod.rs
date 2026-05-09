@@ -399,6 +399,7 @@ static UPDATE_CHECK_CACHE: OnceLock<RwLock<Option<CachedUpdateCheck>>> = OnceLoc
 
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AdminLogsQuery {
     lines: Option<u32>,
     level: Option<String>,
@@ -711,26 +712,28 @@ async fn list_roles(
 ///
 /// Admin-only log viewer. Reads from the log file configured in `[log].file`.
 async fn admin_logs(
-    State(state): State<AppState>,
     _admin: RequireAdmin,
+    State(state): State<AppState>,
     Query(query): Query<AdminLogsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let fp = state.config.log.file.as_ref().ok_or(AppError::NotFound)?;
+    let fp = state.config.log.file.clone().ok_or(AppError::NotFound)?;
     let max_lines = query.lines.unwrap_or(100).min(500) as usize;
     if let Some(ref lvl) = query.level {
         if !matches!(lvl.as_str(), "info" | "warn" | "error") {
             return Err(AppError::BadRequest);
         }
     }
-    let text = std::fs::read_to_string(fp).map_err(|_| AppError::Internal)?;
-    let entries: Vec<serde_json::Value> = text
+    let text = std::fs::read_to_string(&fp).map_err(|_| AppError::Internal)?;
+    let mut entries: Vec<serde_json::Value> = text
         .lines()
         .rev()
         .take(max_lines)
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| query.level.as_ref().map_or(true, |lvl| v.get("level").and_then(|x| x.as_str()) == Some(lvl.as_str())))
         .collect();
-    let mut entries: Vec<serde_json::Value> = entries.into_iter().rev().collect();
+    if let Some(ref lvl) = query.level {
+        entries.retain(|v| v.get("level").and_then(|x| x.as_str()) == Some(lvl.as_str()));
+    }
+    entries.reverse();
     Ok(Json(serde_json::Value::Array(entries)))
 }
 
@@ -812,10 +815,14 @@ async fn admin_task_cancel(
     _admin: RequireAdmin,
     Path(task_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let job = llm_queries::get_job(&state.db, &task_id)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .ok_or(AppError::NotFound)?;
+    let job = match llm_queries::get_job(&state.db, &task_id).await {
+        Ok(Some(job)) => job,
+        Ok(None) => return Err(AppError::NotFound),
+        Err(e) => {
+            tracing::error!(error = %e, task_id = %task_id, "failed to get job for cancel");
+            return Err(AppError::Internal);
+        }
+    };
     if matches!(job.status.as_str(), "completed" | "failed" | "cancelled") {
         return Err(AppError::Conflict);
     }
@@ -835,9 +842,9 @@ async fn list_domains(
     _admin: RequireAdmin,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<Vec<DomainResponse>>, AppError> {
-    let rows = if let Some(a) = query.allow {
+    let rows = if let Some(allow_val) = query.allow {
         sqlx::query("SELECT id, domain, allow, created_at FROM email_domains WHERE allow=? ORDER BY id")
-            .bind(i64::from(a))
+            .bind(i64::from(allow_val))
             .fetch_all(&state.db)
             .await
             .map_err(|_| AppError::Internal)?
