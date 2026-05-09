@@ -167,3 +167,6 @@ git add backend/migrations/sqlite/0030_email_domains.sql \
         docs/API.md
 git commit -m "Phase 28b — admin API gaps implementation"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`

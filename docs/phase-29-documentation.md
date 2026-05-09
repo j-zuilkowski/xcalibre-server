@@ -124,3 +124,6 @@ git add GAP.md \
         TEST_PHASES.md
 git commit -m "Phase 29 — documentation pass"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`

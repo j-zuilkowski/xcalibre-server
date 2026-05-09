@@ -225,3 +225,6 @@ Expected: **BUILD FAILED** — OAuth link/unlink routes and state verification f
 git add backend/tests/test_oauth_linking.rs
 git commit -m "Phase 26a — OAuth account linking tests (failing)"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`

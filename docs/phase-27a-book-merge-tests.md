@@ -265,3 +265,6 @@ Expected: **BUILD FAILED** — admin merge preview/execute endpoints and transac
 git add backend/tests/test_book_merge.rs
 git commit -m "Phase 27a — book merge tests (failing)"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`

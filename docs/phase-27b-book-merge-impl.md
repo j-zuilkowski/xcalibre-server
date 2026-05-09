@@ -150,3 +150,6 @@ git add backend/src/api/books_admin.rs \
         docs/API.md
 git commit -m "Phase 27b — book merge implementation"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`

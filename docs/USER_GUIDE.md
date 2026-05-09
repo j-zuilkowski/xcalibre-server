@@ -374,6 +374,16 @@ Annotations sync across all your devices.
 2. Choose a format (EPUB, PDF, MOBI, etc.).
 3. The file downloads to your device.
 
+### Inline File Serve (Direct Open)
+
+To open a book file directly in your browser (without the built-in reader UI), use the inline serve URL:
+
+```
+GET /api/v1/books/{id}/view/{format}
+```
+
+The file is sent with `Content-Disposition: inline`, so your browser's native PDF viewer or ePUB handler opens it directly. This is useful for Calibre integrations and third-party reading apps.
+
 ### Searching
 
 **Quick search:**
@@ -401,6 +411,11 @@ Create personal reading lists:
 - Click its name in the sidebar.
 - Edit the shelf name or public status here.
 - Remove books by clicking the X on their cards.
+
+**Reorder books on a shelf:**
+- Open the shelf → click **Edit Order**.
+- Drag books into the order you want.
+- Click **Save Order**. The new order is saved immediately.
 
 ---
 
@@ -452,6 +467,21 @@ Adds a second layer of security. Optional but recommended.
 4. **Save backup codes** somewhere safe (in case you lose your phone).
 
 Once enabled, you'll be asked for a 6-digit code when logging in.
+
+### Linked Accounts (OAuth)
+
+If your instance supports Google or GitHub login, you can link multiple login methods to the same account — so you can sign in with either your password or your Google account, whichever is convenient.
+
+**Link an account:**
+
+1. **Profile** → **Security** → **Linked Accounts**.
+2. Click **Link Google** or **Link GitHub**.
+3. Complete the OAuth flow in the popup.
+
+**Unlink an account:**
+
+- Click **Unlink** next to the provider.
+- Note: you cannot unlink your last login method (there must always be at least one way to sign in).
 
 ---
 
@@ -569,6 +599,7 @@ OPDS is a standard library catalog protocol. Any OPDS-compatible app can browse 
 - FBReader (iOS/Android)
 - PocketBook devices
 - Calibre (desktop)
+- Stanza / Chunky (iOS, via cover serving support)
 
 **Your OPDS URL:**
 
@@ -587,6 +618,26 @@ http://your-server-ip:8083/opds
 1. **Admin** → **API Tokens** → **+ Create Token** (name it "OPDS").
 2. In your OPDS app settings, append `?token={token}` to the download link pattern.
    - Example: `http://192.168.1.100:8083/opds/books/{id}/formats/{format}/download?token=abc123`
+
+**OPDS catalog features:**
+
+| Feed | URL | Description |
+|---|---|---|
+| Root | `/opds` | Top-level navigation |
+| All books | `/opds/catalog` | Full library |
+| New arrivals | `/opds/new` | Recently added |
+| Hot/Trending | `/opds/hot` | 30 most-downloaded books |
+| Discover | `/opds/discover` | Browse by shelf name |
+| Stats | `/opds/stats` | Library statistics |
+| Authors A–Z | `/opds/authors/letter/A` | Letter-based author browse |
+| Series A–Z | `/opds/series/letter/A` | Letter-based series browse |
+| Search | `/opds/search?q=...` | Full-text search |
+| OpenSearch | `/opds/osd` | OpenSearch descriptor (auto-detected by apps) |
+
+Cover images are served at three sizes:
+- `/opds/cover/{id}` — original
+- `/opds/cover/{id}/thumb` — 240×240 thumbnail
+- `/opds/cover/{id}/large` — 600×600 large
 
 ---
 
@@ -669,11 +720,27 @@ Three things:
 
 ### Back Up the Database
 
-While the server is running:
+**Via Admin UI (recommended):**
+
+1. **Admin** → **Backup** → **Run Backup Now**.
+2. The server creates a consistent snapshot using SQLite's `VACUUM INTO` command.
+3. The backup file (e.g., `xcalibre-20260509-030000.db`) is saved to the configured backup directory.
+
+> Configure backup location in `config.toml` under `[backup] dir`.
+
+**Via command line (while server is running):**
 
 ```bash
 docker exec xcalibre-server sqlite3 /app/storage/xcalibre-server.db ".backup /app/storage/xcalibre-server.backup.db"
 cp /path/to/volume/xcalibre-server.backup.db /your/backup/location/
+```
+
+**Via API:**
+
+```bash
+curl -X POST http://server:8083/api/v1/admin/backup \
+  -H "Authorization: Bearer <token>"
+# Returns: { "path": "xcalibre-20260509-030000.db" }
 ```
 
 ### Scheduled Backups (Admin)
@@ -733,4 +800,4 @@ For issues or feature requests, see the GitHub repository.
 
 ---
 
-_Last updated: April 2026. Version 1.0+_
+_Last updated: May 2026. Version 2.4.0_

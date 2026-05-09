@@ -1,7 +1,7 @@
 # calibre-web Rewrite — API Contract
 
 _Status: Current_
-_Last updated: 2026-05-08_
+_Last updated: 2026-05-09 — v2.4.0_
 
 ---
 
@@ -280,6 +280,7 @@ Disables TOTP for the authenticated user. Requires valid TOTP code or backup cod
 | GET | `/books/:id/cover` | Yes | Any | Serve cover image |
 | POST | `/books/:id/cover` | Yes | `can_edit` | Upload or replace cover |
 | GET | `/books/:id/formats/:format/download` | Yes | `can_download` | Download file |
+| GET | `/books/:id/view/:format` | Yes | `can_download` | Serve file inline (`Content-Disposition: inline`) — for in-browser reading |
 | GET | `/books/:id/formats/:format/stream` | Yes | `can_download` | Stream file (range requests) |
 | DELETE | `/books/:id/formats/:format` | Yes | Admin | Remove a specific format |
 | GET | `/books/:id/progress` | Yes | Any | Reading progress for current user |
@@ -491,7 +492,7 @@ ApiError                            // llm_unavailable
 | DELETE | `/shelves/:id` | Yes | Owner/Admin | Delete shelf |
 | POST | `/shelves/:id/books` | Yes | Owner | Add book to shelf |
 | DELETE | `/shelves/:id/books/:book_id` | Yes | Owner | Remove book from shelf |
-| PATCH | `/shelves/:id/books/reorder` | Yes | Owner | Reorder books on shelf |
+| PUT | `/shelves/:id/order` | Yes | Owner | Reorder books on shelf (body: `{ "book_ids": [1,2,3] }`) |
 
 #### `GET /shelves/:id`
 ```typescript
@@ -1116,11 +1117,16 @@ OPDS-PS 1.2 catalog. Browse endpoints return Atom/XML feeds. Download links requ
 |---|---|---|---|
 | GET | `/opds` | No | Root catalog feed |
 | GET | `/opds/catalog` | No | All books browse feed |
-| GET | `/opds/new` | No | Recently added books |
+| GET | `/opds/new` | No | Recently added books (Phase 23) |
+| GET | `/opds/hot` | No | 30 most-downloaded books (Phase 23) |
+| GET | `/opds/stats` | No | Library statistics JSON (Phase 23) |
+| GET | `/opds/discover` | No | Shelf names as navigation entries (Phase 23) |
 | GET | `/opds/authors` | No | Author browse feed |
 | GET | `/opds/authors/:id` | No | Books by author |
+| GET | `/opds/authors/letter/:char` | No | Authors beginning with letter (NFKD-normalized; Phase 23) |
 | GET | `/opds/series` | No | Series browse feed |
 | GET | `/opds/series/:id` | No | Books in series |
+| GET | `/opds/series/letter/:char` | No | Series beginning with letter (Phase 23) |
 | GET | `/opds/publishers` | No | Publisher browse feed |
 | GET | `/opds/publishers/:id` | No | Books by publisher |
 | GET | `/opds/languages` | No | Language browse feed |
@@ -1128,7 +1134,12 @@ OPDS-PS 1.2 catalog. Browse endpoints return Atom/XML feeds. Download links requ
 | GET | `/opds/ratings` | No | Rating browse feed |
 | GET | `/opds/ratings/:rating` | No | Books with this rating (0–10) |
 | GET | `/opds/books/:id/formats/:format/download` | Token | Download (requires `?token=<api_token>`) |
-| GET | `/opds/search` | No | OpenSearch description |
+| GET | `/opds/search` | No | OpenSearch query (standard) |
+| GET | `/opds/search/:query` | No | Path-based search — calibre-web client compatibility (Phase 23) |
+| GET | `/opds/osd` | No | OpenSearch descriptor XML (Phase 23) |
+| GET | `/opds/cover/:book_id` | No | Cover image inline (JPEG/WebP); 404 if no cover (Phase 23) |
+| GET | `/opds/cover/:book_id/thumb` | No | 240×240 thumbnail (Phase 23) |
+| GET | `/opds/cover/:book_id/large` | No | 600×600 large variant (Phase 23) |
 
 ---
 
@@ -1202,71 +1213,6 @@ ApiError    // email not configured
   created_at: string
 }
 ```
-
----
-
-
-### Admin — Logs, Backup, Covers, Tasks, Domains
-
-| Method | Path | Auth | Role | Description |
-|---|---|---|---|---|
-| GET | `/admin/logs` | Yes | Admin | View structured JSON log file. Query params: `lines` (default 100, max 500), `level` (`info`, `warn`, `error`). Returns 400 for invalid level. Returns 404 when `log.file` is not configured. |
-| POST | `/admin/backup` | Yes | Admin | Create a metadata backup via `VACUUM INTO`. Config `[backup] dir` controls output directory. Returns 409 if another backup is in progress. |
-| POST | `/admin/covers/regenerate` | Yes | Admin | Enqueue cover regeneration jobs. Body: `{ "book_ids": [1, 2, 3] }`. Empty array means all books. Returns 202 `{ "queued": <count> }`. |
-| DELETE | `/admin/tasks/:task_id` | Yes | Admin | Cancel a background task. Returns 404 if task missing. Returns 409 if task is already completed/failed/cancelled. Sets status to `cancelled` otherwise. |
-| GET | `/admin/domains` | Yes | Admin | List email domain rules. Query param: `allow` (optional bool filter). |
-| POST | `/admin/domains` | Yes | Admin | Add email domain rule. Body: `{ "domain": "...", "allow": true }`. Returns 201 with `{ "id", "domain", "allow", "created_at" }`. |
-| DELETE | `/admin/domains/:id` | Yes | Admin | Delete an email domain rule by integer id. Returns 204. |
-
-#### Registration domain enforcement
-When `email_domains` rows exist, the `/auth/register` endpoint enforces domain policy:
-- Allowlist mode (rows with `allow=true` exist): only those domains may register.
-- Blocklist mode (rows with `allow=false` exist): those domains are denied.
-- No domain rules: allow all (default).
-- Returns 400 `{ "error": "bad_request" }` on blocked domain.
-
-#### GET /admin/logs
-```typescript
-// Query params
-{ lines?: number; level?: 'info' | 'warn' | 'error' }
-
-// Response 200
-Array<{
-  level: string
-  msg: string
-  // ... any other fields in the JSON log line
-}>
-
-// Response 400 — invalid level value
-// Response 404 — file logging not configured
-```
-
-#### POST /admin/backup
-```typescript
-// Response 200
-{ path: string }    // filename e.g. "xcalibre-20260508-120000.db"
-
-// Response 409 — backup already in progress
-```
-
-#### POST /admin/covers/regenerate
-```typescript
-// Request
-{ book_ids: number[] }   // empty = all books
-
-// Response 202
-{ queued: number }
-```
-
-#### DELETE /admin/tasks/:task_id
-```typescript
-// Response 200
-{ ok: true }
-
-// Response 404 — task not found
-// Response 409 — task already in terminal state
-```
-
 
 ### Admin — System (Extended)
 

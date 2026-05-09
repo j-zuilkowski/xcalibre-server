@@ -124,3 +124,6 @@ git add backend/src/api/auth.rs \
 # include migration files only if table/columns are missing in current schema
 git commit -m "Phase 26b — OAuth account linking implementation"
 ```
+
+## Final Step
+`Stop now. Do not run any more commands.`
