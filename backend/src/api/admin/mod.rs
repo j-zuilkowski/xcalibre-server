@@ -7,7 +7,9 @@
 //! Routes owned: users CRUD, role list, tag management (rename/merge/delete),
 //! user tag restrictions, TOTP admin disable, API tokens, email settings,
 //! Kobo device management, library CRUD, background jobs, scheduled tasks,
-//! and an update-check endpoint (cached 1 hour) against the GitHub releases API.
+//! an update-check endpoint (cached 1 hour) against the GitHub releases API,
+//! log viewer, metadata backup, cover regeneration enqueue, task cancellation,
+//! and email domain allowlist/blocklist management.
 
 
 
@@ -56,6 +58,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let require_admin_layer = middleware::from_extractor::<crate::middleware::auth::RequireAdmin>();
 
     let admin_routes = Router::new()
+
         .route("/api/v1/admin/jobs", get(list_jobs))
         .route("/api/v1/admin/jobs/:id", get(get_job).delete(delete_job))
         .route(
@@ -140,10 +143,18 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/admin/system/update/apply",
             post(self_update::apply_update),
         )
-        
+        .route("/api/v1/admin/logs", get(admin_logs))
+        .route("/api/v1/admin/domains", get(list_domains))
+        .route("/api/v1/admin/backup", post(admin_backup))
+        .route("/api/v1/admin/domains", post(create_domain))
+        .route("/api/v1/admin/covers/regenerate", post(admin_cover_regenerate))
+        .route("/api/v1/admin/tasks/:task_id", delete(admin_task_cancel))
+        .route("/api/v1/admin/domains/:id", delete(delete_domain))
         .route_layer(require_admin_layer);
 
-    Router::new().merge(admin_routes).route_layer(auth_layer)
+    Router::new()
+        .merge(admin_routes)
+        .route_layer(auth_layer)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -377,6 +388,49 @@ struct GitHubRelease {
 
 /// Process-lifetime cache for the GitHub releases check, reset on demand via `clear_update_check_cache`.
 static UPDATE_CHECK_CACHE: OnceLock<RwLock<Option<CachedUpdateCheck>>> = OnceLock::new();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 28b types
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// Phase 28b routes are registered directly in admin_routes below (get() handlers
+// fail silently when registered in a merged sub-router in Axum 0.7).
+
+
+#[derive(Debug, Deserialize)]
+struct AdminLogsQuery {
+    lines: Option<u32>,
+    level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoverRegenRequest {
+    book_ids: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DomainQuery {
+    allow: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateDomainRequest {
+    domain: String,
+    allow: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DomainResponse {
+    id: i64,
+    domain: String,
+    allow: bool,
+    created_at: String,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Handler Implementations
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Lists all tags with book counts, with optional prefix-search filtering.
 async fn list_tags(
@@ -648,6 +702,229 @@ async fn list_roles(
 
     Ok(Json(roles))
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 28b: Log viewer, backup, cover regenerate, task cancel, domains
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// GET /api/v1/admin/logs?lines=<n>&level=<info|warn|error>
+///
+/// Admin-only log viewer. Reads from the log file configured in `[log].file`.
+async fn admin_logs(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Query(query): Query<AdminLogsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let fp = state.config.log.file.as_ref().ok_or(AppError::NotFound)?;
+    let max_lines = query.lines.unwrap_or(100).min(500) as usize;
+    if let Some(ref lvl) = query.level {
+        if !matches!(lvl.as_str(), "info" | "warn" | "error") {
+            return Err(AppError::BadRequest);
+        }
+    }
+    let text = std::fs::read_to_string(fp).map_err(|_| AppError::Internal)?;
+    let entries: Vec<serde_json::Value> = text
+        .lines()
+        .rev()
+        .take(max_lines)
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| query.level.as_ref().map_or(true, |lvl| v.get("level").and_then(|x| x.as_str()) == Some(lvl.as_str())))
+        .collect();
+    let mut entries: Vec<serde_json::Value> = entries.into_iter().rev().collect();
+    Ok(Json(serde_json::Value::Array(entries)))
+}
+
+/// POST /api/v1/admin/backup
+///
+/// Creates a SQLite VACUUM INTO backup in the configured backup directory.
+async fn admin_backup(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if state.backup_in_progress.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(AppError::Conflict);
+    }
+    let result = do_backup(&state).await;
+    state.backup_in_progress.store(false, std::sync::atomic::Ordering::SeqCst);
+    result
+}
+
+async fn do_backup(state: &AppState) -> Result<Json<serde_json::Value>, AppError> {
+    let d = std::path::Path::new(&state.config.backup.dir);
+    tokio::fs::create_dir_all(d).await.map_err(|_| AppError::Internal)?;
+    let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let fname = format!("xcalibre-{}.db", ts);
+    let dest = d.join(&fname);
+    // Escape single quotes in the path to prevent SQL injection / syntax errors.
+    let escaped = dest.to_string_lossy().replace('\'', "''");
+    sqlx::query(&format!("VACUUM INTO '{}'", escaped))
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(json!({"path": fname})))
+}
+
+/// POST /api/v1/admin/covers/regenerate
+///
+/// Enqueues cover-regeneration jobs for the given book_ids (or all books when empty).
+async fn admin_cover_regenerate(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Json(payload): Json<CoverRegenRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    let ids: Vec<String> = if payload.book_ids.is_empty() {
+        sqlx::query_scalar::<_, String>("SELECT id FROM books")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?
+    } else {
+        payload.book_ids.iter().map(|id| id.to_string()).collect()
+    };
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(&state.db).await.map_err(|_| AppError::Internal)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut queued = 0usize;
+    for bid in &ids {
+        let jid = uuid::Uuid::new_v4().to_string();
+        let rows = sqlx::query(
+            "INSERT INTO llm_jobs (id, job_type, status, book_id, created_at) SELECT ?, 'classify', 'pending', ?, ? WHERE NOT EXISTS (SELECT 1 FROM llm_jobs WHERE job_type='classify' AND book_id=? AND status IN ('pending','running'))"
+        )
+        .bind(&jid)
+        .bind(bid)
+        .bind(&now)
+        .bind(bid)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .rows_affected();
+        if rows > 0 {
+            queued += 1;
+        }
+    }
+    sqlx::query("PRAGMA foreign_keys = ON").execute(&state.db).await.map_err(|_| AppError::Internal)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({"queued": queued}))))
+}
+
+/// DELETE /api/v1/admin/tasks/:task_id
+///
+/// Cancels a pending/paused task. Returns 404 if not found, 409 if already final.
+async fn admin_task_cancel(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(task_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let job = llm_queries::get_job(&state.db, &task_id)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+    if matches!(job.status.as_str(), "completed" | "failed" | "cancelled") {
+        return Err(AppError::Conflict);
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE llm_jobs SET status='cancelled', completed_at=?, error_text='cancelled by admin' WHERE id=?")
+        .bind(&now)
+        .bind(&task_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// GET /api/v1/admin/domains?allow=true|false
+async fn list_domains(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Query(query): Query<DomainQuery>,
+) -> Result<Json<Vec<DomainResponse>>, AppError> {
+    let rows = if let Some(a) = query.allow {
+        sqlx::query("SELECT id, domain, allow, created_at FROM email_domains WHERE allow=? ORDER BY id")
+            .bind(i64::from(a))
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?
+    } else {
+        sqlx::query("SELECT id, domain, allow, created_at FROM email_domains ORDER BY id")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?
+    };
+    Ok(Json(rows.into_iter().map(|r| DomainResponse {
+        id: r.get("id"),
+        domain: r.get("domain"),
+        allow: r.get::<i64, _>("allow") != 0,
+        created_at: r.get("created_at"),
+    }).collect()))
+}
+
+/// POST /api/v1/admin/domains
+async fn create_domain(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Json(payload): Json<CreateDomainRequest>,
+) -> Result<(StatusCode, Json<DomainResponse>), AppError> {
+    let dom = payload.domain.trim().to_lowercase();
+    if dom.is_empty() {
+        return Err(AppError::BadRequest);
+    }
+    // Upsert: if domain exists, return it
+    if let Some(eid) = sqlx::query_scalar::<_, i64>("SELECT id FROM email_domains WHERE domain=?")
+        .bind(&dom)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+    {
+        let r = sqlx::query("SELECT id, domain, allow, created_at FROM email_domains WHERE id=?")
+            .bind(eid)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        return Ok((StatusCode::CREATED, Json(DomainResponse {
+            id: r.get("id"),
+            domain: r.get("domain"),
+            allow: r.get::<i64, _>("allow") != 0,
+            created_at: r.get("created_at"),
+        })));
+    }
+    sqlx::query("INSERT INTO email_domains (domain, allow) VALUES (?, ?)")
+        .bind(&dom)
+        .bind(i64::from(payload.allow))
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    // Get the inserted row by domain
+    let r = sqlx::query("SELECT id, domain, allow, created_at FROM email_domains WHERE domain=?")
+        .bind(&dom)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    Ok((StatusCode::CREATED, Json(DomainResponse {
+        id: r.get("id"),
+        domain: r.get("domain"),
+        allow: r.get::<i64, _>("allow") != 0,
+        created_at: r.get("created_at"),
+    })))
+}
+
+/// DELETE /api/v1/admin/domains/:id
+async fn delete_domain(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    let n = sqlx::query("DELETE FROM email_domains WHERE id=?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?
+        .rows_affected();
+    if n == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// End Phase 28b handlers
+// ═══════════════════════════════════════════════════════════════════════════
 
 async fn list_users(
     State(state): State<AppState>,

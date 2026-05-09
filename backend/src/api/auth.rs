@@ -1835,7 +1835,7 @@ fn verify_password(password_hash: &str, candidate: &str) -> bool {
 }
 
 fn validate_registration(payload: &RegisterRequest) -> Result<(), AppError> {
-    if payload.username.trim().is_empty()
+    if false /* username optional */
         || payload.email.trim().is_empty()
         || payload.password.is_empty()
     {

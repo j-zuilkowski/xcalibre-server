@@ -15,18 +15,14 @@
 //! `/api/` prefix and not a matched route, enabling client-side routing.
 
 use axum::{
-    extract::{Query, State, Extension},
-    extract::Request as AxumRequest, http::Method, middleware, response::Response, routing::{get, post, delete},
-    Json, Router,
+    extract::Request as AxumRequest, http::Method, middleware, response::Response, routing::get,
+    Router,
 };
 use std::path::PathBuf;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
-use serde_json::json;
-use serde::Deserialize;
 
 pub mod admin;
-pub mod admin_gaps;
 pub mod auth;
 pub mod authors;
 pub mod books;
@@ -64,7 +60,6 @@ pub fn router(state: crate::AppState) -> Router {
         // to avoid route resolution issues with nested :param routes.
         .route("/api/v1/auth/oauth/:provider/link/callback", get(auth::oauth_link_callback))
         .merge(admin::router(state.clone()))
-        .merge(admin_gaps::full_router(state.clone()))
         .merge(books_admin::router(state.clone()))
         .merge(collections::router(state.clone()))
         .merge(authors::router(state.clone()))
