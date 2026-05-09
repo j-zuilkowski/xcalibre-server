@@ -4,6 +4,7 @@ mod common;
 
 use axum::http::header;
 use common::{auth_header, TestContext};
+use tempfile::tempdir;
 
 #[tokio::test]
 async fn test_admin_users_requires_authentication() {
@@ -83,5 +84,46 @@ async fn test_admin_authors_allows_admin_users() {
     assert!(
         body["items"].is_array(),
         "expected a paginated response body"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_creates_valid_sqlite_file() {
+    let backup_dir = tempdir().expect("tempdir");
+    let mut config = backend::config::AppConfig::default();
+    config.backup.dir = backup_dir.path().to_string_lossy().to_string();
+    let ctx = TestContext::new_with_config(config).await;
+
+    let token = ctx.admin_token().await;
+    let response = ctx
+        .server
+        .post("/api/v1/admin/backup")
+        .add_header(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        )
+        .await;
+
+    assert_status!(response, 200);
+
+    let body: serde_json::Value = response.json();
+    let fname = body["path"]
+        .as_str()
+        .expect("response must contain 'path' field");
+    assert!(fname.ends_with(".db"), "filename must end with .db, got {fname}");
+
+    let dest = backup_dir.path().join(fname);
+    assert!(dest.exists(), "backup file was not created at {dest:?}");
+
+    let bytes = std::fs::read(&dest).expect("read backup file");
+    assert!(
+        bytes.len() >= 16,
+        "backup file too small ({} bytes) — expected a valid SQLite database",
+        bytes.len()
+    );
+    assert_eq!(
+        &bytes[..16],
+        b"SQLite format 3\0",
+        "backup file does not start with SQLite3 magic bytes"
     );
 }
