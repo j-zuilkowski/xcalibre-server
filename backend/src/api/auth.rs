@@ -1001,7 +1001,7 @@ pub(crate) async fn totp_verify(
     let now = Utc::now();
     if let Some(locked_until) = user.locked_until {
         if locked_until > now {
-            return Err(AppError::Unauthorized);
+            return Err(AppError::TooManyRequests);
         }
     }
 

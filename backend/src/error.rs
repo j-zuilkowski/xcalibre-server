@@ -42,6 +42,8 @@ pub enum AppError {
     ServiceUnavailable,
     #[error("webhook url must be a public endpoint")]
     SsrfBlocked,
+    #[error("too many requests")]
+    TooManyRequests,
     #[error("internal error")]
     Internal,
 }
@@ -88,6 +90,9 @@ impl IntoResponse for AppError {
             }
             AppError::SsrfBlocked => {
                 (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": "ssrf_blocked"}))).into_response()
+            }
+            AppError::TooManyRequests => {
+                (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "too_many_requests"}))).into_response()
             }
             AppError::Internal => {
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal_error"}))).into_response()
