@@ -554,6 +554,8 @@ xcalibre-server can sync your library directly to a Kobo e-reader. Reading progr
 - Reading progress syncs automatically when the device has WiFi.
 - You can create collections on your Kobo; they sync back to xcalibre-server as shelves.
 
+**Cover images:** Book covers are served directly to your Kobo device. When you browse your library on the device, xcalibre-server looks up each book by its UUID, retrieves the actual cover, and sends it to the Kobo. If a book has no cover, the device shows a generic placeholder automatically.
+
 **Note:** Format conversion is not included. Books must already be in a format your Kobo supports (EPUB recommended).
 
 ---
@@ -800,4 +802,4 @@ For issues or feature requests, see the GitHub repository.
 
 ---
 
-_Last updated: May 2026. Version 2.4.0_
+_Last updated: May 2026. Version 2.7.0_

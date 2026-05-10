@@ -833,6 +833,53 @@ Seven admin endpoints closed from the calibre-web gap analysis. All require `is_
 | `POST /api/v1/admin/domains` | Add rule `{ domain, allow }`. Enforced at registration. |
 | `DELETE /api/v1/admin/domains/:id` | Remove rule. |
 
+### Phase 29 — Documentation Pass
+
+Full documentation update: `docs/ARCHITECTURE.md`, `docs/API.md`, `docs/DEVELOPER_GUIDE.md`, `docs/USER_GUIDE.md`, `docs/DESIGN.md`, `docs/SECURITY.md`, `docs/DEPLOY.md`, `GAP.md`. No code changes; version bump to v2.5.0.
+
+### Phase 30 — calibre-web Parity Gaps
+
+Closed seven outstanding gaps identified in the calibre-web parity audit (`GAP.md`):
+
+| Gap | Surface | Notes |
+|---|---|---|
+| Kobo tag sync | `POST /kobo/:token/v1/library/tags`, `DELETE …/:tag_id` | Creates/renames xcalibre shelves from device tag operations |
+| OPDS category/tag feeds | `GET /opds/tags`, `/opds/tags/:tag/books` | Tag listing + books-by-tag Atom feeds |
+| OPDS read/unread feeds | `GET /opds/read`, `/opds/unread` | Filtered by `book_user_state.is_read` for the authenticated user |
+| Shelf edit (rename / toggle public) | `PATCH /api/v1/shelves/:id` | Renames shelf or changes `is_public`; 409 on name collision |
+| OPDS shelf feed | `GET /opds/shelves`, `/opds/shelves/:id/books` | Public shelves browsable from OPDS clients |
+| OPDS formats feed | `GET /opds/formats`, `/opds/formats/:ext/books` | Group and browse by file format extension |
+| OPDS book UUID lookup | `GET /opds/books/:uuid` | Single-book Atom entry by UUID identifier |
+
+### Phase 31 — Real SQLite Backup via VACUUM INTO
+
+Replaced the `do_backup()` stub (which wrote an empty file via `std::fs::write`) with a real `VACUUM INTO` call.
+
+**Implementation details:**
+- `VACUUM INTO '<path>'` is SQLite's official hot-backup mechanism. It creates a compacted copy while the database is open and under write load; no WAL checkpoint management required.
+- The destination path is single-quote-escaped (`replace('\'', "''")`) to prevent SQL injection via crafted backup directory paths.
+- `sqlx::raw_sql()` is used instead of the parameterised query API because SQLite requires `VACUUM INTO` to receive a literal path string in the SQL text, not a bound parameter.
+- Tests use `test_file_db(path)` and `TestContext::new_with_file_db(db_path, config)` helpers (added to `backend/tests/common/mod.rs`) because `VACUUM INTO` cannot operate on `:memory:` databases.
+- `AtomicBool` guard (`is_backup_running`) prevents concurrent backup runs (returns 409).
+- Version bump to v2.7.0.
+
+**Files changed:** `backend/src/api/admin/mod.rs`, `backend/tests/common/mod.rs`, `backend/tests/test_admin.rs`, `backend/tests/test_admin_gaps.rs`
+
+### Phase 32 — Kobo Cover Resolution by UUID
+
+Replaced the `kobo_image` stub (which returned `WHITE_JPEG_1X1` unconditionally) with real UUID-to-cover resolution.
+
+**Handler flow (`backend/src/api/kobo.rs → kobo_image`):**
+1. Extract `book_uuid` from the path `GET /kobo/:token/v1/images/:uuid/:w/:h/:q/:grey/image.jpg`.
+2. `SELECT book_id FROM identifiers WHERE id_type = 'uuid' AND value = ? LIMIT 1` — resolves UUID to internal book ID.
+3. `book_queries::find_book_cover_path(&state.db, &book_id)` — returns the cover path only when `has_cover = 1`.
+4. `state.storage.get_bytes(&cover_path)` — reads the cover through the configured storage backend (local or S3). This is the same abstraction used by `serve_storage_file` in `opds_enhancements.rs`.
+5. Returns the cover bytes as `image/jpeg`. Falls back to `WHITE_JPEG_1X1` on any failure (unknown UUID, no cover, storage error) — the Kobo device always gets a valid JPEG response.
+
+**Why `state.storage.get_bytes` not `serve_storage_file`:** `serve_storage_file` requires a `Request<Body>` for HTTP range support. Kobo image requests do not use range headers; `get_bytes` is simpler and correct for this surface.
+
+**Files changed:** `backend/src/api/kobo.rs`, `GAP.md`
+
 ---
 
 ## 11. Kobo Sync Protocol
