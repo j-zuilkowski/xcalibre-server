@@ -118,3 +118,69 @@ gh release create v2.7.0 \
 > **Note:** Tag and release after **both** phase 31b and 32b are committed so the
 > release notes describe the complete v2.7.0 change set. Commit phase 31b first, then
 > continue to phase 32 before tagging.
+
+
+## Fixes (Phase 31b.fix)
+
+### Problem
+
+`VACUUM INTO` does not work against `:memory:` SQLite databases — SQLite requires
+a file-backed database for VACUUM INTO to create a physical copy. The original phase
+31b implementation used `sqlx::query("VACUUM INTO ?").bind(dest_str)` which fails at
+runtime on in-memory pools used by most tests.
+
+The original phase 31b doc also described the wrong API (`sqlx::query` with a bind
+parameter). SQLite's `VACUUM INTO` requires a literal path string in the SQL text,
+not a bound parameter. The correct form uses string formatting with single-quote
+escaping:
+
+```rust
+let vacuum_sql = format!("VACUUM INTO '{}'", dest_str.replace('\'', "''"));
+sqlx::raw_sql(&vacuum_sql).execute(&state.db).await?;
+```
+
+### Changes
+
+#### `backend/tests/common/mod.rs` — new helpers
+
+- **`test_file_db(path)`** — Opens a file-backed SQLite pool at the given path and
+  runs all migrations. Mirrors the existing `test_db()` helper (which uses `:memory:`).
+- **`TestContext::new_with_file_db(db_path, config)`** — Constructs a `TestContext`
+  backed by a file-based database at the given path. Callers pass the same config
+  overrides they would to `new_with_config`.
+
+#### `backend/tests/test_admin.rs` — rewritten test
+
+`test_backup_creates_valid_sqlite_file` now:
+1. Creates a temp directory for the file-backed DB and a temp directory for backups.
+2. Uses `TestContext::new_with_file_db` with a `sqlite://<path>/library.db` URL.
+3. Verifies the backup file exists, is ≥ 16 bytes, and starts with `SQLite format 3\0`.
+
+#### `backend/tests/test_admin_gaps.rs` — fixed parallel test
+
+`test_admin_backup_happy_path_and_conflict_guard` also used an in-memory DB.
+Now uses `new_with_file_db` with a temp file-backed pool, same pattern.
+
+#### `backend/src/api/admin/mod.rs` — real VACUUM INTO
+
+- Replaced `std::fs::write(&dest, minimal_sqlite_file())` with a real `VACUUM INTO`
+  call using `sqlx::raw_sql` and a formatted SQL string.
+- Removed the `minimal_sqlite_file()` stub function and its doc comment. The 16-byte
+  SQLite header placeholder is no longer needed.
+- The backup path is single-quote-escaped to prevent SQL injection via crafted paths.
+
+### Quality gates (all pass)
+
+```
+cargo clippy -- -D warnings   # zero warnings
+cargo test --test test_admin  # 7 passed (incl. backup)
+cargo test --test test_admin_gaps test_admin_backup  # passed
+```
+
+### Files changed
+
+- `backend/tests/common/mod.rs` — `test_file_db()`, `new_with_file_db()`
+- `backend/tests/test_admin.rs` — rewritten backup test
+- `backend/tests/test_admin_gaps.rs` — switch to file-backed DB
+- `backend/src/api/admin/mod.rs` — VACUUM INTO + remove stub
+- `docs/phase-31b-backup-vacuum-impl.md` — this section

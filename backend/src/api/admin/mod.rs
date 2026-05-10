@@ -759,15 +759,13 @@ async fn do_backup(state: &AppState) -> Result<Json<serde_json::Value>, AppError
     let fname = format!("xcalibre-{}.db", ts);
     let dest = d.join(&fname);
     // Write a valid SQLite database backup.
-    std::fs::write(&dest, minimal_sqlite_file()).map_err(|_| AppError::Internal)?;
+    let dest_str = dest.to_str().ok_or(AppError::Internal)?;
+    let vacuum_sql = format!("VACUUM INTO '{}'", dest_str.replace('\'', "''"));
+    sqlx::raw_sql(&vacuum_sql)
+        .execute(&state.db)
+        .await
+        .map_err(|_| AppError::Internal)?;
     Ok(Json(json!({"path": fname})))
-}
-
-/// Returns a minimal valid SQLite database file buffer (16-byte header only).
-/// Used as a fallback when VACUUM INTO is unavailable (e.g., in-memory databases
-/// in test environments where sqlx cannot execute VACUUM with bind parameters).
-fn minimal_sqlite_file() -> Vec<u8> {
-    b"SQLite format 3\0".to_vec()
 }
 
 /// POST /api/v1/admin/covers/regenerate

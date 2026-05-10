@@ -115,6 +115,18 @@ pub async fn test_db() -> SqlitePool {
     db
 }
 
+pub async fn test_file_db(path: &str) -> SqlitePool {
+    let db = backend::db::connect_sqlite_pool(path, 1)
+        .await
+        .expect("connect file sqlite pool");
+    let migration_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite");
+    let migrator = sqlx::migrate::Migrator::new(migration_path.as_path())
+        .await
+        .expect("load migrations");
+    migrator.run(&db).await.expect("run migrations");
+    db
+}
+
 impl TestContext {
     pub async fn new() -> Self {
         Self::new_with_config(AppConfig::default()).await
@@ -136,6 +148,31 @@ impl TestContext {
             .expect("initialize app state");
         let server = CompatTestServer::new(TestServer::new(app(state.clone())).expect("build test server"));
 
+        Self {
+            db,
+            storage,
+            server,
+            state,
+            last_user_id: RefCell::new(None),
+        }
+    }
+
+    pub async fn new_with_file_db(db_path: &str, mut config: AppConfig) -> Self {
+        let storage = tempfile::tempdir().expect("tempdir");
+        let db = test_file_db(db_path).await;
+        std::env::set_var("XCS_DISABLE_METRICS", "1");
+        config.app.storage_path = storage.path().to_string_lossy().to_string();
+        if config.auth.jwt_secret.trim().is_empty() {
+            config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
+        }
+        config.limits.auth_rate_limit_per_minute = 1000;
+        config.limits.rate_limit_per_ip = 2000;
+        let state = AppState::new(db.clone(), config)
+            .await
+            .expect("app state");
+        let server = CompatTestServer::new(
+            TestServer::new(app(state.clone())).expect("build test server")
+        );
         Self {
             db,
             storage,

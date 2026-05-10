@@ -51,10 +51,12 @@ async fn test_admin_logs_happy_path_and_level_validation() {
 
 #[tokio::test]
 async fn test_admin_backup_happy_path_and_conflict_guard() {
-    let dir = tempdir().expect("tempdir");
+    let db_dir = tempdir().expect("db tempdir");
+    let backup_dir = tempdir().expect("backup tempdir");
+    let db_path = format!("sqlite://{}/library.db", db_dir.path().display());
     let mut cfg = backend::config::AppConfig::default();
-    cfg.backup.dir = dir.path().to_string_lossy().to_string();
-    let ctx = TestContext::new_with_config(cfg).await;
+    cfg.backup.dir = backup_dir.path().to_string_lossy().to_string();
+    let ctx = TestContext::new_with_file_db(&db_path, cfg).await;
     let admin = ctx.admin_token().await;
 
     let resp = ctx
@@ -67,7 +69,7 @@ async fn test_admin_backup_happy_path_and_conflict_guard() {
     let path = body["path"].as_str().unwrap_or_default().to_string();
     assert!(!path.is_empty());
 
-    let full = dir.path().join(path);
+    let full = backup_dir.path().join(path);
     assert!(full.exists());
 
     // Simulate concurrent backup in progress.
