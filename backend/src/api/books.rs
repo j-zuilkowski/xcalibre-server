@@ -4739,15 +4739,14 @@ fn parse_opf_xml(opf_xml: &str) -> Option<IngestMetadata> {
 
     for node in doc.descendants().filter(|node| node.is_element()) {
         match node.tag_name().name() {
-            "title" => {
-                if metadata.title.is_none() {
-                    metadata.title = node
-                        .text()
-                        .map(str::trim)
-                        .filter(|text| !text.is_empty())
-                        .map(ToOwned::to_owned);
-                }
+            "title" if metadata.title.is_none() => {
+                metadata.title = node
+                    .text()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(ToOwned::to_owned);
             }
+            "title" => {}
             "creator" => {
                 if let Some(creator) = node.text().map(str::trim).filter(|text| !text.is_empty()) {
                     metadata.authors.push(creator.to_string());

@@ -1011,7 +1011,7 @@ async fn rerank_chunk_results(
     }
 
     let mut reranked = chunks;
-    for (chunk, score) in reranked.iter_mut().zip(scores.into_iter()) {
+    for (chunk, score) in reranked.iter_mut().zip(scores) {
         chunk.rerank_score = Some(score);
     }
 
