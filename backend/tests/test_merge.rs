@@ -159,8 +159,9 @@ async fn test_merge_transfers_reading_progress() {
     let token = ctx.admin_token().await;
     let primary = ctx.create_book("Primary", "Author A").await;
     let duplicate = ctx.create_book("Duplicate", "Author B").await;
-    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("admin")
+    let user_id: String = sqlx::query_scalar(
+        "SELECT id FROM users WHERE role_id = 'admin' ORDER BY created_at ASC LIMIT 1",
+    )
         .fetch_one(&ctx.db)
         .await
         .expect("load admin id");
