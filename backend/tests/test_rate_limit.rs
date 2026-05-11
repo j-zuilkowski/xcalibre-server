@@ -33,7 +33,9 @@ async fn test_auth_endpoint_returns_ratelimit_headers() {
 
 #[tokio::test]
 async fn test_429_response_includes_retry_after() {
-    let ctx = TestContext::new().await;
+    let mut cfg = backend::config::AppConfig::default();
+    cfg.limits.auth_rate_limit_per_minute = 5;
+    let ctx = TestContext::new_with_config(cfg).await;
     let ip = HeaderValue::from_static("198.51.100.21");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
 
@@ -65,7 +67,9 @@ async fn test_429_response_includes_retry_after() {
 
 #[tokio::test]
 async fn test_retry_after_value_is_positive_integer() {
-    let ctx = TestContext::new().await;
+    let mut cfg = backend::config::AppConfig::default();
+    cfg.limits.auth_rate_limit_per_minute = 5;
+    let ctx = TestContext::new_with_config(cfg).await;
     let ip = HeaderValue::from_static("198.51.100.22");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
 

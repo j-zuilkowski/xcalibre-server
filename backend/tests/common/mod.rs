@@ -140,9 +140,16 @@ impl TestContext {
         if config.auth.jwt_secret.trim().is_empty() {
             config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
         }
-        // Bump rate limits for test scenarios that create many books/logins
-        config.limits.auth_rate_limit_per_minute = 1000;
-        config.limits.rate_limit_per_ip = 2000;
+        // Bump defaults for high-churn test scenarios, but preserve explicit overrides.
+        let default_cfg = AppConfig::default();
+        if config.limits.auth_rate_limit_per_minute
+            == default_cfg.limits.auth_rate_limit_per_minute
+        {
+            config.limits.auth_rate_limit_per_minute = 1000;
+        }
+        if config.limits.rate_limit_per_ip == default_cfg.limits.rate_limit_per_ip {
+            config.limits.rate_limit_per_ip = 2000;
+        }
         let state = AppState::new(db.clone(), config)
             .await
             .expect("initialize app state");
@@ -165,8 +172,15 @@ impl TestContext {
         if config.auth.jwt_secret.trim().is_empty() {
             config.auth.jwt_secret = TEST_JWT_SECRET.to_string();
         }
-        config.limits.auth_rate_limit_per_minute = 1000;
-        config.limits.rate_limit_per_ip = 2000;
+        let default_cfg = AppConfig::default();
+        if config.limits.auth_rate_limit_per_minute
+            == default_cfg.limits.auth_rate_limit_per_minute
+        {
+            config.limits.auth_rate_limit_per_minute = 1000;
+        }
+        if config.limits.rate_limit_per_ip == default_cfg.limits.rate_limit_per_ip {
+            config.limits.rate_limit_per_ip = 2000;
+        }
         let state = AppState::new(db.clone(), config)
             .await
             .expect("app state");
