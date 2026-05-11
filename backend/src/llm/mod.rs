@@ -13,6 +13,7 @@
 //! - [`embeddings`] — Text embedding via embedding endpoint
 //! - [`job_runner`] — Background job loop polling `llm_jobs` table
 //! - [`quality`] — Prose quality scoring
+//! - [`summarize`] — Multi-strategy text summarization with model evaluation harness
 //! - [`synthesize`] — Multi-source cross-document synthesis (14 formats)
 //! - [`validate`] — Metadata validation (title/author/ISBN/description)
 //! - [`vision`] — Vision LLM pass for image-heavy PDF/EPUB pages
@@ -29,6 +30,7 @@ pub mod derive;
 pub mod embeddings;
 pub mod job_runner;
 pub mod quality;
+pub mod summarize;
 pub mod synthesize;
 pub mod validate;
 pub mod vision;

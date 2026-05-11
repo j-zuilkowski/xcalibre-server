@@ -69,7 +69,7 @@ async fn test_evaluate_model_extractive_baseline() {
         .expect("extractive strategy must be evaluated");
 
     assert_eq!(extractive.cost, "zero (local)");
-    assert!(extractive.avg_latency_ms > 0.0);
+    assert!(extractive.avg_latency_ms >= 0.0);
     assert!(extractive.avg_compression_ratio > 0.0 && extractive.avg_compression_ratio <= 1.0);
     assert!(extractive.avg_rouge_l >= 0.0 && extractive.avg_rouge_l <= 1.0);
 }

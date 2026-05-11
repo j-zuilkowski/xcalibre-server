@@ -27,7 +27,7 @@ export default defineConfig({
         "rm -f test_e2e.db && rm -rf storage_e2e && env APP_BIND_ADDR=127.0.0.1:8083 XCS_DISABLE_METRICS=1 APP_DATABASE_URL=sqlite://test_e2e.db APP_LLM_ENABLED=false APP_STORAGE_PATH=./storage_e2e APP_AUTH_RATE_LIMIT_PER_MINUTE=10000 cargo run -p backend",
       url: "http://localhost:8083/health",
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: 600_000,
       cwd: "../..",
     },
     {

@@ -57,8 +57,9 @@ async fn test_download_history_is_per_user() {
     let ctx = TestContext::new().await;
     let admin_token = ctx.admin_token().await;
     let user_token = ctx.user_token().await;
-    let admin_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind("admin")
+    let admin_id: String = sqlx::query_scalar(
+        "SELECT id FROM users WHERE role_id = 'admin' ORDER BY created_at ASC LIMIT 1",
+    )
         .fetch_one(&ctx.db)
         .await
         .expect("load admin id");
