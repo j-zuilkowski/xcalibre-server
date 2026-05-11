@@ -85,11 +85,13 @@ async fn test_permissions_policy_present() {
 
 #[tokio::test]
 async fn test_rate_limit_auth_after_10_requests() {
-    let ctx = TestContext::new().await;
+    let mut cfg = AppConfig::default();
+    cfg.limits.auth_rate_limit_per_minute = 8;
+    let ctx = TestContext::new_with_config(cfg).await;
     let ip = HeaderValue::from_static("198.51.100.10");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
 
-    for attempt in 1..=10 {
+    for attempt in 1..=8 {
         let response = ctx
             .server
             .post("/api/v1/auth/login")
@@ -122,11 +124,13 @@ async fn test_rate_limit_auth_after_10_requests() {
 
 #[tokio::test]
 async fn test_rate_limit_resets_after_window() {
-    let ctx = TestContext::new().await;
+    let mut cfg = AppConfig::default();
+    cfg.limits.auth_rate_limit_per_minute = 8;
+    let ctx = TestContext::new_with_config(cfg).await;
     let ip = HeaderValue::from_static("198.51.100.11");
     let forwarded_for = HeaderName::from_static(X_FORWARDED_FOR);
 
-    for _ in 0..10 {
+    for _ in 0..8 {
         let _ = ctx
             .server
             .post("/api/v1/auth/login")
@@ -149,7 +153,7 @@ async fn test_rate_limit_resets_after_window() {
         .await;
     assert_status!(blocked, 429);
 
-    tokio::time::sleep(std::time::Duration::from_millis(6_500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(9_000)).await;
 
     let response_after_wait = ctx
         .server
