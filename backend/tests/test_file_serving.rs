@@ -306,6 +306,11 @@ async fn test_download_requires_auth() {
 async fn test_download_requires_download_permission() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
+    let user_id = ctx
+        .last_user_id
+        .borrow()
+        .clone()
+        .expect("user id from user_token");
     let (book, _path) = ctx.create_book_with_file("Needs Permission", "EPUB").await;
     let now = Utc::now().to_rfc3339();
 
@@ -321,7 +326,8 @@ async fn test_download_requires_download_permission() {
     .await
     .expect("insert role");
 
-    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1)")
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = ?")
+        .bind(&user_id)
         .execute(&ctx.db)
         .await
         .expect("update user role");
@@ -340,6 +346,11 @@ async fn test_cover_requires_download_permission() {
     let ctx = TestContext::new().await;
     let admin_token = ctx.admin_token().await;
     let user_token = ctx.user_token().await;
+    let user_id = ctx
+        .last_user_id
+        .borrow()
+        .clone()
+        .expect("user id from user_token");
     let now = Utc::now().to_rfc3339();
 
     let upload = MultipartForm::new().add_part(
@@ -370,7 +381,8 @@ async fn test_cover_requires_download_permission() {
     .await
     .expect("insert role");
 
-    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1)")
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = ?")
+        .bind(&user_id)
         .execute(&ctx.db)
         .await
         .expect("update user role");
@@ -388,6 +400,11 @@ async fn test_cover_requires_download_permission() {
 async fn test_text_requires_download_permission() {
     let ctx = TestContext::new().await;
     let token = ctx.user_token().await;
+    let user_id = ctx
+        .last_user_id
+        .borrow()
+        .clone()
+        .expect("user id from user_token");
     let (book, _path) = ctx.create_book_with_file("No Text Access", "EPUB").await;
     let now = Utc::now().to_rfc3339();
 
@@ -403,7 +420,8 @@ async fn test_text_requires_download_permission() {
     .await
     .expect("insert role");
 
-    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = (SELECT id FROM users WHERE username != 'admin' LIMIT 1)")
+    sqlx::query("UPDATE users SET role_id = 'no_download' WHERE id = ?")
+        .bind(&user_id)
         .execute(&ctx.db)
         .await
         .expect("update user role");
